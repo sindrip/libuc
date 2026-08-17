@@ -31,6 +31,16 @@ target "src" {
   output = ["type=tar,dest=out/linux-src.tar"]
 }
 
+target "uapi" {
+  dockerfile = "build/kernel.Dockerfile"
+  target     = "uapi"
+  args = {
+    KERNEL_VERSION = KERNEL_VERSION
+    KERNEL_SHA256  = KERNEL_SHA256
+  }
+  output = ["type=local,dest=out/uapi"]
+}
+
 group "default" {
   targets = ["kernel"]
 }

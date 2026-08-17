@@ -1,0 +1,268 @@
+# AGENTS.md
+
+## What this is
+
+A runtime built on io_uring, in freestanding C23, running as PID 1 on a pinned
+Linux kernel inside a minimal VM image. No libc. No liburing. No language on top
+of it — yet.
+
+The eventual goal is a runtime for a programming language. The language is
+deliberately deferred: right now the runtime is a C library whose "programs" are
+hand-written C functions, and the language question gets answered later by what
+the runtime actually turns out to need.
+
+## Motivation
+
+Most runtimes start from a language and adapt to whatever the OS offers. This one
+inverts that: **start from the target.** Linux 7.2 and io_uring are the fixed
+point, and the runtime's shape is derived from them rather than negotiated with
+them.
+
+The secondary goal is learning C properly — which is why the hard paths are taken
+deliberately (hand-rolled context switching, raw ring mechanics, no libc) rather
+than delegated to a library.
+
+## Invariants — do not violate these without discussion
+
+These are the design. Code that breaks one is wrong even if it works.
+
+1. **io_uring is the syscall ABI.** If an operation has an opcode, it goes
+   through the ring. `openat`, `close`, `socket`, `bind`, `listen`, `accept`,
+   `read`, `write`, `timeout`, `futex` — all opcodes on 7.2. Direct syscalls are
+   permitted **only** where no opcode exists: `mmap`, `mprotect`, `munmap`,
+   `clone`, `sched_setaffinity`, `rt_sigaction`, `io_uring_*`, `exit_group`.
+2. **Never `IORING_SETUP_SQPOLL`.** It is mutually exclusive with
+   `DEFER_TASKRUN`, `COOP_TASKRUN`, and `TASKRUN_FLAG`
+   (`out/src/io_uring/io_uring.c:2815-2821`). Rings are
+   `SINGLE_ISSUER | DEFER_TASKRUN | NO_SQARRAY`.
+3. **Shared-nothing, no migration.** A task is born on a core and dies there.
+   No work stealing. No cross-core allocation or free. Per-core state is reached
+   without atomics; the only shared state is explicitly designated as such.
+4. **No libc, ever.** `-ffreestanding -nostdlib`. Two header sources are
+   permitted, and nothing else:
+   - What the *compiler* ships: `<stdint.h>`, `<stddef.h>`, `<stdarg.h>`,
+     `<stdatomic.h>`, `<stdckdint.h>`. **Not `<stdbit.h>`** — C23 lists it as
+     freestanding-required, but every toolchain implements it as a *libc*
+     header (glibc 2.39+), so it is absent from GCC 15.2, Clang 22, and musl
+     alike. Use `__builtin_clzll` / `__builtin_ctzll` / `__builtin_popcountll`;
+     they are intrinsics and need no header.
+   - The **pinned kernel's own uapi headers**, via `make headers_install` from
+     the tree already in the build. `<linux/io_uring.h>`, `<asm/unistd.h>`, and
+     friends are declarations only — nothing is emitted, nothing is linked, and
+     they are the same SHA256-pinned bytes `out/src/` is the authority for.
+
+   "No libc" is about not *linking* a C library. Consuming the kernel's ABI
+   definitions is the opposite of a dependency, and **retyping them by hand is
+   forbidden**: it duplicates a definition that is already in the repo and
+   manufactures a class of silent layout and semantic bugs for no benefit. Read
+   the headers; do not copy them.
+5. **Do not add liburing.** Ring mechanics are hand-written on purpose.
+6. **PID 1 must never return.** The kernel panics with `Attempted to kill init`.
+   `rt_main` ends in a loop or a deliberate reboot.
+7. **Cooperative scheduling only.** No preemption. Tasks yield at I/O points or
+   via `rt_yield()`.
+8. **One purity exception exists.** See below. Do not add a second without
+   recording it there.
+
+## The purity exception registry
+
+| symbol | what | why it is allowed |
+|---|---|---|
+| `raw_write()` | direct `write(2)` to console | Needed before the ring exists, to report `io_uring_setup` failure, and from the crash handler when the ring may be corrupt. |
+
+That is the complete list. If you believe you need another, say so explicitly
+rather than adding it quietly.
+
+## Ground truth: read the kernel, do not recall it
+
+`out/src/` holds the **whole pinned 7.2 tree** — `io_uring/`, the uapi headers,
+and everything else. It is the authority for every question about opcodes,
+flags, struct layouts, and behaviour.
+
+**Do not answer io_uring questions from memory or from man pages found online.**
+7.2 postdates most training data and contains things that do not exist in older
+kernels — `IORING_OP_BIND`/`LISTEN`, `IORING_SETUP_SQ_REWIND`, `query.c`
+capability probing, and `loop.c`/`bpf-ops.c` (an event loop that runs in-kernel
+as a BPF struct_ops callback). Man pages describing 6.x are actively misleading
+here.
+
+Read `out/src/`. Cite file and line when making a claim about kernel behaviour.
+
+If `out/src/` is missing, regenerate it with `./src.sh` — opt-in, ~1.7 GB,
+~95k files, about 40s. Use the script rather than `bake src` directly: no
+exporter prunes, so it clears `out/src` first, which is what stops a
+`KERNEL_VERSION` bump leaving files deleted upstream behind in the directory
+whose whole job is being accurate.
+
+## Layout
+
+```
+build/kernel.Dockerfile   SHA256-pinned fetch, toolchain, Kconfig, kernel build
+build/kernel.config       fragment merged over tinyconfig + kvm_guest.config
+docker-bake.hcl           targets: `kernel` (default), `config`, `src`
+run.sh                    boot under QEMU (hvf; ACCEL/SMP overridable)
+debug.sh                  same boot, halted, gdbstub on :1234
+src.sh                    export the pinned kernel tree -> out/src/
+src/                      the runtime
+out/                      GENERATED — gitignored, never edit
+out/vmlinuz               the kernel
+out/kernel.config         what Kconfig actually resolved — read this, not the fragment
+out/System.map            kernel symbols
+out/src/                  whole pinned kernel tree, read-only ground truth
+.scratch/plan.md          design decisions and rationale
+.scratch/tickets/         RT-00N work items
+```
+
+Dockerfile stages: `linux-tarball` → `toolchain` → `kernel-tree` → `kconfig` →
+`kernel-build`, with three `scratch` export stages hanging off them —
+`linux-src`, `config`, `kernel`.
+
+`linux-tarball` is the only stage that knows `KERNEL_VERSION`: it `ADD --unpack`s
+the tarball to `/`, leaving the archive's own `linux-$V/` at the stage root.
+`ADD` has no `--strip-components`, so the prefix is dropped one stage later by
+`COPY --from=linux-tarball /linux-*/ /linux/` — a `COPY` of a directory takes its
+contents, not the directory, so the glob both matches the versioned name and
+discards it. Everything downstream of `kernel-tree` sees a version-free `/linux`,
+and a version bump does not invalidate the toolchain's apk layer.
+
+The kernel tarball is pinned in `docker-bake.hcl` as `KERNEL_VERSION` and
+`KERNEL_SHA256`, reaching `linux-tarball` as build args; the alpine toolchain is
+pinned by digest on its own `FROM` line, since a pin consumed by exactly one
+stage does not need routing through every target. Bumping the kernel means
+changing both variables together — a new version against the old checksum just
+fails the `ADD`.
+
+## Build and run
+
+```sh
+docker buildx bake kernel   # vmlinuz + kernel.config + System.map -> out/
+docker buildx bake config   # what Kconfig resolved, WITHOUT compiling — fast
+./src.sh                    # whole kernel tree -> out/src/ (opt-in, ~1.7 GB, ~40s)
+./run.sh                    # boot (QEMU + hvf, 1 vCPU). Ctrl-C quits
+ACCEL=tcg SMP=4 ./run.sh    # multi-core — slow, but hvf cannot do SMP
+./debug.sh                  # same boot, halted, gdbstub on :1234
+lldb -o 'gdb-remote localhost:1234'
+```
+
+`bake config` is the fast path for any "is X enabled?" question — it resolves
+Kconfig without a compile. Kconfig turns on far more than the fragment asks for,
+so **`out/kernel.config` is the authority on what a build actually is**;
+`build/kernel.config` only records what was requested.
+
+`debug.sh` delegates to `run.sh`, adding only `-s -S`. Keep it that way: the two
+must not drift, least of all on the console device.
+
+## The VM has three sharp edges
+
+Each cost a debugging session to find; all are measured, not assumed.
+
+1. **The console is `hvc0`, never `ttyAMA0`.** `CONFIG_SERIAL_AMBA_PL011 is not
+   set`, so `-nographic` — which binds the console to PL011 — boots completely
+   silently with no error from QEMU. The console comes from an explicit
+   `virtio-serial-device` + `virtconsole` pair. (Adding
+   `CONFIG_SERIAL_AMBA_PL011=y` would also unlock `earlycon`, which
+   virtio-console cannot provide since it needs the device probed first.)
+2. **hvf hangs with more than one vCPU.** QEMU 11.1.0, every gic-version, zero
+   output, no error. Not a kernel limit — `CONFIG_SMP=y`, `NR_CPUS=512`, and
+   TCG boots `-smp 4` fine. Milestone 3 must choose TCG, or bring vfkit back as
+   a second launcher, or be on bare metal by then.
+3. **No kernel symbols in lldb.** `out/vmlinuz` is a raw stripped `Image`, so
+   symbolic breakpoints do not work; registers, disassembly, stepping and memory
+   do. The runtime's own ELF (`-g -static -no-pie`) will symbolise fine. Export
+   `/linux/vmlinux` if kernel-side debugging is ever needed.
+
+## Current boot state
+
+There is **no rootfs and no initramfs**. `./run.sh` boots the kernel, prints its
+log, and panics with `VFS: Unable to mount root fs`. That is expected and is the
+current milestone boundary: the runtime becomes the init, and the initramfs
+stage returns with it (`CONFIG_BLK_DEV_INITRD=y` is already set for that).
+
+Do not reintroduce busybox or a shell without discussion — the design calls for
+the runtime to be PID 1.
+
+## C conventions
+
+**Clang builds the runtime. GCC builds the kernel.** Not a style preference —
+three things depend on it: BPF is Clang-only in practice, and the in-kernel loop
+(`loop.c`/`bpf-ops.c`) is a retained direction; `lldb` is the only debugger on
+this machine and pairs with Clang's debug info; and Clang's freestanding UBSan
+has no GCC equivalent. The kernel stays on GCC because it builds today and
+switching is orthogonal risk — the runtime shares no code with it, so toolchain
+consistency buys nothing.
+
+Verified on the pinned Alpine: Clang 22.1.3, GCC 15.2.0, both fully adequate for
+the C23 this project uses.
+
+Build flags are load-bearing, not stylistic:
+
+```
+-std=c23 -ffreestanding -nostdlib -nostartfiles -static -no-pie
+-fno-stack-protector -fno-omit-frame-pointer -g -O1
+-fsanitize=undefined -fsanitize-minimal-runtime -fno-sanitize-recover=all
+```
+
+- `-static -no-pie` — fixed load addresses; without them the gdbstub is a
+  guessing game.
+- `-fno-omit-frame-pointer` — the crash handler walks the FP chain.
+- `-fno-stack-protector` — otherwise `__stack_chk_fail` is undefined.
+- `-fsanitize=undefined -fsanitize-minimal-runtime` — the closest thing to a
+  test suite this project has. Works freestanding: it emits undefined
+  `__ubsan_handle_*_minimal_abort` symbols that you implement yourself and route
+  into the RT-007 crash handler. Catches shifts past width, misaligned loads,
+  and signed overflow in exactly the hand-rolled pointer and ring-index
+  arithmetic where there is no other safety net.
+
+Rules:
+
+- **`static_assert` assumptions the types cannot express**, not struct layouts —
+  those come from the kernel's headers and are never retyped. The canonical
+  case: `sizeof(struct io_uring_cqe)` is 16 even under `IORING_SETUP_CQE32`
+  (`big_cqe[]` is a flexible array), so ring stride follows the setup flags, not
+  the type. Assert the flags, not the size.
+- **No `errno`.** Raw syscalls return `-errno` in `-1..-4095`.
+- **`memcpy`/`memset`/`memmove`/`memcmp` must exist.** The compiler emits calls
+  to them even under `-ffreestanding`.
+- **Ring head/tail use acquire/release**, not plain loads and stores. Plain
+  accesses work on x86 and fail on aarch64, which is the target.
+- Prefer C23: `constexpr`, `nullptr`, `auto`, `[[nodiscard]]`, keyword
+  `static_assert`, binary literals.
+
+## Testing
+
+**Manual, in-VM, by console inspection.** There is no test harness and no hosted
+unit-test build. Each ticket in `.scratch/tickets/` carries explicit acceptance
+criteria; running them is the test. Boot, read the console, compare.
+
+This is a deliberate choice, not an omission. A hosted build would require
+separating pure logic from syscalls before we know what that boundary should be,
+and imposing that shape now would be designing the runtime around its test
+harness.
+
+The cost, stated plainly: **there is no regression net.** Nothing catches a
+change that breaks an earlier ticket. The discipline that makes this survivable:
+
+- When touching shared code (`switch.S`, `ring.c`, `task.c`), re-run the
+  acceptance checks of every ticket that depends on it, not just the current one.
+- Keep acceptance criteria mechanically checkable — an exact expected console
+  string, not "looks right". `RT-004`'s `1A2B3C` is the model.
+- The crash handler (RT-007) is load-bearing under this policy. With no tests,
+  a good failure report is the only diagnostic you get.
+
+Revisit when either happens: a regression escapes twice, or the manual checks
+stop fitting in one console screen.
+
+## Platform reality
+
+Development is an Apple Silicon VM. Guest vCPUs are host threads that macOS
+migrates across heterogeneous P- and E-cores at will, so **core pinning is
+architecturally meaningful but not measurable here.** Correctness invariants
+hold (one thread owns one ring forever); performance numbers do not. Do not
+optimise against measurements taken on this machine. Bare metal comes later.
+
+## Where work is tracked
+
+`.scratch/plan.md` for decisions and rationale; `.scratch/tickets/RT-00N-*.md`
+for work items with acceptance criteria. Read the plan before proposing
+architecture — most of it has already been argued through, and the rationale for
+rejected alternatives is recorded there.
