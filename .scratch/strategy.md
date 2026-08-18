@@ -94,6 +94,9 @@ port should be a validation event, not a debugging event.
 
 ## Prior art / reading list
 
+Positioning only. **prior-art.md is the evidence** — what was searched, what is
+confirmed absent, and which citations are load-bearing for which invariant.
+
 Nearest neighbors, each missing exactly one axis:
 
 - **Junction (NSDI '24)** — userspace libOS running unmodified Linux binaries
