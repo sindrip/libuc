@@ -19,9 +19,11 @@
 /* Syscall numbers come from the pinned kernel via headers_install. Never
  * hardcode them: __NR_mmap in the raw tree is a macro over __NR3264_mmap that
  * resolves through a __BITS_PER_LONG branch. Let the preprocessor do it. */
+#include <stddef.h>
 #include <stdint.h>
 
 #include <asm/unistd.h>
+#include <asm/unistd_64.h>
 
 /* ---------------------------------------------------------------------------
  * WORKED EXAMPLE — read this closely; you will write the others from it.
@@ -78,10 +80,39 @@ static inline long sys1(long nr, long a0) {
   return x0;
 }
 
-/* TODO [RT-004]: sys6 — six arguments. Used by mmap.
+/* TODO [RT-005]: sys2 — two arguments. Used by io_uring_setup, which is
+ * SYSCALL_DEFINE2(entries, params) at io_uring.c:3145.
  *
- * static inline long sys6(long nr, long a0, long a1, long a2,
- *                         long a3, long a4, long a5)
+ * Same shape as sys3, minus x2.
+ */
+static inline long sys2(long nr, long a0, long a1) {
+  register long x8 __asm__("x8") = nr;
+  register long x0 __asm__("x0") = a0;
+  register long x1 __asm__("x1") = a1;
+
+  __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1) : "memory", "cc");
+  return x0;
+}
+
+/* TODO [RT-005]: sys4 — four arguments. Used by io_uring_register,
+ * SYSCALL_DEFINE4(fd, opcode, arg, nr_args) at register.c:1016.
+ */
+static inline long sys4(long nr, long a0, long a1, long a2, long a3) {
+  register long x8 __asm__("x8") = nr;
+  register long x0 __asm__("x0") = a0;
+  register long x1 __asm__("x1") = a1;
+  register long x2 __asm__("x2") = a2;
+  register long x3 __asm__("x3") = a3;
+
+  __asm__ volatile("svc #0"
+                   : "+r"(x0)
+                   : "r"(x8), "r"(x1), "r"(x2), "r"(x3)
+                   : "memory", "cc");
+
+  return x0;
+}
+
+/* TODO [RT-004]: sys6 — six arguments. Used by mmap.
  *
  * Same shape as sys3, extended with x3, x4, x5 pinned to their registers
  * and listed as inputs. x0 stays the read-write operand.
@@ -134,7 +165,7 @@ static inline bool sys_failed(long r) { return r < 0 && r >= -4095; }
  * If you find yourself reaching for this anywhere else, that is the signal to
  * stop and reread invariant 1.
  *
- * static inline long raw_write(int fd, const void *buf, unsigned long len)
+ * static inline long raw_write(int fd, const void *buf, size_t len)
  * {
  *     return sys3(__NR_write, ...);
  * }
@@ -143,7 +174,7 @@ static inline bool sys_failed(long r) { return r < 0 && r >= -4095; }
  * Think about which cast is correct for a pointer -> long conversion and why
  * (uintptr_t exists in <stdint.h>, which is freestanding).
  */
-static inline long raw_write(int fd, const void *buf, unsigned long len) {
+static inline long raw_write(int fd, const void *buf, size_t len) {
   return sys3(__NR_write, fd, (long)(uintptr_t)buf, (long)len);
 }
 
@@ -168,9 +199,6 @@ static inline long raw_write(int fd, const void *buf, unsigned long len) {
 
 /* TODO [RT-004]: sys_mmap — anonymous memory.
  *
- * static inline long sys_mmap(void *addr, unsigned long len, int prot,
- *                             int flags, int fd, unsigned long off);
- *
  * Returns the mapped address, or -errno in the sys_failed() range. Note
  * the return type: long, not void *. A pointer cannot represent -ENOMEM,
  * so the check has to happen before the caller converts.
@@ -182,7 +210,7 @@ static inline long raw_write(int fd, const void *buf, unsigned long len) {
  * Direct syscall, not a ring op: mmap has no io_uring opcode, which is
  * why invariant 1 lists it as permitted.
  */
-static inline long sys_mmap(void *addr, unsigned long len, int prot, int flags,
+static inline long sys_mmap(void *addr, size_t len, int prot, int flags,
                             int fd, unsigned long off) {
   return sys6(__NR_mmap, (long)(uintptr_t)addr, (long)len, prot, flags, fd,
               (long)off);
@@ -190,13 +218,47 @@ static inline long sys_mmap(void *addr, unsigned long len, int prot, int flags,
 
 /* TODO [RT-004]: sys_mprotect — change protection on an existing mapping.
  *
- * static inline long sys_mprotect(void *addr, unsigned long len, int prot);
- *
  * Three arguments, so sys3 covers it. Used to open the usable part of a
  * task stack after mapping the whole region PROT_NONE.
  */
-static inline long sys_mprotect(void *addr, unsigned long len, int prot) {
+static inline long sys_mprotect(void *addr, size_t len, int prot) {
   return sys3(__NR_mprotect, (long)(uintptr_t)addr, (long)len, prot);
+}
+
+/* Incomplete type: enough to declare a pointer parameter, and it keeps a
+ * thousand lines of io_uring uapi out of every file that only wants write(2).
+ * ring.c includes the real header. */
+struct io_uring_params;
+
+/* TODO [RT-005]: the three io_uring syscalls.
+ *
+ * These are the only syscalls the runtime makes directly once the ring is up;
+ * everything with an opcode goes through the ring instead (invariant 1).
+ * Typed parameters with the casts inside, like raw_write and sys_mmap.
+ *
+ * setup returns a ring fd, enter returns how many SQEs the kernel consumed,
+ * register returns 0 — all three report failure in sys_failed()'s range.
+ *
+ * register's fd is signed rather than unsigned for a reason: -1 selects the
+ * "blind" path that needs no ring at all (register.c:1031), which is how the
+ * capability probe runs before setup has been called.
+ */
+static inline long sys_io_uring_setup(unsigned entries,
+                                      struct io_uring_params *p) {
+  return sys2(__NR_io_uring_setup, entries, (long)(uintptr_t)p);
+}
+
+static inline long sys_io_uring_enter(int fd, unsigned to_submit,
+                                      unsigned min_complete, unsigned flags,
+                                      const void *arg, size_t argsz) {
+  return sys6(__NR_io_uring_enter, fd, to_submit, min_complete, flags,
+              (long)(uintptr_t)arg, (long)argsz);
+}
+
+static inline long sys_io_uring_register(int fd, unsigned opcode, void *arg,
+                                         unsigned nr_args) {
+  return sys4(__NR_io_uring_register, fd, opcode, (long)(uintptr_t)arg,
+              nr_args);
 }
 
 #endif /* RT_SYSCALL_H */

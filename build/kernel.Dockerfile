@@ -35,11 +35,11 @@ COPY --from=uapi-build /linux/usr/include /uapi/include
 FROM runtime-toolchain AS runtime-build
 COPY src /src
 RUN clang --target=aarch64-unknown-linux-gnu -std=c23 \
-        -ffreestanding -nostdlibinc -I/uapi/include \
+        -ffreestanding -nostdlibinc -isystem /uapi/include \
         -nostdlib -nostartfiles -static -fuse-ld=lld \
         -fno-stack-protector -fno-omit-frame-pointer \
         -Wall -Wextra -pedantic -Wsign-conversion -Werror -g -O1 \
-        -o /init /src/start.S /src/switch.S /src/task.c /src/main.c \
+        -o /init /src/start.S /src/switch.S /src/task.c /src/ring.c /src/main.c \
     && mkdir -p /rootfs \
     && cp /init /rootfs/init \
     && cd /rootfs \

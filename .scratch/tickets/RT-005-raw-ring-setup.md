@@ -142,6 +142,48 @@ purity exception from RT-003.
 - Setup failure path exercised once (e.g. pass a bogus flag) and reports a
   decoded `-errno` rather than hanging.
 
+## Verified against the pinned tree
+
+Checked while scaffolding; two of these change the spec above.
+
+**`SINGLE_MMAP` is unconditional here, so assert it.** `p->features` is
+assigned `IORING_FEAT_FLAGS` with no branch (`io_uring.c:3058`), and that
+constant contains `IORING_FEAT_SINGLE_MMAP` (`io_uring.h:35`). The two-mapping
+path is unreachable on this kernel — writing it means shipping a branch that
+can never be tested. Assert the bit and refuse to start.
+
+**Do not size the SQ ring from `sq_off.array`.** The formula liburing uses,
+`sq_off.array + sq_entries * sizeof(unsigned)`, is wrong under `NO_SQARRAY`:
+the kernel only assigns `sq_off.array` when the flag is *absent*
+(`io_uring.c:2941`), so it stays zero and the arithmetic yields a mapping far
+too small. Size the single mapping from the CQE array instead — `cq_off.cqes`
+plus one CQE per cq entry.
+
+**The query ABI, from `query.c`.** `io_uring_register(-1, ...)` takes the blind
+path that needs no ring (`register.c:1031`). `nr_args` must be `0`
+(`query.c:133`), unlike every other register opcode. `hdr.__resv` must be zero,
+`hdr.result` must be zero on input, and `hdr.size` must be non-zero
+(`query.c:85`). The kernel copies *from* the result buffer before writing it
+(`query.c:88`), so zero it first. `next_entry == 0` ends the chain
+(`query.c:136`). A `0` return from the syscall does **not** mean the query
+succeeded — per-entry status is in `hdr.result` (`query.c:112`).
+
+**`NO_SQARRAY` indexing.** `io_get_sqe` masks the cached head directly and
+skips the `sq_array` lookup entirely (`io_uring.c:1990-1996`).
+
+**Syscall arities.** `io_uring_setup` is `SYSCALL_DEFINE2`
+(`io_uring.c:3145`), `io_uring_enter` is `SYSCALL_DEFINE6`
+(`io_uring.c:2595`), `io_uring_register` is `SYSCALL_DEFINE4`
+(`register.c:1016`) — so this ticket needs `sys2` and `sys4`, which do not
+exist yet.
+
+**Build.** The uapi headers do not compile under `-pedantic`:
+`<linux/io_uring.h>` trips `-Wzero-length-array` on the SQE's `cmd[0]`, and
+`-Wgnu-empty-struct` plus `-Wflexible-array-extensions` on
+`__DECLARE_FLEX_ARRAY`. Fixed by moving the include path from `-I` to
+`-isystem` in both the Makefile and the Dockerfile, which suppresses
+diagnostics inside them while leaving `-pedantic` pointed at our code.
+
 ## Notes
 
 Do **not** add `SQ_REWIND` yet. It requires `NO_SQARRAY` (which you have) and

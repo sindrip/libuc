@@ -21,9 +21,9 @@
 #include "syscall.h"
 
 /* Stack geometry. One guard page below the usable region. */
-constexpr unsigned long RT_PAGE_SIZE = 4096;
-constexpr unsigned long RT_GUARD_SIZE = RT_PAGE_SIZE;
-constexpr unsigned long RT_STACK_SIZE = 64 * 1024;
+constexpr size_t RT_PAGE_SIZE = 4096;
+constexpr size_t RT_GUARD_SIZE = RT_PAGE_SIZE;
+constexpr size_t RT_STACK_SIZE = 64 * 1024;
 
 /* Both properties are accidents of the numbers above, not guarantees, and
  * neither fails visibly. mmap promises page alignment and nothing more. */

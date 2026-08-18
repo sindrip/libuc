@@ -1,59 +1,111 @@
 /*
- * RT-004 driver: prove the context switch works.
+ * RT-005 driver: one ring, one NOP, one CQE.
  *
- * One task writes 'A', yields, writes 'B', yields, writes 'C', then returns.
- * The scheduler emits a digit before each resume. RT-003's banner runs first.
+ * NOP is deliberate. It has no fd and touches no I/O path, so anything that
+ * goes wrong here is submission or completion mechanics and nothing else.
  *
- * Every character is a proof:
- *   'rt: alive' — RT-003 substrate intact: start.S, syscall.h, raw_write
- *   '1' — scheduler ran, about to enter the task for the first time
- *   'A' — task started on its own stack, trampoline worked
- *   '2' — task yielded, scheduler regained control
- *   'B' — task resumed where it left off (x30 restore correct)
- *   '3' — second yield/resume cycle
- *   'C' — task's third run
- *   (then the task returns → trampoline branches to rt_task_exit →
- *    scheduler sees RT_DEAD → idle loop)
+ * Expected console:
  *
- * The banner is part of the test rather than a leftover: every character
- * after it travels through raw_write -> sys3 -> svc #0, so RT-003's
- * acceptance check re-runs on every boot. It also separates the first two
- * failures below, which are otherwise one indistinguishable "no output".
+ *     rt: alive
+ *     1A2B3C
+ *     ops <n> reg <n> feat <n>
+ *     setup rejects bogus flags: <errno>
+ *     nop ok
+ *
+ * The values are exact, not approximate — the kernel is pinned, so
+ * nr_request_opcodes and the feature mask are constants for this tree. Record
+ * what you observe in the ticket; a change in them later means the kernel
+ * moved, which is worth knowing loudly.
+ *
+ * Every line is a proof:
+ *   'rt: alive'   RT-003 substrate: start.S, syscall.h, raw_write
+ *   '1A2B3C'      RT-004 still works. Not sentiment — this ticket edits
+ *                 syscall.h, which task.c includes, and AGENTS.md requires
+ *                 re-running the checks of every ticket that depends on code
+ *                 you touched. Six characters is the whole cost.
+ *   'ops ...'     io_uring_register reached the kernel on the ringless path,
+ *                 so the query ABI and the hdr constraints are right
+ *   'setup ...'   the failure path reports a decoded errno instead of hanging
+ *                 or dying silently
+ *   'nop ok'      setup, both mappings, SQE fill, tail publish, enter, and CQ
+ *                 reap all agree
  *
  * Reading a failure:
  *
- *   nothing at all      the substrate is broken, not the switch. syscall.h,
- *                       start.S, or the link. Debug RT-003, not task.c.
- *   "rt: alive" only    the scheduler never reached its first resume, or
- *                       rt_task_create faulted.
- *   "rt: alive1"        the first switch-in never landed in the task: check
- *                       the primed lr and sp in rt_task_create.
- *   "...1A" then fault  switch-in worked; the yield back corrupted something.
- *   "...1A2" no 'B'     the resume path failed.
- *   "...1A2B3C" fault   rt_task_exit is broken.
- *
- * Compile without linking: `make check`.
+ *   nothing at all        substrate broken. Debug RT-003, not ring.c.
+ *   stops after 1A2B3C    the probe faulted or trapped — a ring.c stub is
+ *                         still a __builtin_trap(), or the query hdr was
+ *                         rejected. A brk shows as exitcode=0x00000005.
+ *   probe prints zeros    the syscall returned 0 but hdr.result did not; the
+ *                         per-entry status was never checked.
+ *   'nop ok' missing      reached the ring but the round trip failed: wrong
+ *                         mapping size, wrong stride, or a missing barrier.
+ *                         A too-small ring mapping faults on the CQE read.
+ *   hangs after setup     enter is waiting for a completion that was never
+ *                         submitted — the tail was published without release,
+ *                         or to_submit was zero.
  */
+#include "ring.h"
 #include "syscall.h"
 #include "task.h"
 
-/* TODO(1): Emit a single character.
- *
- * One byte to fd 1. raw_write wants a pointer and a length, so the
- * character needs an address.
- */
+/* TODO(1) [RT-004]: Emit a single character. */
 static void put(char c) { raw_write(1, &c, 1); }
 
-/* TODO(2): The task body.
+/* TODO [RT-005]: Emit a NUL-terminated string in a single write.
  *
- * 'A', yield, 'B', yield, 'C', then return.
+ * One syscall per string, not per character — the same argument that made
+ * put_dec format into a buffer rather than call put twenty times.
  *
- * The return is the part under test. Nothing else in this ticket drives
- * rt_task_entry's `blr x19` back to the `b rt_task_exit` that follows it,
- * so a task that loops forever would pass every other check here.
+ * raw_write needs a length and a C string does not carry one, so find the
+ * terminator first and let the distance be the length. That subtraction is a
+ * ptrdiff_t, which is signed, so it needs the same explicit cast put_dec uses.
  *
- * arg is unused.
+ * Taking `const char *` rather than a length is what keeps this a plain
+ * function: a length would have to come from sizeof at each call site, and
+ * sizeof only sees the array inside a macro. It costs nothing — clang folds
+ * the walk to a constant for literals, emitting the length directly.
  */
+static void put_str(const char *s) {
+  size_t n = 0;
+  while (s[n]) {
+    n++;
+  }
+  raw_write(1, s, n);
+}
+
+/* TODO(2) [RT-005]: Print an unsigned value in decimal.
+ *
+ * Needed twice over: the probe has numbers to report, and the failure path has
+ * to decode an -errno into something readable. Without it "reports a decoded
+ * errno" degrades to "returns nonzero", which is not a diagnostic.
+ *
+ * Digits come out least-significant first, so something has to reverse them —
+ * a small buffer filled backwards, or recursion. Either is fine; pick the one
+ * you would rather read at 3am.
+ *
+ * The freestanding question worth asking: does dividing by 10 emit a call to
+ * a runtime library that does not exist here? On this target, no — clang
+ * strength-reduces a constant divisor into a multiply-high and msub, so no
+ * division instruction and no __udivdi3. Confirmed, not assumed; on a 32-bit
+ * target the same code links against compiler-rt.
+ *
+ * Decide what zero prints. A `while (v)` loop emits nothing for it, and
+ * silence is the worst possible rendering of a value you wanted to inspect.
+ */
+[[maybe_unused]] static void put_dec(unsigned long v) {
+  char buf[20];
+  char *p = buf + sizeof buf;
+
+  do {
+    *--p = (char)('0' + v % 10);
+    v /= 10;
+  } while (v);
+
+  raw_write(1, p, (size_t)(buf + sizeof buf - p));
+}
+
+/* TODO(3) [RT-004]: The task body. */
 static void abc_task(void *arg) {
   (void)arg;
 
@@ -64,43 +116,8 @@ static void abc_task(void *arg) {
   put('C');
 }
 
-/* TODO(3): The scheduler.
- *
- * a) Already below: RT-003's banner, retained verbatim so that ticket's
- *    acceptance check re-runs on every boot.
- *
- *    It has to stay `static const char[]` rather than `const char *`:
- *    a pointer loses the array type, so `sizeof` becomes 8 and the
- *    length silently folds to nothing.
- *
- * b) Create one task, running abc_task.
- *
- * c) Loop, resuming the task until it reports itself finished, emitting
- *    one digit before each resume — '1', then '2', then '3'.
- *
- *    Deriving the digit from the iteration count is acceptable only
- *    because this test knows there are exactly three. Nothing else in
- *    this file should acquire that assumption.
- *
- * d) A newline for a clean console, then the idle loop — `wfe` forever,
- *    as in RT-003. Invariant 6: PID 1 must never return.
- *
- * `stack` is the pre-alignment stack pointer start.S leaves in x0
- * (start.S:44). Nothing in this ticket needs it.
- *
- * Expected console output:
- *
- *     rt: alive
- *     1A2B3C
- *
- * then silence.
- */
-[[noreturn]] void rt_main(void *stack) {
-  (void)stack;
-
-  static const char banner[] = "rt: alive\n";
-  raw_write(1, banner, sizeof banner - 1);
-
+/* TODO(4) [RT-004]: The cooperative round trip, kept as a regression check. */
+static void rt004_selftest(void) {
   struct rt_task t;
   rt_task_create(&t, abc_task, nullptr);
 
@@ -111,6 +128,98 @@ static void abc_task(void *arg) {
     rt_sched_resume(&t);
   }
   put('\n');
+}
+
+/* TODO(5) [RT-005]: Probe the kernel and report what it can do.
+ *
+ * rt_ring_probe fills an io_uring_query_opcode; print nr_request_opcodes,
+ * nr_register_opcodes and feature_flags. That is one syscall, and it converts
+ * every future "why doesn't this opcode work" into a question with an answer
+ * already on the console.
+ *
+ * Two of those fields are worth understanding rather than just printing.
+ * nr_request_opcodes is IORING_OP_LAST (query.c:23), so it is a count and the
+ * highest valid opcode is one less. feature_flags is the full mask the kernel
+ * supports, which is not the same thing as params.features from setup — that
+ * one describes the ring you actually created.
+ *
+ * IORING_FEAT_NO_IOWAIT (bit 17) is new on 7.2 and worth noticing in the
+ * output. The ticket says log it, not act on it.
+ */
+static void rt005_probe(void) {
+  struct io_uring_query_opcode q = {};
+
+  auto ret = rt_ring_probe(&q);
+  if (sys_failed(ret)) {
+    put_str("probe failed: ");
+    put_dec((unsigned long)-ret);
+    put('\n');
+    return;
+  }
+
+  put_str("ops ");
+  put_dec(q.nr_request_opcodes);
+  put_str(" reg ");
+  put_dec(q.nr_register_opcodes);
+  put_str(" feat ");
+  put_dec(q.feature_flags);
+  put('\n');
+}
+
+/* TODO(6) [RT-005]: Exercise the failure path once, on purpose.
+ *
+ * Call setup with a flag combination the kernel must reject and print the
+ * decoded errno. SQPOLL alongside DEFER_TASKRUN is the honest choice: it fails
+ * for a reason this design depends on, at io_uring.c:2815-2821, rather than
+ * because a bit is nonsense.
+ *
+ * This is the sanctioned purity exception doing its job — a ring that failed
+ * to exist cannot report its own failure, so this goes out through raw_write.
+ * It is also the last chance to prove the reporting path works while you still
+ * know the answer; after this, failures will be ones you did not predict.
+ *
+ * Do not leak the fd if it unexpectedly succeeds. There is no close() wrapper
+ * yet, and IORING_OP_CLOSE cannot help before a ring exists.
+ */
+[[maybe_unused]] static void rt005_setup_failure(void) { __builtin_trap(); }
+
+/* TODO(7) [RT-005]: The NOP round trip.
+ *
+ * Set up a ring, take an SQE, make it a NOP with a sentinel user_data,
+ * submit-and-wait for one completion, reap it.
+ *
+ * Pick a sentinel that cannot be confused with zero-filled memory or with a
+ * pointer — if user_data comes back as 0 you want to know whether that means
+ * "the kernel echoed our value" or "we read an SQE that was never written".
+ *
+ * Three things the acceptance criteria actually pin down, all of which can
+ * fail independently:
+ *   - enter returns 1, meaning the kernel consumed exactly the one SQE
+ *   - the CQE's res is 0, meaning NOP itself succeeded
+ *   - the CQE's user_data equals the sentinel, meaning you reaped *your*
+ *     completion out of the slot you think you did
+ *
+ * Check all three before printing "nop ok". A reaping loop with the stride
+ * wrong reads a plausible-looking CQE from the wrong offset, and only the
+ * user_data comparison catches it.
+ */
+[[maybe_unused]] static void rt005_nop(void) { __builtin_trap(); }
+
+/* TODO(8) [RT-005]: Wire the above into rt_main, in order: banner, RT-004
+ * selftest, probe, failure path, NOP, then idle.
+ *
+ * Each of the four stubs above carries [[maybe_unused]] so the build stays
+ * clean while they are unreferenced. Delete the attribute as you call each
+ * one — that way an accidentally orphaned function still gets reported.
+ */
+[[noreturn]] void rt_main(void *stack) {
+  (void)stack;
+
+  static const char banner[] = "rt: alive\n";
+  raw_write(1, banner, sizeof banner - 1);
+
+  rt004_selftest();
+  rt005_probe();
 
   for (;;) {
     __asm__ volatile("wfe");

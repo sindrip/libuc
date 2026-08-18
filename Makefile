@@ -14,7 +14,14 @@ UBSAN := $(shell $(CLANG) $(UBSAN_WANT) -x c -c /dev/null -o /dev/null 2>&1 \
 # -nostdlibinc drops the platform's libc include paths but keeps clang's own,
 # so <stdint.h> and <stdatomic.h> survive while <stdio.h> cannot be reached.
 # Invariant 4 enforced by the compiler instead of by discipline.
-CPPFLAGS := -nostdlibinc -I$(UAPI)
+#
+# -isystem, not -I: the uapi headers are the kernel's own code and do not
+# compile under -pedantic. <linux/io_uring.h> alone trips -Wzero-length-array
+# on the SQE's cmd[0], and -Wgnu-empty-struct plus -Wflexible-array-extensions
+# on __DECLARE_FLEX_ARRAY. Warnings are suppressed inside -isystem paths, which
+# keeps -pedantic pointed at our code where it belongs. Relaxing the flag
+# instead would silence those checks everywhere.
+CPPFLAGS := -nostdlibinc -isystem $(UAPI)
 # -Werror matches the container. Without it `make check` is green on code the
 # real build rejects, and the diagnostic arrives from a docker log after a
 # kernel rebuild instead of from the compiler in half a second.

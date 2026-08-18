@@ -14,6 +14,7 @@
 #ifndef RT_TASK_H
 #define RT_TASK_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 /* TODO(1): Define struct rt_ctx — the saved register state.
@@ -78,7 +79,7 @@ enum rt_task_state { RT_READY = 0, RT_RUNNING = 1, RT_DEAD = 2 };
  * Fields:
  *   struct rt_ctx  ctx         — saved register context
  *   void          *stack_base  — the mmap base, INCLUDING the guard page
- *   unsigned long  stack_len   — total mmap length (guard + usable)
+ *   size_t         stack_len   — total mmap length (guard + usable)
  *   enum rt_task_state state
  *   void (*fn)(void *)         — the task's entry function
  *   void *arg                  — argument passed to fn
@@ -86,7 +87,7 @@ enum rt_task_state { RT_READY = 0, RT_RUNNING = 1, RT_DEAD = 2 };
 struct rt_task {
   struct rt_ctx ctx;
   void *stack_base;
-  unsigned long stack_len;
+  size_t stack_len;
   enum rt_task_state state;
   void (*fn)(void *);
   void *arg;
