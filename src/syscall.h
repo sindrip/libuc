@@ -78,6 +78,39 @@ static inline long sys1(long nr, long a0) {
   return x0;
 }
 
+/* TODO [RT-004]: sys6 — six arguments. Used by mmap.
+ *
+ * static inline long sys6(long nr, long a0, long a1, long a2,
+ *                         long a3, long a4, long a5)
+ *
+ * Same shape as sys3, extended with x3, x4, x5 pinned to their registers
+ * and listed as inputs. x0 stays the read-write operand.
+ *
+ * Six is the maximum: aarch64 passes syscall arguments in x0–x5 and
+ * nothing more, so this is the widest wrapper the ABI can need. mmap is
+ * why it exists — addr, len, prot, flags, fd, offset. mprotect takes
+ * three, so sys3 already covers it.
+ *
+ * The gaps are deliberate: add a wrapper when a syscall needs one.
+ */
+static inline long sys6(long nr, long a0, long a1, long a2, long a3, long a4,
+                        long a5) {
+  register long x8 __asm__("x8") = nr;
+  register long x0 __asm__("x0") = a0;
+  register long x1 __asm__("x1") = a1;
+  register long x2 __asm__("x2") = a2;
+  register long x3 __asm__("x3") = a3;
+  register long x4 __asm__("x4") = a4;
+  register long x5 __asm__("x5") = a5;
+
+  __asm__ volatile("svc #0"
+                   : "+r"(x0)
+                   : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5)
+                   : "memory", "cc");
+
+  return x0;
+}
+
 /* TODO(2): sys_failed — did a raw syscall return fail?
  *
  * Raw returns are -errno in -1..-4095. Anything else is a success value, and
@@ -111,7 +144,6 @@ static inline bool sys_failed(long r) { return r < 0 && r >= -4095; }
  * (uintptr_t exists in <stdint.h>, which is freestanding).
  */
 static inline long raw_write(int fd, const void *buf, unsigned long len) {
-
   return sys3(__NR_write, fd, (long)(uintptr_t)buf, (long)len);
 }
 
@@ -123,11 +155,48 @@ static inline long raw_write(int fd, const void *buf, unsigned long len) {
  * Mark it [[noreturn]] and make sure the compiler believes you — after the
  * syscall the function must not fall off the end. __builtin_unreachable() is
  * the usual way to say so.
+ *
+ * That is a kernel guarantee, not an assumption: do_group_exit is declared
+ * __noreturn (include/linux/sched/task.h:93) and the syscall body is marked
+ * NOTREACHED (kernel/exit.c:1161).
  */
 [[noreturn]] static inline void sys_exit_group(int status) {
   sys1(__NR_exit_group, status);
 
   __builtin_unreachable();
+}
+
+/* TODO [RT-004]: sys_mmap — anonymous memory.
+ *
+ * static inline long sys_mmap(void *addr, unsigned long len, int prot,
+ *                             int flags, int fd, unsigned long off);
+ *
+ * Returns the mapped address, or -errno in the sys_failed() range. Note
+ * the return type: long, not void *. A pointer cannot represent -ENOMEM,
+ * so the check has to happen before the caller converts.
+ *
+ * fd is the trap. mmap's argument is a long, and MAP_ANONYMOUS wants -1;
+ * a bare -1 int sign-extends correctly only if you let it — pass it
+ * through (long) explicitly here so no caller has to think about it.
+ *
+ * Direct syscall, not a ring op: mmap has no io_uring opcode, which is
+ * why invariant 1 lists it as permitted.
+ */
+static inline long sys_mmap(void *addr, unsigned long len, int prot, int flags,
+                            int fd, unsigned long off) {
+  return sys6(__NR_mmap, (long)(uintptr_t)addr, (long)len, prot, flags, fd,
+              (long)off);
+}
+
+/* TODO [RT-004]: sys_mprotect — change protection on an existing mapping.
+ *
+ * static inline long sys_mprotect(void *addr, unsigned long len, int prot);
+ *
+ * Three arguments, so sys3 covers it. Used to open the usable part of a
+ * task stack after mapping the whole region PROT_NONE.
+ */
+static inline long sys_mprotect(void *addr, unsigned long len, int prot) {
+  return sys3(__NR_mprotect, (long)(uintptr_t)addr, (long)len, prot);
 }
 
 #endif /* RT_SYSCALL_H */

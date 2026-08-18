@@ -15,8 +15,11 @@ UBSAN := $(shell $(CLANG) $(UBSAN_WANT) -x c -c /dev/null -o /dev/null 2>&1 \
 # so <stdint.h> and <stdatomic.h> survive while <stdio.h> cannot be reached.
 # Invariant 4 enforced by the compiler instead of by discipline.
 CPPFLAGS := -nostdlibinc -I$(UAPI)
+# -Werror matches the container. Without it `make check` is green on code the
+# real build rejects, and the diagnostic arrives from a docker log after a
+# kernel rebuild instead of from the compiler in half a second.
 CFLAGS   := -std=c23 -ffreestanding -fno-stack-protector -fno-omit-frame-pointer \
-            -Wall -Wextra -pedantic -Wsign-conversion -g -O1 $(UBSAN)
+            -Wall -Wextra -pedantic -Wsign-conversion -Werror -g -O1 $(UBSAN)
 # No -no-pie: -static already implies it (verified, ELF Type=EXEC either way),
 # and clang errors under -Werror that the flag went unused.
 LDFLAGS  := -nostdlib -nostartfiles -static -fuse-ld=lld
@@ -56,7 +59,11 @@ debug: out/vmlinuz
 
 # Compiles only. Linking needs lld, which is not on the host — that happens in
 # the container once the runtime stage exists.
-check: $(OBJ)
+# compile_commands.json is a prerequisite so the editor cannot fall behind the
+# build: `clean` removes it, and `tidy` was previously the only target that
+# asked for it back. Without it clangd guesses the flags, loses -std=c23, and
+# reports nullptr/constexpr as undeclared in code that compiles.
+check: compile_commands.json $(OBJ)
 
 # Checks and WarningsAsErrors live in .clang-tidy; flags come from
 # compile_commands.json, so there is no second copy to drift.
@@ -78,7 +85,10 @@ out/obj/%.o: src/%.S Makefile | $(UAPI)
 -include $(OBJ:.o=.d)
 
 # Generated rather than hand-written so the editor and the build cannot drift.
-compile_commands.json: Makefile
+# The source list is a prerequisite, not just the Makefile: a new src/*.c is
+# newer than the database that omits it, which is the only thing that makes
+# adding a file regenerate rather than leaving clangd to infer its flags.
+compile_commands.json: Makefile $(wildcard src/*.c)
 	@printf '[' > $@
 	@sep=""; for f in $(wildcard src/*.c); do \
 	  printf '%s\n  {"directory": "%s", "file": "%s", "command": "%s"}' \

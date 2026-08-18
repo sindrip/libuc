@@ -46,6 +46,15 @@ The last one is why `cpu_switch_to` does `mov x9, sp` and then stores `x9`.
 **`sp` must be 16-byte aligned** at every instruction that uses it. Linux hands
 `_start` an aligned `sp` already; realigning is defensive, not required.
 
+**This rule is about `sp`, not about `stp`/`ldp`.** They are easy to conflate,
+and conflating them produces pointless padding. A register save area is a plain
+struct, not a stack: `stp`/`ldp` permit unaligned access on Normal memory, so
+natural 8-byte alignment is already more than the instruction requires. Ground
+truth: the kernel's `cpu_context`
+(`out/src/arch/arm64/include/asm/processor.h:136-150`) is 13 `unsigned long` =
+**104 bytes**, not a multiple of 16, and it is exactly what `cpu_switch_to`
+drives with `stp`/`ldp`. `struct rt_ctx` is 168 for the same reason.
+
 ## Instructions this project needs
 
 ```
