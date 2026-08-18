@@ -30,6 +30,12 @@ handler run **after a stack-overflow fault on the guard page** — the case you
 most want reported. Without it the handler faults trying to push its own frame
 and you get nothing.
 
+The alternate stack is **per-thread state**: at milestone 3, every `clone`'d
+worker must install its own via `sigaltstack` before any task runs on it, or a
+worker-core overflow loses exactly the report this ticket's acceptance test
+proves. (`sigaltstack` has no ring opcode; it sits on invariant 1's direct
+list next to `rt_sigaction`.)
+
 Note: with no libc there is no `sigaction` wrapper; the raw syscall takes a
 `sigset_t` size argument (8 on aarch64) and the `sa_restorer` field is required
 on some architectures. On aarch64 the kernel provides the restorer via the vDSO,

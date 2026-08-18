@@ -22,6 +22,26 @@ The secondary goal is learning C properly — which is why the hard paths are ta
 deliberately (hand-rolled context switching, raw ring mechanics, no libc) rather
 than delegated to a library.
 
+## North star
+
+The destination is **libuc**: this runtime packaged as the C library — a libc
+whose blocking calls are fiber suspensions over the ring, with a C ABI surface
+good enough to host C code we choose to vendor. "No libc" has always meant
+never *linking* one; becoming one is the goal.
+
+PID 1, the QEMU harness, and the single pinned kernel are scaffolding, not
+identity: they buy a noise-free machine for developing the scheduler and ring
+mechanics. When the runtime later runs hosted, the kernel pin becomes a version
+*floor* plus capability probing at init — never a compatibility matrix.
+
+Read the invariants in that light. The ring as syscall ABI, shared-nothing
+pinned cores, and cooperative fibers are the product and survive into libuc
+unchanged. The absences — no `errno`, no allocator, no TLS — are phase
+discipline: each returns as a libuc deliverable when vendored C code first
+needs it, per-fiber where the C world assumed per-thread. Vendored static
+libraries come first; being the platform libc for whole foreign programs is a
+separate, later question the north star does not require answered.
+
 ## Invariants — do not violate these without discussion
 
 These are the design. Code that breaks one is wrong even if it works.
@@ -30,7 +50,8 @@ These are the design. Code that breaks one is wrong even if it works.
    through the ring. `openat`, `close`, `socket`, `bind`, `listen`, `accept`,
    `read`, `write`, `timeout`, `futex` — all opcodes on 7.2. Direct syscalls are
    permitted **only** where no opcode exists: `mmap`, `mprotect`, `munmap`,
-   `clone`, `sched_setaffinity`, `rt_sigaction`, `io_uring_*`, `exit_group`.
+   `clone`, `sched_setaffinity`, `rt_sigaction`, `sigaltstack`, `io_uring_*`,
+   `exit_group`.
 2. **Never `IORING_SETUP_SQPOLL`.** It is mutually exclusive with
    `DEFER_TASKRUN`, `COOP_TASKRUN`, and `TASKRUN_FLAG`
    (`out/src/io_uring/io_uring.c:2815-2821`). Rings are

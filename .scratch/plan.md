@@ -237,7 +237,11 @@ possible.
 
 2. **Single-core echo server** — `SOCKET`/`BIND`/`LISTEN`/`ACCEPT`/`RECV`/`SEND`
    as opcodes. Needs virtio-net. Decide provided buffer rings
-   (`IORING_REGISTER_PBUF_RING`) + multishot recv here.
+   (`IORING_REGISTER_PBUF_RING`) + multishot recv here. This decision is
+   coupled to the buffer-lifetime reap rule (`.scratch/transport.md`):
+   provided buffer rings are *core-owned* receive buffers, which is what
+   keeps task teardown from waiting on in-flight reads — decide the two
+   together.
 3. **Multi-core** — `clone()`, `sched_setaffinity`, N rings, one per pinned
    thread. Watchdog: each scheduler arms an `IORING_OP_TIMEOUT`, bumps its own
    relaxed atomic tick, and reads its neighbour's in a ring — core *i* watches

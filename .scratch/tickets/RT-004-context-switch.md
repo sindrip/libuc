@@ -72,6 +72,14 @@ and `x20`, which the trampoline reads. The trampoline calls the function and,
 when it returns, marks the task dead and switches back to the scheduler — it
 must **never** `ret` off the end of a task stack.
 
+Prime the new context's `x29` to **zero**, and have the trampoline establish
+its frame with that null `x29` as the saved frame pointer, for the same reason
+`start.S` zeroes it: RT-007's crash handler walks the FP chain and stops at
+null. Every task stack is a new chain; a root frame inheriting a stale `x29`
+sends the walker into another task's dead stack — a backtrace that lies is
+worse than none. Acceptance test 5 should also confirm the guard-page fault's
+backtrace terminates at the task root, not in the scheduler.
+
 ### Stacks
 
 ```c
