@@ -283,6 +283,23 @@ static void rt005_nop(void) {
  * clean while they are unreferenced. Delete the attribute as you call each
  * one — that way an accidentally orphaned function still gets reported.
  */
+/* TODO(9) [RT-007]: Prove the crash handler before trusting it. Three
+ * deliberate faults, wired into rt_main one at a time and removed after each
+ * dump is observed on the console:
+ *
+ *   - a null dereference: expect SIGSEGV, si_addr 0, a plausible pc, and at
+ *     least two frames from the walk
+ *   - infinite recursion inside a task: the guard-page overflow. This is the
+ *     SA_ONSTACK proof — it fails loudly if the alternate stack is
+ *     misconfigured, and it is the case the handler most exists for
+ *   - a shift like 1 << 40: the UBSan path end to end, with a return address
+ *     that resolves to the offending line under ./debug.sh — proving it
+ *     works, not merely that it links
+ *
+ * rt_crash_install() itself goes at the top of rt_main, before anything that
+ * can fault. A handler installed after the crash reports nothing.
+ */
+
 /* The only caller is start.S, which passes the pre-alignment stack pointer in
  * x0 (start.S:44). Declared here because assembly cannot be checked against a
  * C signature — without this, nothing at all verifies the two agree. */
