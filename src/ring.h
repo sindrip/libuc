@@ -33,6 +33,11 @@ struct rt_ring {
 
   struct io_uring_cqe *cqes;
 
+  /* The true SQ tail, private to the owning thread — hence not _Atomic. Runs
+   * ahead of *sq_tail by the staged slots until submit publishes it; the
+   * mirror of the kernel's own cached_sq_head (io_uring_types.h:353). */
+  unsigned cached_sq_tail;
+
   /* Cached values, not pointers: unlike head and tail these never change.
    * Entry counts are mask + 1, so they are not stored. */
   unsigned sq_mask;
@@ -132,8 +137,8 @@ struct io_uring_sqe *rt_ring_sqe(struct rt_ring *r);
  * completion work. Passing min_complete makes the same call wait, so RT-005
  * needs no separate wait path.
  */
-long rt_ring_submit_and_wait(struct rt_ring *r, unsigned to_submit,
-                             unsigned min_complete);
+int rt_ring_submit_and_wait(struct rt_ring *r, unsigned to_submit,
+                            unsigned min_complete);
 
 /* TODO(7): Take one CQE. Returns false if the CQ is empty.
  *

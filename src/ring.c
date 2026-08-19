@@ -1,16 +1,14 @@
 /*
- * Ring mechanics. The requirements and traps for each function are in ring.h,
- * next to its declaration.
- *
- * Every stub below traps. That is deliberate: a stub returning 0 or -1 would
- * let the driver run and fail somewhere else, and __builtin_trap() compiles to
- * a single brk that stops at a known address instead. Replacing a trap with a
- * body is the work of this ticket.
+ * Ring mechanics, hand-rolled (invariant 5). The contract and traps for each
+ * function live in ring.h, next to its declaration; the comments here carry
+ * what only the bodies can — the ordering handshakes, and where each one
+ * pairs with the kernel's side of the protocol.
  */
 
 #include "ring.h"
 
 #include <stdalign.h>
+#include <stdatomic.h>
 
 #include <asm/errno.h>  /* EOPNOTSUPP */
 #include <linux/mman.h> /* MAP_SHARED, MAP_POPULATE, PROT_* */
@@ -44,6 +42,19 @@
 constexpr unsigned RT_RING_FLAGS = IORING_SETUP_SINGLE_ISSUER |
                                    IORING_SETUP_DEFER_TASKRUN |
                                    IORING_SETUP_NO_SQARRAY;
+
+/* Ring stride comes from the setup flags, not from the types: SQE and CQE
+ * both end in a flexible array member, so sizeof stays 64 and 16 no matter
+ * which flags the ring was created with — under SQE128 or CQE32 the real
+ * stride doubles, and every sizeof-based computation in this file silently
+ * walks the ring at half step, reading garbage from every other entry.
+ * Asserting the sizes therefore proves nothing; assert the real assumption —
+ * that RT_RING_FLAGS contains neither stride-changing flag — so the day one
+ * is added, the build breaks here instead of the reap loop corrupting
+ * silently. */
+static_assert(
+    (RT_RING_FLAGS & (IORING_SETUP_SQE128 | IORING_SETUP_CQE32)) == 0,
+    "stride arithmetic assumes 64-byte SQEs and 16-byte CQEs");
 
 int rt_ring_probe(struct io_uring_query_opcode *out) {
   *out = (struct io_uring_query_opcode){};
@@ -141,25 +152,98 @@ int rt_ring_setup(struct rt_ring *r, unsigned entries) {
   r->cq_mask = *(unsigned *)__builtin_assume_aligned(
       r->ring + params.cq_off.ring_mask, alignof(unsigned));
 
+  /* The private cursor starts equal to the shared tail it runs ahead of —
+   * read, not zeroed, because "equal" is the invariant and 0 the coincidence.
+   * Relaxed: the ring is brand new; there is nothing to order against. */
+  r->cached_sq_tail = atomic_load_explicit(r->sq_tail, memory_order_relaxed);
+
   r->features = params.features;
   return 0;
 }
 
 struct io_uring_sqe *rt_ring_sqe(struct rt_ring *r) {
-  (void)r;
-  __builtin_trap();
+  /* a) Fullness. Full when cached_sq_tail - head == sq_mask + 1. Both
+   *    counters are free-running — they wrap through UINT_MAX and are masked
+   *    only at the moment of indexing — and that is exactly what makes the
+   *    unsigned subtraction correct across the wrap; masking before
+   *    subtracting destroys it. The tail side is the private cursor, a plain
+   *    read: the shared tail is not consulted here, since it lags by the
+   *    staged slots and testing it would hand a staged slot out twice. The
+   *    head load is acquire: the kernel advancing sq_head is its statement
+   *    that it has finished reading the slots below, and the writes into the
+   *    reclaimed slot in c) must be ordered after observing it. (On this
+   *    kernel the SQ is only read inside our own enter call, so a plain load
+   *    happens to work — write the discipline, not the coincidence.)
+   *
+   *    The nullptr return is a real contract even though a one-deep NOP can
+   *    never hit it: it is the backpressure point the scheduler will later
+   *    lean on, so the first caller must not learn to ignore it. */
+  auto pending = r->cached_sq_tail -
+                 atomic_load_explicit(r->sq_head, memory_order_acquire);
+
+  if (pending == r->sq_mask + 1) {
+    return nullptr;
+  }
+
+  /* b) The slot. cached_sq_tail & sq_mask indexes sqes directly — NO_SQARRAY
+   *    deleted the array[] indirection, mirroring the kernel's own io_get_sqe
+   *    (io_uring.c:1990-1996). */
+  struct io_uring_sqe *sqe = &r->sqes[r->cached_sq_tail & r->sq_mask];
+
+  /* c) Clear it. The slot still holds the whole previous request; a caller
+   *    who fills in three fields would inherit a stale buffer pointer, flags
+   *    and offset from whatever lived here before — a bug that only appears
+   *    on the second lap of the ring. */
+  *sqe = (struct io_uring_sqe){};
+
+  /* d) Advance the private cursor only. Nothing is published: the SQE is
+   *    still unfilled, and announcing it is submit's release store. */
+  r->cached_sq_tail++;
+  return sqe;
 }
 
-long rt_ring_submit_and_wait(struct rt_ring *r, unsigned to_submit,
-                             unsigned min_complete) {
-  (void)r;
-  (void)to_submit;
-  (void)min_complete;
-  __builtin_trap();
+int rt_ring_submit_and_wait(struct rt_ring *r, unsigned to_submit,
+                            unsigned min_complete) {
+  /* Publish. The one release store the staging design converges on: every
+   * write into the staged SQEs must be visible before the tail that exposes
+   * them, and this store pairs with the kernel's acquire load of the tail
+   * (io_uring.h:473-474). After it the rest-state invariant holds again:
+   * *sq_tail == cached_sq_tail. */
+  atomic_store_explicit(r->sq_tail, r->cached_sq_tail, memory_order_release);
+
+  /* Enter. GETEVENTS unconditionally — under DEFER_TASKRUN it is what runs
+   * the deferred completion work at all (io_uring.c:2659); min_complete then
+   * makes the same call wait (io_cqring_wait, io_uring.c:2685). Consumption
+   * is capped at what was published (io_uring.h:474-475), and if it falls
+   * short of to_submit the kernel skips the wait and returns the count
+   * (io_uring.c:2647), so to_submit should be exactly what was staged. */
+  return sys_io_uring_enter(r->fd, to_submit, min_complete,
+                            IORING_ENTER_GETEVENTS, nullptr, 0);
 }
 
 bool rt_ring_reap(struct rt_ring *r, struct io_uring_cqe *out) {
-  (void)r;
-  (void)out;
-  __builtin_trap();
+  /* Empty when head == tail — free-running counters again, but only equality
+   * matters here: fullness is the kernel's problem (overflow handling), not
+   * the consumer's. The tail is acquire, pairing with the kernel's release
+   * in io_commit_cqring ("order cqe stores with ring update", io_uring.h:416):
+   * the CQE must not be read before the tail that announced it. Our own head
+   * is relaxed; this thread is its only writer. */
+  unsigned head = atomic_load_explicit(r->cq_head, memory_order_relaxed);
+  unsigned tail = atomic_load_explicit(r->cq_tail, memory_order_acquire);
+  if (head == tail) {
+    return false;
+  }
+
+  /* Copy out, never point in: the moment the head advances, this slot is the
+   * kernel's to overwrite, and a caller holding a pointer into it has a
+   * use-after-free with no allocator involved. */
+  *out = r->cqes[head & r->cq_mask];
+
+  /* Release: the slot must not be seen as free until the copy above is done.
+   * The kernel sizes its room to write new CQEs from this counter
+   * (io_uring.c:698). No private cursor on this side — unlike the SQ there
+   * is no window between claiming and consuming; the copy is complete before
+   * the head that frees the slot. */
+  atomic_store_explicit(r->cq_head, head + 1, memory_order_release);
+  return true;
 }
