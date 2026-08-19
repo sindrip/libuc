@@ -1,7 +1,7 @@
 ---
 id: RT-005
 title: Raw io_uring setup + NOP round trip
-status: todo
+status: done
 depends: [RT-003]
 ---
 
@@ -192,3 +192,28 @@ batched once per scheduler turn. It's a simplification for later, not now.
 
 `IORING_FEAT_NO_IOWAIT` (bit 17) exists on 7.2 and is new — worth logging from
 the probe, not acting on yet.
+
+## Observed (2026-08-20, acceptance run)
+
+Console, exact — boot under QEMU/hvf via `./run.sh`:
+
+    rt: alive
+    1A2B3C
+    ops 65 reg 38 feat 262143
+    setup rejects bogus flags: 22
+    nop ok
+
+Decoded. These are pinned-tree constants; a change in any of them means the
+kernel moved, which is worth knowing loudly:
+
+- `ops 65` — `IORING_OP_LAST`: 65 request opcodes, highest valid is 64.
+- `reg 38` — `IORING_REGISTER_LAST`: 38 register opcodes.
+- `feat 262143` — `0x3FFFF`, all eighteen feature bits (0-17) set. Bit 0
+  (`SINGLE_MMAP`) confirms setup's refuse-tripwire is live-safe; bit 17
+  (`NO_IOWAIT`) is the new-on-7.2 flag — logged as specified, not acted on.
+- `22` — `EINVAL` from `io_uring_sanitise_params` rejecting `SQPOLL`
+  alongside `DEFER_TASKRUN` (`io_uring.c:2815-2821`), the incompatibility
+  invariant 2 is built on.
+- `nop ok` — enter returned 1, `res == 0`, `user_data` matched the sentinel;
+  checked independently, since the three fail independently and only the
+  `user_data` comparison catches a stride bug.

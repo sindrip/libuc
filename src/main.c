@@ -93,7 +93,7 @@ static void put_str(const char *s) {
  * Decide what zero prints. A `while (v)` loop emits nothing for it, and
  * silence is the worst possible rendering of a value you wanted to inspect.
  */
-[[maybe_unused]] static void put_dec(unsigned long v) {
+static void put_dec(unsigned long v) {
   char buf[20];
   char *p = buf + sizeof buf;
 
@@ -181,7 +181,22 @@ static void rt005_probe(void) {
  * Do not leak the fd if it unexpectedly succeeds. There is no close() wrapper
  * yet, and IORING_OP_CLOSE cannot help before a ring exists.
  */
-[[maybe_unused]] static void rt005_setup_failure(void) { __builtin_trap(); }
+static void rt005_setup_failure(void) {
+  /* Valid entries, so the flags are the only possible cause of failure. */
+  struct io_uring_params params = {.flags = IORING_SETUP_SQPOLL |
+                                            IORING_SETUP_DEFER_TASKRUN};
+  int ret = sys_io_uring_setup(8, &params);
+  if (!sys_failed(ret)) {
+    /* The kernel moved. The fd leaks — closing needs an opcode and a working
+     * ring (invariant 1) — so report loudly and carry on. */
+    put_str("setup accepted bogus flags\n");
+    return;
+  }
+
+  put_str("setup rejects bogus flags: ");
+  put_dec((unsigned long)-ret);
+  put('\n');
+}
 
 /* TODO(7) [RT-005]: The NOP round trip.
  *
@@ -203,7 +218,63 @@ static void rt005_probe(void) {
  * wrong reads a plausible-looking CQE from the wrong offset, and only the
  * user_data comparison catches it.
  */
-[[maybe_unused]] static void rt005_nop(void) { __builtin_trap(); }
+/* Top byte set: cannot be mistaken for zero-filled memory or for any
+ * userspace pointer (aarch64 user VAs keep the high bits clear). */
+static constexpr __u64 NOP_SENTINEL = 0xF00DFACEDEADBEEF;
+
+static void rt005_nop(void) {
+  struct rt_ring ring;
+
+  int ret = rt_ring_setup(&ring, 8);
+  if (sys_failed(ret)) {
+    put_str("nop: setup failed: ");
+    put_dec((unsigned long)-ret);
+    put('\n');
+    return;
+  }
+
+  struct io_uring_sqe *sqe = rt_ring_sqe(&ring);
+  if (sqe == nullptr) {
+    put_str("nop: sq full on a fresh ring\n");
+    return;
+  }
+  sqe->opcode = IORING_OP_NOP;
+  sqe->user_data = NOP_SENTINEL;
+
+  ret = rt_ring_submit_and_wait(&ring, 1, 1);
+  if (sys_failed(ret)) {
+    put_str("nop: enter failed: ");
+    put_dec((unsigned long)-ret);
+    put('\n');
+    return;
+  }
+  if (ret != 1) {
+    put_str("nop: enter consumed ");
+    put_dec((unsigned long)ret);
+    put('\n');
+    return;
+  }
+
+  struct io_uring_cqe cqe;
+  if (!rt_ring_reap(&ring, &cqe)) {
+    put_str("nop: cq empty after wait\n");
+    return;
+  }
+  if (cqe.res != 0) {
+    put_str("nop: res ");
+    put_dec((unsigned long)(cqe.res < 0 ? -cqe.res : cqe.res));
+    put('\n');
+    return;
+  }
+  if (cqe.user_data != NOP_SENTINEL) {
+    put_str("nop: user_data ");
+    put_dec((unsigned long)cqe.user_data);
+    put('\n');
+    return;
+  }
+
+  put_str("nop ok\n");
+}
 
 /* TODO(8) [RT-005]: Wire the above into rt_main, in order: banner, RT-004
  * selftest, probe, failure path, NOP, then idle.
@@ -225,7 +296,8 @@ static void rt005_probe(void) {
 
   rt004_selftest();
   rt005_probe();
-
+  rt005_setup_failure();
+  rt005_nop();
 
   for (;;) {
     __asm__ volatile("wfe");
