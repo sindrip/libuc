@@ -25,8 +25,30 @@ CPPFLAGS := -nostdlibinc -isystem $(UAPI)
 # -Werror matches the container. Without it `make check` is green on code the
 # real build rejects, and the diagnostic arrives from a docker log after a
 # kernel rebuild instead of from the compiler in half a second.
+#
+# -Weverything, minus the families that fight this codebase rather than check
+# it. Everything else is on, including checks clang adds in future versions.
+#   pre-c23/c11-compat        report every C23 feature as a portability risk;
+#                             C23 is the target, so this is 40 lines of noise
+#   declaration-after-statement  a C89 rule
+#   padded                    struct padding; rt_ctx's static_assert covers the
+#                             one place padding actually matters
+#   missing-noreturn          fires on every __builtin_trap() scaffold stub, so
+#                             under -Werror it blocks the build on unwritten code
+#   c++*-compat               C++ portability, in a project that is not C++
+#   unsafe-buffer-usage       clang's Safe Buffers check; it wants std::span,
+#                             which C does not have, and this runtime does byte
+#                             arithmetic on mmap'd regions by construction
+#   unused-command-line-arg   nix's cc-wrapper injects -mmacos-version-min,
+#                             which is unused when cross-compiling and fatal
+#                             under -Werror. Local only — the container has no
+#                             wrapper, so it keeps the check
+WARN := -Weverything -Wno-pre-c23-compat -Wno-pre-c11-compat \
+        -Wno-declaration-after-statement -Wno-padded -Wno-missing-noreturn \
+        -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-c++-compat \
+        -Wno-unsafe-buffer-usage -Wno-unused-command-line-argument
 CFLAGS   := -std=c23 -ffreestanding -fno-stack-protector -fno-omit-frame-pointer \
-            -Wall -Wextra -pedantic -Wsign-conversion -Werror -g -O1 $(UBSAN)
+            $(WARN) -Werror -g -O1 $(UBSAN)
 # No -no-pie: -static already implies it (verified, ELF Type=EXEC either way),
 # and clang errors under -Werror that the flag went unused.
 LDFLAGS  := -nostdlib -nostartfiles -static -fuse-ld=lld

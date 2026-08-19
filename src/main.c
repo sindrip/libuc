@@ -212,6 +212,11 @@ static void rt005_probe(void) {
  * clean while they are unreferenced. Delete the attribute as you call each
  * one — that way an accidentally orphaned function still gets reported.
  */
+/* The only caller is start.S, which passes the pre-alignment stack pointer in
+ * x0 (start.S:44). Declared here because assembly cannot be checked against a
+ * C signature — without this, nothing at all verifies the two agree. */
+[[noreturn]] void rt_main(void *stack);
+
 [[noreturn]] void rt_main(void *stack) {
   (void)stack;
 
@@ -220,6 +225,7 @@ static void rt005_probe(void) {
 
   rt004_selftest();
   rt005_probe();
+
 
   for (;;) {
     __asm__ volatile("wfe");

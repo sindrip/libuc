@@ -210,8 +210,8 @@ static inline long raw_write(int fd, const void *buf, size_t len) {
  * Direct syscall, not a ring op: mmap has no io_uring opcode, which is
  * why invariant 1 lists it as permitted.
  */
-static inline long sys_mmap(void *addr, size_t len, int prot, int flags,
-                            int fd, unsigned long off) {
+static inline long sys_mmap(void *addr, size_t len, int prot, int flags, int fd,
+                            unsigned long off) {
   return sys6(__NR_mmap, (long)(uintptr_t)addr, (long)len, prot, flags, fd,
               (long)off);
 }
@@ -221,8 +221,8 @@ static inline long sys_mmap(void *addr, size_t len, int prot, int flags,
  * Three arguments, so sys3 covers it. Used to open the usable part of a
  * task stack after mapping the whole region PROT_NONE.
  */
-static inline long sys_mprotect(void *addr, size_t len, int prot) {
-  return sys3(__NR_mprotect, (long)(uintptr_t)addr, (long)len, prot);
+static inline int sys_mprotect(void *addr, size_t len, int prot) {
+  return (int)sys3(__NR_mprotect, (long)(uintptr_t)addr, (long)len, prot);
 }
 
 /* Incomplete type: enough to declare a pointer parameter, and it keeps a
@@ -243,22 +243,22 @@ struct io_uring_params;
  * "blind" path that needs no ring at all (register.c:1031), which is how the
  * capability probe runs before setup has been called.
  */
-static inline long sys_io_uring_setup(unsigned entries,
-                                      struct io_uring_params *p) {
-  return sys2(__NR_io_uring_setup, entries, (long)(uintptr_t)p);
+static inline int sys_io_uring_setup(unsigned entries,
+                                     struct io_uring_params *p) {
+  return (int)sys2(__NR_io_uring_setup, entries, (long)(uintptr_t)p);
 }
 
-static inline long sys_io_uring_enter(int fd, unsigned to_submit,
-                                      unsigned min_complete, unsigned flags,
-                                      const void *arg, size_t argsz) {
-  return sys6(__NR_io_uring_enter, fd, to_submit, min_complete, flags,
-              (long)(uintptr_t)arg, (long)argsz);
+static inline int sys_io_uring_enter(int fd, unsigned to_submit,
+                                     unsigned min_complete, unsigned flags,
+                                     const void *arg, size_t argsz) {
+  return (int)sys6(__NR_io_uring_enter, fd, to_submit, min_complete, flags,
+                   (long)(uintptr_t)arg, (long)argsz);
 }
 
-static inline long sys_io_uring_register(int fd, unsigned opcode, void *arg,
-                                         unsigned nr_args) {
-  return sys4(__NR_io_uring_register, fd, opcode, (long)(uintptr_t)arg,
-              nr_args);
+static inline int sys_io_uring_register(int fd, unsigned opcode, void *arg,
+                                        unsigned nr_args) {
+  return (int)sys4(__NR_io_uring_register, fd, opcode, (long)(uintptr_t)arg,
+                   nr_args);
 }
 
 #endif /* RT_SYSCALL_H */
