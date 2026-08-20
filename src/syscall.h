@@ -25,6 +25,12 @@
 #include <asm/unistd.h>
 #include <asm/unistd_64.h>
 
+/* Unlike the io_uring uapi (a thousand lines, kept out via an incomplete
+ * type), the signal uapi is a couple hundred lines of macros and typedefs —
+ * cheap enough to include for real, which is what lets sys_rt_sigaction say
+ * sizeof(sigset_t) instead of a bare 8. */
+#include <asm/signal.h>
+
 /* ---------------------------------------------------------------------------
  * WORKED EXAMPLE — read this closely; you will write the others from it.
  *
@@ -173,6 +179,10 @@ static inline bool sys_failed(long r) { return r < 0 && r >= -4095; }
  * Note the casts: sys3 takes long, and you are handed a pointer and a size.
  * Think about which cast is correct for a pointer -> long conversion and why
  * (uintptr_t exists in <stdint.h>, which is freestanding).
+ *
+ * Deliberately not [[nodiscard]], alone among the wrappers: the put family
+ * ignores console-write failures because PID 1 has no recourse when the
+ * console is gone — there is nowhere else to report.
  */
 static inline long raw_write(int fd, const void *buf, size_t len) {
   return sys3(__NR_write, fd, (long)(uintptr_t)buf, (long)len);
@@ -184,8 +194,8 @@ static inline long raw_write(int fd, const void *buf, size_t len) {
  * through _start is loud rather than undefined.
  *
  * Mark it [[noreturn]] and make sure the compiler believes you — after the
- * syscall the function must not fall off the end. __builtin_unreachable() is
- * the usual way to say so.
+ * syscall the function must not fall off the end. C23 standardized the way to
+ * say so: unreachable(), from <stddef.h>, freestanding and already included.
  *
  * That is a kernel guarantee, not an assumption: do_group_exit is declared
  * __noreturn (include/linux/sched/task.h:93) and the syscall body is marked
@@ -194,7 +204,7 @@ static inline long raw_write(int fd, const void *buf, size_t len) {
 [[noreturn]] static inline void sys_exit_group(int status) {
   sys1(__NR_exit_group, status);
 
-  __builtin_unreachable();
+  unreachable();
 }
 
 /* TODO [RT-004]: sys_mmap — anonymous memory.
@@ -210,8 +220,9 @@ static inline long raw_write(int fd, const void *buf, size_t len) {
  * Direct syscall, not a ring op: mmap has no io_uring opcode, which is
  * why invariant 1 lists it as permitted.
  */
-static inline long sys_mmap(void *addr, size_t len, int prot, int flags, int fd,
-                            unsigned long off) {
+[[nodiscard]] static inline long sys_mmap(void *addr, size_t len, int prot,
+                                          int flags, int fd,
+                                          unsigned long off) {
   return sys6(__NR_mmap, (long)(uintptr_t)addr, (long)len, prot, flags, fd,
               (long)off);
 }
@@ -221,7 +232,7 @@ static inline long sys_mmap(void *addr, size_t len, int prot, int flags, int fd,
  * Three arguments, so sys3 covers it. Used to open the usable part of a
  * task stack after mapping the whole region PROT_NONE.
  */
-static inline int sys_mprotect(void *addr, size_t len, int prot) {
+[[nodiscard]] static inline int sys_mprotect(void *addr, size_t len, int prot) {
   return (int)sys3(__NR_mprotect, (long)(uintptr_t)addr, (long)len, prot);
 }
 
@@ -243,22 +254,52 @@ struct io_uring_params;
  * "blind" path that needs no ring at all (register.c:1031), which is how the
  * capability probe runs before setup has been called.
  */
-static inline int sys_io_uring_setup(unsigned entries,
-                                     struct io_uring_params *p) {
+[[nodiscard]] static inline int sys_io_uring_setup(unsigned entries,
+                                                   struct io_uring_params *p) {
   return (int)sys2(__NR_io_uring_setup, entries, (long)(uintptr_t)p);
 }
 
-static inline int sys_io_uring_enter(int fd, unsigned to_submit,
-                                     unsigned min_complete, unsigned flags,
-                                     const void *arg, size_t argsz) {
+[[nodiscard]] static inline int
+sys_io_uring_enter(int fd, unsigned to_submit, unsigned min_complete,
+                   unsigned flags, const void *arg, size_t argsz) {
   return (int)sys6(__NR_io_uring_enter, fd, to_submit, min_complete, flags,
                    (long)(uintptr_t)arg, (long)argsz);
 }
 
-static inline int sys_io_uring_register(int fd, unsigned opcode, void *arg,
-                                        unsigned nr_args) {
+[[nodiscard]] static inline int
+sys_io_uring_register(int fd, unsigned opcode, void *arg, unsigned nr_args) {
   return (int)sys4(__NR_io_uring_register, fd, opcode, (long)(uintptr_t)arg,
                    nr_args);
+}
+
+/* TODO [RT-007]: sys_rt_sigaction and sys_sigaltstack — the crash handler's
+ * two installs. Direct syscalls: neither has an opcode (invariant 1's list).
+ * Both return 0 or -errno in sys_failed()'s range.
+ *
+ * rt_sigaction is sys4-shaped: (signum, act, oldact, sigsetsize). Two
+ * decisions belong inside the wrapper, following sys_mmap's fd precedent —
+ * quirks live here so no caller has to think about them:
+ *
+ *   - sigsetsize is not a parameter of the wrapper: the kernel accepts
+ *     exactly sizeof(sigset_t) and nothing else (kernel/signal.c:4648), so
+ *     the wrapper supplies it. A wrapper that lets callers pass it is a
+ *     wrapper that lets callers get it wrong.
+ *   - oldact stays a parameter (nullable) — reading back the old action is
+ *     legitimate, just unused today.
+ *
+ * sigaltstack is sys2-shaped: (ss, old_ss), old_ss nullable.
+ */
+[[nodiscard]] static inline int sys_rt_sigaction(int signum,
+                                                 const struct sigaction *act,
+                                                 struct sigaction *oldact) {
+  return (int)sys4(__NR_rt_sigaction, signum, (long)(uintptr_t)act,
+                   (long)(uintptr_t)oldact, (long)sizeof(sigset_t));
+}
+
+[[nodiscard]] static inline int sys_sigaltstack(const struct sigaltstack *ss,
+                                                struct sigaltstack *old_ss) {
+  return (int)sys2(__NR_sigaltstack, (long)(uintptr_t)ss,
+                   (long)(uintptr_t)old_ss);
 }
 
 #endif /* RT_SYSCALL_H */

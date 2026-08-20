@@ -18,7 +18,7 @@
  *     (arch/arm64/kernel/signal.c:1481-1484). No hand-rolled restorer.
  *   - rt_sigaction's last argument, sigsetsize, must be 8: _NSIG is 64
  *     (asm-generic/signal.h:7) and the kernel rejects any other size
- *     (kernel/signal.c:3288).
+ *     (kernel/signal.c:4648).
  *   - The handler's third argument points at struct ucontext
  *     (asm/ucontext.h): uc_mcontext is the *last* field, after glibc-compat
  *     padding, and holds fault_address, regs[31], sp, pc, pstate
