@@ -301,8 +301,9 @@ static void rt005_nop(void) {
  */
 
 /* The only caller is start.S, which passes the pre-alignment stack pointer in
- * x0 (start.S:44). Declared here because assembly cannot be checked against a
- * C signature — without this, nothing at all verifies the two agree. */
+ * x0 (arch/aarch64/start.S:44). Declared here because assembly cannot be
+ * checked against a C signature — without this, nothing at all verifies the
+ * two agree. */
 [[noreturn]] void rt_main(void *stack);
 
 [[noreturn]] void rt_main(void *stack) {

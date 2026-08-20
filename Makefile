@@ -53,8 +53,8 @@ CFLAGS   := -std=c23 -ffreestanding -fno-stack-protector -fno-omit-frame-pointer
 # and clang errors under -Werror that the flag went unused.
 LDFLAGS  := -nostdlib -nostartfiles -static -fuse-ld=lld
 
-OBJ := $(patsubst src/%.c,out/obj/%.o,$(wildcard src/*.c)) \
-       $(patsubst src/%.S,out/obj/%.o,$(wildcard src/*.S))
+OBJ := $(patsubst src/%.c,out/obj/%.o,$(wildcard src/*.c src/arch/*/*.c)) \
+       $(patsubst src/%.S,out/obj/%.o,$(wildcard src/*.S src/arch/*/*.S))
 
 .PHONY: help kernel config uapi src run debug check tidy clean distclean
 
@@ -68,7 +68,7 @@ uapi:   $(UAPI)
 # must invalidate it. Grouped targets (&:) need make 4.3; macOS ships 3.81, and
 # both artefacts come from the same bake, so vmlinuz standing in for both is
 # accurate rather than merely convenient.
-out/vmlinuz: $(BAKE) build/kernel.config $(wildcard src/*)
+out/vmlinuz: $(BAKE) build/kernel.config $(wildcard src/* src/arch/*/*)
 	docker buildx bake kernel
 
 $(UAPI): $(BAKE)
@@ -97,7 +97,7 @@ check: compile_commands.json $(OBJ)
 # Checks and WarningsAsErrors live in .clang-tidy; flags come from
 # compile_commands.json, so there is no second copy to drift.
 tidy: compile_commands.json
-	clang-tidy --quiet $(wildcard src/*.c)
+	clang-tidy --quiet $(wildcard src/*.c src/arch/*/*.c)
 
 # -MMD -MP emits a .d per object listing the headers it read; -include feeds
 # those back so editing syscall.h rebuilds everything that includes it.
@@ -117,9 +117,9 @@ out/obj/%.o: src/%.S Makefile | $(UAPI)
 # The source list is a prerequisite, not just the Makefile: a new src/*.c is
 # newer than the database that omits it, which is the only thing that makes
 # adding a file regenerate rather than leaving clangd to infer its flags.
-compile_commands.json: Makefile $(wildcard src/*.c)
+compile_commands.json: Makefile $(wildcard src/*.c src/arch/*/*.c)
 	@printf '[' > $@
-	@sep=""; for f in $(wildcard src/*.c); do \
+	@sep=""; for f in $(wildcard src/*.c src/arch/*/*.c); do \
 	  printf '%s\n  {"directory": "%s", "file": "%s", "command": "%s"}' \
 	    "$$sep" "$(CURDIR)" "$(CURDIR)/$$f" \
 	    "$(CLANG) --target=$(TRIPLE) $(CPPFLAGS) $(CFLAGS) -c $$f" >> $@; \

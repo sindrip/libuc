@@ -1,20 +1,24 @@
 /*
- * Raw Linux syscalls for aarch64. No libc, so this is the floor of the runtime:
- * everything the kernel can do for us that has no io_uring opcode comes through
- * here.
- *
- * ABI (aarch64):
- *   x8       syscall number
- *   x0..x5   arguments 0..5
- *   svc #0   trap into the kernel
- *   x0       return value
+ * The direct-syscall registry: every syscall this runtime is permitted to
+ * make outside the ring, typed. Invariant 1 in code — if an operation has an
+ * opcode it goes through the ring, so a definition added here claims either
+ * "no opcode exists on this kernel" (cite the tree) or an entry in the
+ * purity-exception registry (raw_write, alone). Auditing what bypasses the
+ * ring means reading this file.
  *
  * There is no errno. A failure comes back as -errno in the range -1..-4095,
  * which is why sys_failed() checks a *range* and not just r < 0: a syscall like
  * mmap legitimately returns large values whose top bit is set.
+ *
+ * The machine half — registers, svc, the sysN dispatchers — lives in
+ * arch/aarch64/syscall_arch.h, next to start.S and switch.S: architecture is
+ * a path, not a suffix, and this file does not change when a second one
+ * arrives.
  */
 #ifndef RT_SYSCALL_H
 #define RT_SYSCALL_H
+
+#include "arch/aarch64/syscall_arch.h"
 
 /* Syscall numbers come from the pinned kernel via headers_install. Never
  * hardcode them: __NR_mmap in the raw tree is a macro over __NR3264_mmap that
@@ -30,123 +34,6 @@
  * cheap enough to include for real, which is what lets sys_rt_sigaction say
  * sizeof(sigset_t) instead of a bare 8. */
 #include <asm/signal.h>
-
-/* ---------------------------------------------------------------------------
- * WORKED EXAMPLE — read this closely; you will write the others from it.
- *
- * Every token below is load-bearing:
- *
- *   register long x8 __asm__("x8")
- *       A GCC/Clang extension pinning a variable to a *named* register. Normal
- *       constraints can only say "some register"; the kernel ABI demands
- *       exactly x8, so we must be able to name it.
- *
- *   __asm__ volatile
- *       Without volatile the compiler may delete the asm when it believes the
- *       result is unused, or hoist it out of a loop. A syscall has effects the
- *       compiler cannot see, so it must never be treated as pure.
- *
- *   "+r"(x0)
- *       Read-write. x0 is both argument 0 and the return value. Writing "=r"
- *       would tell the compiler x0 is write-only, so it could skip setting up
- *       the input entirely.
- *
- *   "memory"
- *       The kernel may read or write our memory — write(2) reads the buffer we
- *       pass. Without this clobber the compiler is free to keep that buffer's
- *       contents in registers and never store them, so the kernel reads stale
- *       memory. This is the classic bug that works at -O0 and breaks at -O1.
- *
- *   "cc"
- *       Condition flags may be clobbered by the trap.
- * ------------------------------------------------------------------------- */
-static inline long sys3(long nr, long a0, long a1, long a2) {
-  register long x8 __asm__("x8") = nr;
-  register long x0 __asm__("x0") = a0;
-  register long x1 __asm__("x1") = a1;
-  register long x2 __asm__("x2") = a2;
-
-  __asm__ volatile("svc #0"
-                   : "+r"(x0)
-                   : "r"(x8), "r"(x1), "r"(x2)
-                   : "memory", "cc");
-  return x0;
-}
-
-/* TODO(1): sys1 — one argument. Used by exit_group.
- *
- * Same shape as sys3, minus x1 and x2. Watch the constraint on x0.
- */
-static inline long sys1(long nr, long a0) {
-  register long x8 __asm__("x8") = nr;
-  register long x0 __asm__("x0") = a0;
-
-  __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8) : "memory", "cc");
-
-  return x0;
-}
-
-/* TODO [RT-005]: sys2 — two arguments. Used by io_uring_setup, which is
- * SYSCALL_DEFINE2(entries, params) at io_uring.c:3145.
- *
- * Same shape as sys3, minus x2.
- */
-static inline long sys2(long nr, long a0, long a1) {
-  register long x8 __asm__("x8") = nr;
-  register long x0 __asm__("x0") = a0;
-  register long x1 __asm__("x1") = a1;
-
-  __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1) : "memory", "cc");
-  return x0;
-}
-
-/* TODO [RT-005]: sys4 — four arguments. Used by io_uring_register,
- * SYSCALL_DEFINE4(fd, opcode, arg, nr_args) at register.c:1016.
- */
-static inline long sys4(long nr, long a0, long a1, long a2, long a3) {
-  register long x8 __asm__("x8") = nr;
-  register long x0 __asm__("x0") = a0;
-  register long x1 __asm__("x1") = a1;
-  register long x2 __asm__("x2") = a2;
-  register long x3 __asm__("x3") = a3;
-
-  __asm__ volatile("svc #0"
-                   : "+r"(x0)
-                   : "r"(x8), "r"(x1), "r"(x2), "r"(x3)
-                   : "memory", "cc");
-
-  return x0;
-}
-
-/* TODO [RT-004]: sys6 — six arguments. Used by mmap.
- *
- * Same shape as sys3, extended with x3, x4, x5 pinned to their registers
- * and listed as inputs. x0 stays the read-write operand.
- *
- * Six is the maximum: aarch64 passes syscall arguments in x0–x5 and
- * nothing more, so this is the widest wrapper the ABI can need. mmap is
- * why it exists — addr, len, prot, flags, fd, offset. mprotect takes
- * three, so sys3 already covers it.
- *
- * The gaps are deliberate: add a wrapper when a syscall needs one.
- */
-static inline long sys6(long nr, long a0, long a1, long a2, long a3, long a4,
-                        long a5) {
-  register long x8 __asm__("x8") = nr;
-  register long x0 __asm__("x0") = a0;
-  register long x1 __asm__("x1") = a1;
-  register long x2 __asm__("x2") = a2;
-  register long x3 __asm__("x3") = a3;
-  register long x4 __asm__("x4") = a4;
-  register long x5 __asm__("x5") = a5;
-
-  __asm__ volatile("svc #0"
-                   : "+r"(x0)
-                   : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5)
-                   : "memory", "cc");
-
-  return x0;
-}
 
 /* TODO(2): sys_failed — did a raw syscall return fail?
  *
