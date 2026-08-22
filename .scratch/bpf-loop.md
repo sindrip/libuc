@@ -167,6 +167,18 @@ into the SQ region, bump its tail, `bpf_io_uring_submit_sqes(ctx, 1)`.
   the `bpf fn` dialect's restriction set (language.md) showing up as a real
   requirement years early. Until the language exists this is hand-written
   BPF C compiled with Clang's BPF target.
+- **Bytecode delivery is solved, and cheaply: C23 `#embed`.** PID 1 has no
+  rootfs to read `rtloop.bpf.o` from, so the object rides in the runtime's
+  own `.rodata` as a real C array — compile-time `sizeof` to size the
+  `bpf(2)` load, no `xxd -i` codegen, no `.incbin`/`_binary_*_start` linker
+  ceremony. Verified working (with `__has_embed`) in clang 22 under the exact
+  build flags (probe 2026-08-22; also recorded in plan.md's C23 section). One
+  measured limit: the embedded *contents* are not integer constant
+  expressions — element access even on a `constexpr` array folds only as a
+  GNU extension, which `-Weverything`'s `-Wgnu-folding-constant` rejects
+  under `-Werror` — so the ELF magic-bytes sanity check belongs to the
+  loader at runtime, not a `static_assert`, unless that one suppression is
+  added when this ships.
 - **The real ticket is the loader.** No libc means no libbpf: loading a
   struct_ops program by hand means BTF parsing, map/link creation, and
   attachment via raw `bpf(2)` — likely comparable in effort to the ring

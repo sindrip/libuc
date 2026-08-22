@@ -109,7 +109,17 @@ freestanding is required to provide:
 - `nullptr`, `constexpr`, `auto`, standardized `typeof`, `[[noreturn]]`,
   `unreachable()`, binary literals.
 - Empty `()` now means `(void)` — removes a whole class of C footguns.
-- `#embed` — a clean way to embed a BPF object later, if milestone 4 happens.
+- `#embed` — the delivery mechanism for the BPF object if milestone 4 happens:
+  PID 1 has no rootfs to load a `clang -target bpf` ELF from, so the bytecode
+  rides in the runtime's own `.rodata` as a real C array — compile-time
+  `sizeof`, no `xxd -i` codegen, no `.incbin`/`_binary_*_start` linker
+  ceremony. Verified working (with `__has_embed`) in clang 22 under the exact
+  build flags. One measured trap: `sizeof` of the embedded array is a constant
+  expression but its *contents* are not — element access even on a `constexpr`
+  array folds only as a GNU extension, which `-Weverything`'s
+  `-Wgnu-folding-constant` rejects under `-Werror`. So a magic-bytes check on
+  the embedded ELF is a runtime check, not a `static_assert`, unless that one
+  suppression is added when the milestone arrives.
 
 `<stdatomic.h>` remains available, so the ring's acquire/release barriers work
 on day one. (Atomics are technically optional — check `__STDC_NO_ATOMICS__` —
