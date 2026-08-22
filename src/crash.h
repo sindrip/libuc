@@ -2,9 +2,9 @@
  * Crash reporting: signal handlers, register dump, frame-pointer walk. With
  * no tests, no core dumps and no shell, a good failure report is the only
  * diagnostic this project has (AGENTS.md). The three highest-risk components
- * — hand-rolled switch.S, hand-written ring index arithmetic, raw mmap'd
- * stacks — all fail as memory corruption, and without this a corrupted
- * context switch presents as a frozen VM.
+ * — the hand-rolled context switch, hand-written ring index arithmetic, raw
+ * mmap'd stacks — all fail as memory corruption, and without this a
+ * corrupted context switch presents as a frozen VM.
  *
  * ABI facts, verified against the pinned tree:
  *

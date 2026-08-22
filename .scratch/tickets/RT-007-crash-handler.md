@@ -15,9 +15,10 @@ information.
 
 ### Why this is not optional
 
-The three highest-risk components — hand-rolled `switch.S`, hand-written ring
-index arithmetic, and raw `mmap`'d stacks — all fail as memory corruption.
-Without this, a corrupted context switch presents as a frozen VM.
+The three highest-risk components — the hand-rolled context switch,
+hand-written ring index arithmetic, and raw `mmap`'d stacks — all fail as
+memory corruption. Without this, a corrupted context switch presents as a
+frozen VM.
 
 ### Handlers
 
@@ -136,8 +137,8 @@ that catches UB which does not happen to segfault.
 **Do this before RT-004, not after.** The numbering is not the order. Its only
 dependency is RT-003, and testing is manual console inspection with no
 regression net (see `AGENTS.md`), so a good failure report is the *only*
-diagnostic the project has. Debugging hand-rolled `switch.S` without it means
-reading a frozen VM.
+diagnostic the project has. Debugging the hand-rolled context switch without it
+means reading a frozen VM.
 
 The formatter written here is reusable for all later diagnostic output; don't
 make it crash-specific.

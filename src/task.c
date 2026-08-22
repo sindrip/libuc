@@ -1,5 +1,5 @@
 /*
- * Task lifecycle: create, yield, exit, resume. switch.S does the register
+ * Task lifecycle: create, yield, exit, resume. switch.c does the register
  * save/restore; this file does the bookkeeping — allocating stacks, priming
  * a new context so the first switch lands in the trampoline, and tracking
  * which task is running.

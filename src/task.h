@@ -2,7 +2,7 @@
  * Stackful cooperative tasks. A task is a function with its own mmap'd
  * stack; it runs until it suspends — rt_yield, or a ring op parking it on a
  * CQE — and there is no preemption (invariant 7). The switch itself is
- * rt_switch (arch/aarch64/switch.S), which swaps the callee-saved registers
+ * rt_switch (arch/aarch64/switch.c), which swaps the callee-saved registers
  * and sp between two struct rt_ctx values.
  */
 #ifndef RT_TASK_H
@@ -10,30 +10,12 @@
 
 #include <stddef.h>
 
-/* The saved register state — the C-side mirror of what switch.S saves and
- * restores. Field order and sizes must match switch.S's offset table
- * exactly; the static_asserts pin each offset the table promises, so a
- * reordered field, a changed type, or inserted padding breaks the build
- * instead of making the struct and the asm disagree and silently corrupt
- * registers. The size alone would not catch a reorder that preserves the
- * total — swapping fp and lr costs nothing in sizeof and sends
- * rt_task_create's primed lr into the slot the asm restores as x29.
- *
- * 168, not 176 — no "rounding up for 16-byte alignment". That instinct
- * confuses two rules that share a number:
- *
- *   - sp must be 16-byte aligned at every instruction that uses it. That is
- *     architectural, and it is why start.S does `and sp, x0, #-16`.
- *   - stp/ldp require no such thing: on Normal memory they permit unaligned
- *     access outright, and the struct's natural 8-byte alignment already
- *     exceeds what the instructions ask for.
- *
- * rt_ctx is never used *as* a stack — it is a plain struct that x0/x1 point
- * at — so the sp rule does not apply to it. Ground truth: the kernel's own
- * cpu_context (arch/arm64/include/asm/processor.h:136-150) is 13 unsigned
- * longs = 104 bytes, not a multiple of 16, and it is exactly what
- * cpu_switch_to (entry.S:821) drives with stp/ldp.
- */
+/* The saved register state, and the single authority on the switch's
+ * layout: rt_switch (arch/aarch64/switch.c) computes every store/load
+ * offset from these fields via offsetof, so the struct is free to change
+ * shape and the asm follows — there is no offset table to keep in sync.
+ * The one cross-member assumption the offsets cannot express — fp and lr
+ * adjacent, for the x29/x30 stp pair — is asserted in switch.c. */
 struct rt_ctx {
   unsigned long gp[10]; /* x19-x28 */
   unsigned long fp;     /* x29 */
@@ -41,12 +23,6 @@ struct rt_ctx {
   unsigned long sp;
   double d[8]; /* d8-d15 */
 };
-
-static_assert(sizeof(struct rt_ctx) == 168);
-static_assert(offsetof(struct rt_ctx, fp) == 80);
-static_assert(offsetof(struct rt_ctx, lr) == 88);
-static_assert(offsetof(struct rt_ctx, sp) == 96);
-static_assert(offsetof(struct rt_ctx, d) == 104);
 
 /* Values are pinned rather than left to declaration order, as the kernel
  * pins TASK_RUNNING (include/linux/sched.h:107). Zero meaning RT_READY is
@@ -84,8 +60,8 @@ void rt_task_create(struct rt_task *t, void (*fn)(void *), void *arg);
  * through sched.c, which marks it RT_BLOCKED instead. */
 void rt_yield(void);
 
-/* The raw switch (switch.S): saves the callee-saved state into *from,
- * restores *to, and returns as *to. */
+/* The raw switch (arch/aarch64/switch.c): saves the callee-saved state
+ * into *from, restores *to, and returns as *to. */
 extern void rt_switch(struct rt_ctx *from, struct rt_ctx *to);
 
 /* Run one task until it suspends or dies. The asymmetry with rt_yield is
@@ -101,7 +77,7 @@ extern void rt_sched_resume(struct rt_task *t);
 extern struct rt_ctx rt_sched_ctx;
 extern struct rt_task *rt_current;
 
-/* First-entry trampoline (switch.S): calls fn(arg) out of x19/x20, then
+/* First-entry trampoline (switch.c): calls fn(arg) out of x19/x20, then
  * branches to rt_task_exit. */
 extern void rt_task_entry(void);
 

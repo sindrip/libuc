@@ -43,39 +43,45 @@ at — so the `sp` rule does not apply. Ground truth: the kernel's own
 `unsigned long` = **104 bytes**, not a multiple of 16, and it is exactly what
 `cpu_switch_to` (`entry.S:821`) drives with `stp`/`ldp`.
 
-Assert 168: it catches accidental padding. Asserting 176 would instead *require*
-8 bytes of padding whose only job is satisfying an assertion that was wrong.
+168 is the concrete size under the target ABI, but the switch does not assert
+or encode that aggregate layout. `switch.c` derives every member base from
+`offsetof(struct rt_ctx, ...)`, leaving the C type as the single authority.
+The one relationship that crosses two members — `fp` and `lr` being adjacent
+for their `stp`/`ldp` pair — is asserted directly. Asserting 176 would instead
+*require* 8 bytes of padding whose only job is satisfying an assertion that was
+wrong.
 
 Saving `q8`–`q15` (full 128-bit) instead would be wrong-but-harmless; saving
 only `x19`–`x30` and skipping `d8`–`d15` is wrong-and-silent — it corrupts
 floating point across switches in a way that surfaces much later. Save them.
 
-### `src/switch.S`
+### `src/arch/aarch64/switch.c`
 
-```
+```c
 // void rt_switch(struct rt_ctx *from, struct rt_ctx *to);
 //   x0 = from, x1 = to
-rt_switch:
-    stp  x19, x20, [x0, #0]
-    stp  x21, x22, [x0, #16]
-    stp  x23, x24, [x0, #32]
-    stp  x25, x26, [x0, #48]
-    stp  x27, x28, [x0, #64]
-    stp  x29, x30, [x0, #80]
-    mov  x2, sp
-    str  x2,       [x0, #96]
-    stp  d8,  d9,  [x0, #104]
-    stp  d10, d11, [x0, #120]
-    stp  d12, d13, [x0, #136]
-    stp  d14, d15, [x0, #152]
+static constexpr size_t ctx_gp = offsetof(struct rt_ctx, gp);
+static constexpr size_t ctx_fp = offsetof(struct rt_ctx, fp);
+static constexpr size_t ctx_sp = offsetof(struct rt_ctx, sp);
+static constexpr size_t ctx_d = offsetof(struct rt_ctx, d);
+static_assert(offsetof(struct rt_ctx, lr) ==
+              ctx_fp + sizeof(unsigned long));
 
-    ldp  x19, x20, [x1, #0]
-    ... (mirror)
-    ldr  x2,       [x1, #96]
-    mov  sp, x2
-    ldp  d14, d15, [x1, #152]
-    ret                       // returns into the *other* context's x30
+[[gnu::naked]] void rt_switch(struct rt_ctx *from, struct rt_ctx *to) {
+  __asm__ volatile(
+      "stp x19, x20, [x0, #%c[ctx_gp]]\n"
+      /* ...the remaining save pairs, sp via x2, then the mirrored loads... */
+      "ret\n"
+      :
+      : [ctx_gp] "i"(ctx_gp), [ctx_fp] "i"(ctx_fp),
+        [ctx_sp] "i"(ctx_sp), [ctx_d] "i"(ctx_d));
+}
 ```
+
+The function is naked, so Clang emits no prologue or epilogue around the one
+asm statement. Its operands are compile-time immediates: they require no
+register setup in the absent prologue, and the integrated assembler rejects a
+future layout whose offsets cannot be encoded by the chosen instructions.
 
 `ret` is the switch. It jumps to the restored `x30`, which for a resumed task is
 wherever *it* called `rt_switch` from.
@@ -116,7 +122,6 @@ requires `sp` 16-byte aligned at every instruction that uses it.
 
 ```c
 struct rt_ctx { unsigned long x19_28[10], fp, lr, sp; double d8_15[8]; };
-static_assert(sizeof(struct rt_ctx) == 168);
 
 struct rt_task {
     struct rt_ctx ctx;
@@ -130,7 +135,7 @@ struct rt_task {
 
 ## Files
 
-- `src/switch.S`
+- `src/arch/aarch64/switch.c`
 - `src/task.c`, `src/task.h`
 - `src/main.c` — driver for this ticket
 
@@ -204,3 +209,15 @@ comment enumerates the rest.
 If floating-point state seems fine while you're testing, that is expected: the C
 in this ticket barely touches `d8`–`d15`. It will bite later, with no obvious
 connection to the switch. Save them now.
+
+## Representation-change verification (2026-08-22)
+
+The switch moved from a standalone `.S` file to naked functions in
+`src/arch/aarch64/switch.c`, so its offsets can come directly from
+`struct rt_ctx`. The pinned Clang 22 runtime build completed under the
+production flags.
+Disassembly of `out/rt.elf` showed no compiler-generated prologue or epilogue
+and the same save/restore instruction sequence as the former `.S` body. A VM
+boot then printed exactly `hello a` and `hello b` and remained in PID 1's idle
+loop without a panic, exercising two tasks through their NOP and write
+suspensions.

@@ -62,7 +62,7 @@ addition rather than discovery.
 
 ```
 src/start.S      _start: sp points at argc; align, call main, exit_group
-src/switch.S     ctx switch: x19-x28, x29, x30, sp, d8-d15
+src/arch/aarch64/switch.c  naked asm context switch: x19-x28, x29, x30, sp, d8-d15
 src/syscall.h    svc #0 wrappers; x8=nr, x0-x5=args; ret is -errno in -1..-4095
 src/string.c     memcpy, memset, memmove, memcmp  <- when a link first needs them
 src/ring.c/.h    io_uring_setup + mmap; submit/reap; no liburing
@@ -299,7 +299,7 @@ because debugging hand-rolled aarch64 context-switch asm without a debugger is
 the failure mode this whole ordering exists to avoid. RT-007 moves ahead of
 RT-004 for the same reason: testing is manual console inspection with no
 regression net, so the crash handler is the only diagnostic the project has when
-`switch.S` corrupts something.
+the hand-rolled context switch corrupts something.
 
 RT-005 takes its structs from `<linux/io_uring.h>` via `make ARCH=arm64 headers`; kernel
 types are never retyped by hand. Its `static_assert`s guard the one thing the

@@ -11,7 +11,7 @@
  * like mmap legitimately returns large values whose top bit is set.
  *
  * The machine half — registers, svc, the syscallN dispatchers — lives in
- * arch/aarch64/syscall_arch.h, next to start.S and switch.S: architecture is
+ * arch/aarch64/syscall_arch.h, next to start.S and switch.c: architecture is
  * a path, not a suffix, and this file does not change when a second one
  * arrives.
  */

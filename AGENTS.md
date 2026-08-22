@@ -263,7 +263,7 @@ harness.
 The cost, stated plainly: **there is no regression net.** Nothing catches a
 change that breaks an earlier ticket. The discipline that makes this survivable:
 
-- When touching shared code (`switch.S`, `ring.c`, `task.c`), re-run the
+- When touching shared code (`switch.c`, `ring.c`, `task.c`), re-run the
   acceptance checks of every ticket that depends on it, not just the current one.
 - Keep acceptance criteria mechanically checkable — an exact expected console
   string, not "looks right". `RT-004`'s `1A2B3C` is the model.

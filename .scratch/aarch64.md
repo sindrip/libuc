@@ -1,8 +1,8 @@
 # aarch64 assembly — working reference
 
-Scoped to what this runtime actually writes: `start.S`, `switch.S`, and inline
-syscall asm. Everything below marked ✅/❌ was assembled with the project's own
-clang, not recalled.
+Scoped to what this runtime actually writes: `start.S`, the extended inline asm
+in `switch.c`, and syscall asm. Everything below marked ✅/❌ was assembled with
+the project's own clang, not recalled.
 
 ## Registers
 
@@ -118,7 +118,7 @@ numbers never get hardcoded. `.s` (lowercase) is not.
 ## References in this repo — prefer these to anything online
 
 - **`out/src/arch/arm64/kernel/entry.S:821` — `cpu_switch_to`.** The kernel's
-  own context switch, and the model for `switch.S`. Note the `stp … [x8], #16`
+  own context switch, and the model for `switch.c`. Note the `stp … [x8], #16`
   post-index walk, and `mov x9, sp` before storing `sp`.
 
   **It does not save `d8`–`d15`**, because kernel code does not use FP/SIMD and

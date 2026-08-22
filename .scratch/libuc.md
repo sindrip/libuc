@@ -18,13 +18,13 @@ Two consequences, both cutting against normal instincts:
 
 - **`src/` owes libuc nothing but answers.** Do not add seams for reuse.
   strategy.md's arch-neutral TLS-layout interface is a libuc-era concern, not a
-  `switch.S` concern today. The characteristic failure of a spike is refusing to
-  throw it away, and every abstraction added for the successor's benefit is
-  another reason not to.
+  context-switch concern today. The characteristic failure of a spike is
+  refusing to throw it away, and every abstraction added for the successor's
+  benefit is another reason not to.
 - **Retrofit cost is not an argument for deciding anything early.** If libuc
-  copies rather than depends, rewriting `switch.S` is free. What is not free is
-  *not knowing whether the thing works*. So the items below earn their place now
-  as **experiments**, never as layout commitments.
+  copies rather than depends, rewriting the context switch is free. What is not
+  free is *not knowing whether the thing works*. So the items below earn their
+  place now as **experiments**, never as layout commitments.
 
 ## What the probe has to answer
 
@@ -405,8 +405,8 @@ Two things follow for free once this exists:
   layout must reserve those offsets before it ossifies (strategy.md).
 
 TLS is the item on this page with the worst retrofit cost, because it touches
-`switch.S` and `struct rt_task` — both already written. It is the one piece
-worth deciding ahead of need.
+the context switch and `struct rt_task` — both already written. It is the one
+piece worth deciding ahead of need.
 
 ## The C11 surface
 
