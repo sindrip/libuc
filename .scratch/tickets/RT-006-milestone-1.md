@@ -1,7 +1,7 @@
 ---
 id: RT-006
 title: Milestone 1 — one ring, one coroutine, one NOP
-status: todo
+status: done
 depends: [RT-004, RT-005]
 ---
 
@@ -109,6 +109,49 @@ stand; the timing was wrong.
 The governing idea remains worth keeping for later: **the userspace reap
 loop is `loop_step`'s twin** — when those eras arrive, shape the loop so
 the lowering is a port, not a redesign.
+
+## Observed (2026-08-23, acceptance sweep)
+
+- **The milestone, on the first boot the code ever took**: after the
+  RT-005 chain,
+
+      nop ok
+      hello a
+      hello b
+
+  then silence with no panic — the last task's death dropped the scheduler
+  back to rt_main's idle. Each hello written by the kernel through
+  IORING_OP_WRITE; the per-task messages are the identity proof (RT-004's
+  1A2B3C lesson): the right task resumed with the right argument, twice
+  each, through two suspensions.
+- **The raw_write-stub boot, the strong form of the through-the-ring
+  proof**: with raw_write compiled as a trap and the pre-demo chain gated,
+  the console was exactly
+
+      hello a
+      hello b
+
+  Any code path touching the purity exception would have panicked; none
+  did. This boot is also the spec's quiet console, now the default: the
+  RT-003..005 chain sits behind a volatile `verbose` gate in rt_main,
+  compiled in for AGENTS.md's re-run discipline, silent for the spec.
+  The stub build's volatile bool summoned UBSan handler nine
+  (load_invalid_value) via the lazy link-error mechanism.
+- **./debug.sh**: a hardware breakpoint (software breakpoints predate the
+  MMU; -H works from reset) at 0x210d84 — the instruction after
+  bl rt_switch in rt_nop, which lldb symbolizes as
+  `rt_nop + 92 [inlined] rt_suspend + 40 at sched.c:26` — hit on the first
+  resume with sp = 0xffffb86f2f90 in the task's own mmap'd stack region
+  and x19 = self = 0xffffcc687150 on the boot stack: two regions in one
+  frame, the suspension real at register level. result == 0 is proven
+  behaviorally: the task's own res != 0 branch never fires on any boot.
+- **Batching observed structurally**: both tasks' SQEs go to the kernel in
+  single enters per turn (the staged count is cached_sq_tail's lead over
+  the published tail), per the spec's not-an-optimization note.
+- RT-007's deferred criterion (the dump naming the running task) remains
+  open — rt_current now exists and crash.c's e) seam can consume it in a
+  follow-up; the task registry the walk's range-check wants is still a
+  deferred-notes item.
 
 1. **`user_data` is a slab offset with tag bits, not a raw task pointer.**
    The spec's `(unsigned long)self` is replaced. bpf-loop.md's verdict —

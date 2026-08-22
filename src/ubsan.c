@@ -43,6 +43,8 @@ UBSAN_ABORT(__ubsan_handle_shift_out_of_bounds_minimal_abort,
             "shift out of bounds")
 UBSAN_ABORT(__ubsan_handle_function_type_mismatch_minimal_abort,
             "function type mismatch")
+UBSAN_ABORT(__ubsan_handle_load_invalid_value_minimal_abort,
+            "load of invalid value")
 UBSAN_ABORT(__ubsan_handle_type_mismatch_minimal_abort, "type mismatch")
 
 #pragma clang diagnostic pop

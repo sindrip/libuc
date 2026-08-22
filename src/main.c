@@ -341,13 +341,19 @@ static void rt006_demo(void) {
    * crash reports nothing. */
   rt_crash_install();
 
-  static const char banner[] = "rt: alive\n";
-  raw_write(1, banner, sizeof banner - 1);
-
-  rt004_selftest();
-  rt005_probe();
-  rt005_setup_failure();
-  rt005_nop();
+  /* The RT-003..005 regression chain, compiled in but quiet: the spec wants
+   * hello and nothing else on the happy path, and AGENTS.md wants the old
+   * acceptance checks runnable when shared code changes. volatile so the
+   * compiler keeps the chain alive; flip to true when bringing up. */
+  static volatile bool verbose = false;
+  if (verbose) {
+    static const char banner[] = "rt: alive\n";
+    raw_write(1, banner, sizeof banner - 1);
+    rt004_selftest();
+    rt005_probe();
+    rt005_setup_failure();
+    rt005_nop();
+  }
   rt006_demo();
 
   for (;;) {
