@@ -35,18 +35,42 @@
  * interrupted context's regs[29]) and rt_panic (seeded from its own
  * __builtin_frame_address(0)). One "  lr <hex>" line per frame.
  *
- * Each frame record is [fp] = saved fp, [fp+8] = saved lr. The walk must not
- * fault while reporting a fault, so every fp is validated BEFORE the two
- * loads: nonnull, 16-aligned, and strictly greater than the previous fp —
- * stacks grow down, so walking toward older frames means addresses must
- * rise, and the monotonic check breaks any cycle a corrupted chain could
- * form. Bound the frame count (64) on top. Clean termination is the zero fp
- * that _start planted (arch/aarch64/start.S) for exactly this moment; every
- * other stop reason is also just a stop — print nothing extra, the frames
- * already emitted are the evidence. */
+ * Each frame record is [fp] = saved fp, [fp+8] = saved lr. Every fp is
+ * validated BEFORE the two loads: nonnull, aligned for the loads (alignof,
+ * matching the kernel unwinder's fp & 0x7 at stacktrace.c:224 — stricter
+ * would silently truncate genuine walks), and strictly greater
+ * than where it came from — stacks grow down, so walking toward older frames
+ * means addresses must rise, and monotonicity both breaks any cycle a
+ * corrupted chain could form and guarantees termination. Clean termination
+ * is the zero fp that _start planted (arch/aarch64/start.S) for exactly this
+ * moment; every other stop reason is also just a stop.
+ *
+ * Deliberately no frame-count cap: the oldest frames are the diagnosis — in
+ * a runaway recursion, the entry point that started it prints LAST — and
+ * genuine chains are already bounded by the geometry of the stack they live
+ * in. A corrupt chain can still walk somewhere unmapped and fault mid-dump;
+ * the one-raw_write-per-line policy means every frame already printed has
+ * escaped, and the death is loud. Real prevention is a range check against
+ * known stacks, the kernel unwinder's design (stacktrace.c:227) — that
+ * arrives with RT-006's task registry. */
 [[maybe_unused]] static void dump_frames(unsigned long fp) {
-  (void)fp;
-  __builtin_trap();
+  while (fp != 0 && fp % alignof(unsigned long) == 0) {
+    const unsigned long *frame = (const unsigned long *)fp;
+
+    char buf[32];
+    struct rt_fmt f = {buf, buf + sizeof buf};
+    rt_fmt_str(&f, "  lr ");
+    rt_fmt_hex(&f, frame[1]);
+    rt_fmt_str(&f, "\n");
+    raw_write(1, buf, (size_t)(f.p - buf));
+
+    const unsigned long next = frame[0];
+    if (next <= fp) {
+      break;
+    }
+
+    fp = next;
+  }
 }
 
 /* The handler. Never returns — returning re-executes the faulting
