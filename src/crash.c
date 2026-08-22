@@ -30,11 +30,8 @@
  */
 
 void rt_crash_install(void) {
-  /* a) Wrappers first: sys_rt_sigaction (sys4-shaped) and sys_sigaltstack
-   *    (sys2-shaped) do not exist in syscall.h yet; both sit on invariant
-   *    1's direct list. rt_sigaction's arity is (signum, act, oldact,
-   *    sigsetsize) — oldact is nullptr here, and sigsetsize is 8, the only
-   *    value the kernel accepts (kernel/signal.c:4648). */
+  /* a) The wrappers, sys_rt_sigaction and sys_sigaltstack, are in syscall.h;
+   *    oldact is nullptr here, and sigsetsize is the wrapper's business. */
 
   /* b) The alternate stack, before any handler names it. A static buffer of
    *    SIGSTKSZ — which is 16384 on arm64 (asm/signal.h:24), NOT the generic

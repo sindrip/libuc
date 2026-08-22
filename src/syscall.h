@@ -10,7 +10,7 @@
  * which is why sys_failed() checks a *range* and not just r < 0: a syscall like
  * mmap legitimately returns large values whose top bit is set.
  *
- * The machine half — registers, svc, the sysN dispatchers — lives in
+ * The machine half — registers, svc, the syscallN dispatchers — lives in
  * arch/aarch64/syscall_arch.h, next to start.S and switch.S: architecture is
  * a path, not a suffix, and this file does not change when a second one
  * arrives.
@@ -60,10 +60,10 @@ static inline bool sys_failed(long r) { return r < 0 && r >= -4095; }
  *
  * static inline long raw_write(int fd, const void *buf, size_t len)
  * {
- *     return sys3(__NR_write, ...);
+ *     return syscall3(__NR_write, ...);
  * }
  *
- * Note the casts: sys3 takes long, and you are handed a pointer and a size.
+ * Note the casts: syscall3 takes long, and you are handed a pointer and a size.
  * Think about which cast is correct for a pointer -> long conversion and why
  * (uintptr_t exists in <stdint.h>, which is freestanding).
  *
@@ -72,7 +72,7 @@ static inline bool sys_failed(long r) { return r < 0 && r >= -4095; }
  * console is gone — there is nowhere else to report.
  */
 static inline long raw_write(int fd, const void *buf, size_t len) {
-  return sys3(__NR_write, fd, (long)(uintptr_t)buf, (long)len);
+  return syscall3(__NR_write, fd, (long)(uintptr_t)buf, (long)len);
 }
 
 /* TODO(4): sys_exit_group — terminate the whole process.
@@ -89,7 +89,7 @@ static inline long raw_write(int fd, const void *buf, size_t len) {
  * NOTREACHED (kernel/exit.c:1161).
  */
 [[noreturn]] static inline void sys_exit_group(int status) {
-  sys1(__NR_exit_group, status);
+  syscall1(__NR_exit_group, status);
 
   unreachable();
 }
@@ -110,17 +110,17 @@ static inline long raw_write(int fd, const void *buf, size_t len) {
 [[nodiscard]] static inline long sys_mmap(void *addr, size_t len, int prot,
                                           int flags, int fd,
                                           unsigned long off) {
-  return sys6(__NR_mmap, (long)(uintptr_t)addr, (long)len, prot, flags, fd,
-              (long)off);
+  return syscall6(__NR_mmap, (long)(uintptr_t)addr, (long)len, prot, flags, fd,
+                  (long)off);
 }
 
 /* TODO [RT-004]: sys_mprotect — change protection on an existing mapping.
  *
- * Three arguments, so sys3 covers it. Used to open the usable part of a
+ * Three arguments, so syscall3 covers it. Used to open the usable part of a
  * task stack after mapping the whole region PROT_NONE.
  */
 [[nodiscard]] static inline int sys_mprotect(void *addr, size_t len, int prot) {
-  return (int)sys3(__NR_mprotect, (long)(uintptr_t)addr, (long)len, prot);
+  return (int)syscall3(__NR_mprotect, (long)(uintptr_t)addr, (long)len, prot);
 }
 
 /* Incomplete type: enough to declare a pointer parameter, and it keeps a
@@ -143,27 +143,27 @@ struct io_uring_params;
  */
 [[nodiscard]] static inline int sys_io_uring_setup(unsigned entries,
                                                    struct io_uring_params *p) {
-  return (int)sys2(__NR_io_uring_setup, entries, (long)(uintptr_t)p);
+  return (int)syscall2(__NR_io_uring_setup, entries, (long)(uintptr_t)p);
 }
 
 [[nodiscard]] static inline int
 sys_io_uring_enter(int fd, unsigned to_submit, unsigned min_complete,
                    unsigned flags, const void *arg, size_t argsz) {
-  return (int)sys6(__NR_io_uring_enter, fd, to_submit, min_complete, flags,
-                   (long)(uintptr_t)arg, (long)argsz);
+  return (int)syscall6(__NR_io_uring_enter, fd, to_submit, min_complete, flags,
+                       (long)(uintptr_t)arg, (long)argsz);
 }
 
 [[nodiscard]] static inline int
 sys_io_uring_register(int fd, unsigned opcode, void *arg, unsigned nr_args) {
-  return (int)sys4(__NR_io_uring_register, fd, opcode, (long)(uintptr_t)arg,
-                   nr_args);
+  return (int)syscall4(__NR_io_uring_register, fd, opcode, (long)(uintptr_t)arg,
+                       nr_args);
 }
 
 /* TODO [RT-007]: sys_rt_sigaction and sys_sigaltstack — the crash handler's
  * two installs. Direct syscalls: neither has an opcode (invariant 1's list).
  * Both return 0 or -errno in sys_failed()'s range.
  *
- * rt_sigaction is sys4-shaped: (signum, act, oldact, sigsetsize). Two
+ * rt_sigaction is syscall4-shaped: (signum, act, oldact, sigsetsize). Two
  * decisions belong inside the wrapper, following sys_mmap's fd precedent —
  * quirks live here so no caller has to think about them:
  *
@@ -174,19 +174,19 @@ sys_io_uring_register(int fd, unsigned opcode, void *arg, unsigned nr_args) {
  *   - oldact stays a parameter (nullable) — reading back the old action is
  *     legitimate, just unused today.
  *
- * sigaltstack is sys2-shaped: (ss, old_ss), old_ss nullable.
+ * sigaltstack is syscall2-shaped: (ss, old_ss), old_ss nullable.
  */
 [[nodiscard]] static inline int sys_rt_sigaction(int signum,
                                                  const struct sigaction *act,
                                                  struct sigaction *oldact) {
-  return (int)sys4(__NR_rt_sigaction, signum, (long)(uintptr_t)act,
-                   (long)(uintptr_t)oldact, (long)sizeof(sigset_t));
+  return (int)syscall4(__NR_rt_sigaction, signum, (long)(uintptr_t)act,
+                       (long)(uintptr_t)oldact, (long)sizeof(sigset_t));
 }
 
 [[nodiscard]] static inline int sys_sigaltstack(const struct sigaltstack *ss,
                                                 struct sigaltstack *old_ss) {
-  return (int)sys2(__NR_sigaltstack, (long)(uintptr_t)ss,
-                   (long)(uintptr_t)old_ss);
+  return (int)syscall2(__NR_sigaltstack, (long)(uintptr_t)ss,
+                       (long)(uintptr_t)old_ss);
 }
 
 #endif /* RT_SYSCALL_H */
