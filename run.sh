@@ -24,14 +24,20 @@ esac
 # console=hvc0, not ttyAMA0: this kernel has VIRTIO_CONSOLE=y but
 # SERIAL_AMBA_PL011 is not set, so a PL011 console is silent. That also rules
 # out -nographic, which binds the console to the PL011 that does not exist.
+#
+# QEMU's user network gives the guest DHCP and forwards host TCP port 8080 to
+# the same guest port. Bind the host side to loopback: this is a development
+# server, not something that should appear on the local network.
 exec qemu-system-aarch64 \
   -machine virt \
   -accel "$ACCEL" -cpu "$CPU" \
   -m 2G -smp "$SMP" \
   -kernel out/vmlinuz \
   -initrd out/initramfs.cpio.gz \
-  -append "console=hvc0" \
+  -append "console=hvc0 ip=dhcp" \
   -display none -serial none -no-reboot \
+  -netdev user,id=net0,hostfwd=tcp:127.0.0.1:8080-:8080 \
+  -device virtio-net-device,netdev=net0 \
   -device virtio-serial-device \
   -chardev stdio,id=con0 \
   -device virtconsole,chardev=con0 \

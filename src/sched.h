@@ -32,6 +32,12 @@
 [[nodiscard]] int rt_nop(void);
 [[nodiscard]] int rt_write(int fd, const void *buf, unsigned len);
 
+/* Milestone 2 begins with the two ends of a socket fd's lifetime. Like the
+ * operations above, these return the CQE result directly: a new fd / zero on
+ * success, or -errno on failure. */
+[[nodiscard]] int rt_socket(int domain, int type, int protocol);
+[[nodiscard]] int rt_close(int fd);
+
 /* The loop, over caller-owned tasks: run every RT_READY task to its next
  * suspension point; publish the turn's staged SQEs and wait for one
  * completion; reap CQEs back into their tasks. Returns when every task is

@@ -8,6 +8,7 @@
  *
  *     hello a
  *     hello b
+ *     socket ok
  *
  * written by the kernel through IORING_OP_WRITE. With `verbose` flipped on,
  * the acceptance chain of the earlier tickets prints first — the expected
@@ -229,6 +230,56 @@ static void hello_task(void *arg) {
   }
 }
 
+/* Temporary milestone-local names. A real libuc <sys/socket.h> eventually
+ * owns these, but that header surface is not part of this first socket proof.
+ */
+static constexpr int RT_AF_INET = 2;
+static constexpr int RT_SOCK_STREAM = 1;
+static constexpr int RT_IPPROTO_TCP = 6;
+
+/* Milestone 2's first checkpoint: prove that SOCKET returns a descriptor and
+ * CLOSE consumes it, both through the scheduler's ring. */
+static void socket_task([[maybe_unused]] void *arg) {
+  auto fd = rt_socket(RT_AF_INET, RT_SOCK_STREAM, RT_IPPROTO_TCP);
+
+  if (fd < 0) {
+    put_str("socket: create failed: ");
+    put_dec((unsigned long)-fd);
+    put('\n');
+    return;
+  }
+
+  auto close_res = rt_close(fd);
+  if (close_res != 0) {
+    put_str("socket: close returned ");
+    if (close_res < 0) {
+      put_str("-");
+      put_dec((unsigned long)-(long)close_res);
+    } else {
+      put_dec((unsigned long)close_res);
+    }
+    put('\n');
+    return;
+  }
+
+  static constexpr char success_msg[] = "socket ok\n";
+  static constexpr unsigned success_len = (unsigned)(sizeof success_msg - 1);
+
+  auto written = rt_write(1, success_msg, success_len);
+  if (written != (int)success_len) {
+    put_str("socket: write returned ");
+    if (written < 0) {
+      put_str("-");
+      put_dec((unsigned long)-(long)written);
+    } else {
+      put_dec((unsigned long)written);
+    }
+    put_str(", expected ");
+    put_dec(success_len);
+    put('\n');
+  }
+}
+
 static void rt006_demo(void) {
   auto ret = rt_sched_init(8);
   if (sys_failed(ret)) {
@@ -250,6 +301,14 @@ static void rt006_demo(void) {
 
   struct rt_task *tasks[] = {&a, &b};
   rt_sched_run(tasks, 2);
+
+  /* Run the first milestone-2 probe separately, but on the same ring. Besides
+   * keeping the console order exact, one task means SQ capacity cannot be the
+   * source of a SOCKET/CLOSE failure in this checkpoint. */
+  struct rt_task socket;
+  rt_task_create(&socket, socket_task, nullptr);
+  struct rt_task *socket_tasks[] = {&socket};
+  rt_sched_run(socket_tasks, 1);
 }
 
 /* The only caller is start.S, which passes the pre-alignment stack pointer in

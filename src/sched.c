@@ -56,6 +56,48 @@ int rt_write(int fd, const void *buf, unsigned len) {
   return rt_suspend(self, sqe);
 }
 
+int rt_socket(int domain, int type, int protocol) {
+  struct rt_task *self = rt_current;
+  struct io_uring_sqe *sqe = rt_ring_sqe(&ring);
+
+  /* TODO(libuc): every ring wrapper needs to hide SQ-capacity backpressure
+   * instead of exposing it as an operation result. A full SQ means other
+   * tasks have staged work; yield so the scheduler can publish that work and
+   * the kernel can advance sq_head, then retry:
+   *
+   *   struct io_uring_sqe *sqe;
+   *   while ((sqe = rt_ring_sqe(&ring)) == nullptr) {
+   *     rt_yield();
+   *   }
+   */
+  if (sqe == nullptr) {
+    return -EAGAIN;
+  }
+
+  sqe->opcode = IORING_OP_SOCKET;
+
+  sqe->fd = domain;
+  sqe->off = (unsigned)type;
+  sqe->len = (unsigned)protocol;
+
+  return rt_suspend(self, sqe);
+}
+
+int rt_close(int fd) {
+  struct rt_task *self = rt_current;
+  struct io_uring_sqe *sqe = rt_ring_sqe(&ring);
+  /* TODO(libuc): use the cooperative SQ-space retry sketched in rt_socket. */
+  if (sqe == nullptr) {
+    return -EAGAIN;
+  }
+
+  sqe->opcode = IORING_OP_CLOSE;
+
+  sqe->fd = fd;
+
+  return rt_suspend(self, sqe);
+}
+
 void rt_sched_run(struct rt_task **tasks, int ntasks) {
   for (;;) {
     /* Run every ready task to its next suspension point, and take stock
@@ -115,8 +157,7 @@ void rt_sched_run(struct rt_task **tasks, int ntasks) {
     while (rt_ring_reap(&ring, &cqe)) {
       struct rt_task *t = (struct rt_task *)(uintptr_t)cqe.user_data;
       if (t->state != RT_BLOCKED) {
-        rt_panic("sched: cqe for nonblocked task",
-                 __builtin_return_address(0));
+        rt_panic("sched: cqe for nonblocked task", __builtin_return_address(0));
       }
       t->result = cqe.res;
       t->state = RT_READY;
