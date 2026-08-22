@@ -7,7 +7,6 @@
 
 #include "ring.h"
 
-#include <stdalign.h>
 #include <stdatomic.h>
 
 #include <asm/errno.h>  /* EOPNOTSUPP */
