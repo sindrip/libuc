@@ -148,6 +148,16 @@ the lowering is a port, not a redesign.
 - **Batching observed structurally**: both tasks' SQEs go to the kernel in
   single enters per turn (the staged count is cached_sq_tail's lead over
   the published tail), per the spec's not-an-optimization note.
+- **Post-acceptance short-submit correction**: a nonnegative `io_uring_enter`
+  return is not enough. `io_submit_sqes` can stop after request-allocation
+  failure or a bad SQE and return a positive prefix count
+  (`io_uring.c:2046-2068`), after which `io_uring_enter` returns without
+  waiting (`io_uring.c:2646-2650`). Because the full tail was already
+  published, the old `cached_sq_tail - sq_tail` calculation then reported no
+  newly staged work while the suffix remained behind `sq_head`, leaving its
+  tasks blocked forever. Milestone 1 now requires `ret == staged` and panics
+  otherwise. The recoverable design must count
+  `cached_sq_tail - sq_head` and retry a partially consumed batch.
 - RT-007's deferred criterion (the dump naming the running task) remains
   open — rt_current now exists and crash.c's e) seam can consume it in a
   follow-up; the task registry the walk's range-check wants is still a

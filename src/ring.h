@@ -125,7 +125,10 @@ struct rt_ring {
 [[nodiscard]] struct io_uring_sqe *rt_ring_sqe(struct rt_ring *r);
 
 /* Publish the SQ tail and enter the kernel. Returns how many SQEs
- * the kernel consumed, or -errno.
+ * the kernel consumed, or -errno. A nonnegative result is not necessarily
+ * the requested count: allocation failure or a bad SQE may produce a positive
+ * short submission. The caller must either account for the unconsumed suffix
+ * from sq_head and retry it, or treat ret != to_submit as fatal.
  *
  * The tail store is the release: everything written into the SQE must be
  * visible to the kernel before the tail that exposes it. On aarch64 a plain

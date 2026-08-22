@@ -277,6 +277,29 @@ src/libuc/
   misc/     abort.c assert.c stack_chk.c · ubsan handlers (exist)
 ```
 
+## Ownership made structural
+
+The Rust viability port exposed three contracts that libuc's C interfaces
+must encode instead of leaving them as comments:
+
+- **Submission accounting follows `sq_head`, not the last published
+  `sq_tail`.** The kernel can consume a positive prefix of a submitted batch
+  and return before waiting (`io_uring.c:2046-2068, 2646-2650`). Outstanding
+  work is therefore `cached_sq_tail - sq_head`; a short batch is retried from
+  that suffix. The probe scheduler deliberately panics on `ret != staged`
+  until it owns that recovery state machine.
+- **An SQE pointer is a staging-only capability.** The Rust ring makes the
+  mutable SQE borrow end before submission and returns CQEs by value. libuc's
+  public C ring surface should preserve the same lifetime shape: operation
+  preparers fill an SQE inside the staging call, and no raw pointer into the SQ
+  mapping escapes publication. The existing probe's `rt_ring_sqe()` is not the
+  successor API.
+- **The scheduler owns task addresses.** Rust's `Pin` states the requirement
+  directly; libuc gets the same guarantee from its fixed task slab. A raw task
+  pointer or slab offset may cross the switch and the kernel only after the
+  scheduler has placed it at its final address. Caller-owned task structs are
+  probe-era convention, not a libuc lifetime model.
+
 ## crt1 is where the inversion lives
 
 A normal crt1 runs `_start` -> `__libc_start_main(main, ...)` -> `main`, with

@@ -80,12 +80,26 @@ void rt_sched_run(struct rt_task **tasks, int ntasks) {
 
     /* Publish and wait. The staged count is the private cursor's lead over
      * the published tail: every op staged this turn goes to the kernel in
-     * one enter. */
+     * one enter.
+     *
+     * Success means the whole batch, not merely a nonnegative return. The
+     * kernel may stop after a request-allocation failure or a bad SQE and
+     * return a positive short count (io_uring.c:2046-2068); io_uring_enter
+     * then skips the wait (io_uring.c:2646-2650). The shared tail already
+     * exposes the entire batch, so carrying on would make the next staged
+     * calculation zero while the unconsumed suffix remains behind sq_head,
+     * stranding those tasks in RT_BLOCKED forever.
+     *
+     * Retrying needs submission accounting based on cached_sq_tail - sq_head.
+     * This milestone does not implement that state machine, so fail loudly. */
     auto staged = ring.cached_sq_tail -
                   atomic_load_explicit(ring.sq_tail, memory_order_relaxed);
     auto ret = rt_ring_submit_and_wait(&ring, staged, 1);
     if (sys_failed(ret)) {
       rt_panic("sched: enter failed", __builtin_return_address(0));
+    }
+    if ((unsigned)ret != staged) {
+      rt_panic("sched: short submit", __builtin_return_address(0));
     }
 
     /* Reap: the CQE's user_data is the task — cast it back, deliver the

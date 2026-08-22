@@ -205,7 +205,9 @@ int rt_ring_submit_and_wait(struct rt_ring *r, unsigned to_submit,
    * makes the same call wait (io_cqring_wait, io_uring.c:2685). Consumption
    * is capped at what was published (io_uring.h:474-475), and if it falls
    * short of to_submit the kernel skips the wait and returns the count
-   * (io_uring.c:2647), so to_submit should be exactly what was staged. */
+   * (io_uring.c:2647). The return is therefore a submission count, not a
+   * success boolean: callers must handle ret != to_submit even when ret is
+   * positive. */
   return sys_io_uring_enter(r->fd, to_submit, min_complete,
                             IORING_ENTER_GETEVENTS, nullptr, 0);
 }
