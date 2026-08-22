@@ -277,6 +277,48 @@ src/libuc/
   misc/     abort.c assert.c stack_chk.c · ubsan handlers (exist)
 ```
 
+## Symbol layers and names
+
+The probe and libuc surfaces name different contracts. Keep that distinction
+visible rather than making today's functions look source-compatible before they
+are ABI-compatible.
+
+| layer | examples | contract |
+|---|---|---|
+| probe/runtime | `rt_socket`, `rt_close`, `rt_yield` | Raw `-errno`, task-only where applicable, and submission-capacity details may still be visible. |
+| private libuc | `__libuc_await_socket`, `__libuc_await_close`, `__libuc_fiber_yield` | Reserved implementation namespace; ring-mediated suspension and scheduler mechanics. |
+| public C/POSIX | `socket`, `close`, `read`, `write`, `thrd_yield` | Standard declarations, types, return conventions, and per-fiber `errno`. |
+
+`await` is deliberate in the private I/O names: these are not thin direct
+syscall veneers. They submit to the owning ring, suspend the current fiber, and
+resume it with the completion. Calling them `__libuc_sys_*` would hide the most
+important part of their semantics.
+
+The public function is a real link-visible symbol, not a macro alias. Its thin
+wrapper translates a negative kernel result into `-1` plus per-fiber `errno`;
+the private layer absorbs temporary SQ-capacity backpressure so callers see the
+operation's result rather than an internal queue state. The first static libuc
+does not need glibc-style weak aliases: direct definitions are simpler until
+aliases solve a concrete compatibility problem.
+
+There is no `yield` keyword or coroutine facility in C23, nor in the current
+C2y draft (the likely basis of C29). The standard spelling already exists as
+`void thrd_yield(void)` in `<threads.h>` (ISO/IEC 9899:2024 7.28.5.8). That maps
+cleanly because a libuc `thrd_t` is a fiber:
+
+```c
+void thrd_yield(void)
+{
+    __libuc_fiber_yield();
+}
+```
+
+Keep `rt_yield()` while this is still the probe. At the libuc boundary, make
+`thrd_yield()` the public ABI and keep the scheduler primitive private. A custom
+bare `yield()` adds a non-standard surface, while `sched_yield()` describes the
+kernel thread rather than the fiber and would violate the ring/direct-syscall
+boundary if used as the primitive.
+
 ## Ownership made structural
 
 The Rust viability port exposed three contracts that libuc's C interfaces
@@ -295,10 +337,25 @@ must encode instead of leaving them as comments:
   mapping escapes publication. The existing probe's `rt_ring_sqe()` is not the
   successor API.
 - **The scheduler owns task addresses.** Rust's `Pin` states the requirement
-  directly; libuc gets the same guarantee from its fixed task slab. A raw task
-  pointer or slab offset may cross the switch and the kernel only after the
-  scheduler has placed it at its final address. Caller-owned task structs are
-  probe-era convention, not a libuc lifetime model.
+  directly; libuc gets the same guarantee from its scheduler-owned task slab. A
+  raw task pointer or slab offset may cross the switch and the kernel only after
+  the scheduler has placed it at its final address. Caller-owned task structs
+  are probe-era convention, not a libuc lifetime model.
+
+Here, "slab" means stable, indexed allocation, not a small fixed-capacity array.
+For millions of fibers, each core can grow task-record storage in `mmap`-backed
+chunks, with objects never moved and freed slots returned to per-core free
+lists. A large reserved virtual range committed incrementally is another
+possible implementation. Task records and task stacks are separate allocation
+problems; stack density and guarding are covered in `stacks.md`.
+
+A completion identity can eventually encode generation plus chunk/slot and an
+operation tag. The generation detects stale completions, but it does not weaken
+the lifetime rule: a slot cannot be recycled until its task has no operations
+in flight. The BPF loop's verifier-friendly `param_region` is a separate bounded
+addressing problem. It may require multiple regions, a pre-reserved region, or a
+bounded BPF-visible active set; its current offset encoding should not silently
+become a global limit on the number of userspace fibers.
 
 ## crt1 is where the inversion lives
 
@@ -438,7 +495,7 @@ piece worth deciding ahead of need.
 | `thrd_create` | `rt_task_create` + enqueue | on the calling core, always |
 | `thrd_join` | park until target is `RT_DEAD`, then drain | "joined" means *drained*, per language.md |
 | `thrd_detach` | mark for self-reap at exit | |
-| `thrd_yield` | `rt_yield()` | exists today |
+| `thrd_yield` | `__libuc_fiber_yield()` | public standard wrapper over today's `rt_yield()`; no C `yield` keyword |
 | `thrd_sleep` | `IORING_OP_TIMEOUT` | `io_uring.h:267` |
 | `thrd_exit` | task exit + `tss` destructor pass | |
 | `mtx_*` | intra-core wait queue | no atomics; `mtx_timedlock` adds a linked `TIMEOUT` |
