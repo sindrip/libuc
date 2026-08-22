@@ -38,6 +38,7 @@ UBSAN_ABORT(__ubsan_handle_alignment_assumption_minimal_abort,
             "alignment assumption")
 UBSAN_ABORT(__ubsan_handle_builtin_unreachable_minimal, "unreachable reached")
 UBSAN_ABORT(__ubsan_handle_negate_overflow_minimal_abort, "negate overflow")
+UBSAN_ABORT(__ubsan_handle_out_of_bounds_minimal_abort, "out of bounds")
 UBSAN_ABORT(__ubsan_handle_pointer_overflow_minimal_abort, "pointer overflow")
 UBSAN_ABORT(__ubsan_handle_shift_out_of_bounds_minimal_abort,
             "shift out of bounds")

@@ -146,6 +146,22 @@ int rt_recv(int fd, void *buf, unsigned len) {
   return rt_suspend(self, sqe);
 }
 
+int rt_send(int fd, const void *buf, unsigned len) {
+  struct rt_task *self = rt_current;
+  struct io_uring_sqe *sqe = rt_ring_sqe(&ring);
+  /* TODO(libuc): use the cooperative SQ-space retry sketched in rt_socket. */
+  if (sqe == nullptr) {
+    return -EAGAIN;
+  }
+
+  sqe->opcode = IORING_OP_SEND;
+  sqe->fd = fd;
+  sqe->addr = (unsigned long)(uintptr_t)buf;
+  sqe->len = len;
+
+  return rt_suspend(self, sqe);
+}
+
 int rt_close(int fd) {
   struct rt_task *self = rt_current;
   struct io_uring_sqe *sqe = rt_ring_sqe(&ring);

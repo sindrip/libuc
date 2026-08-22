@@ -8,7 +8,7 @@
  *
  *     hello a
  *     hello b
- *     recv ok
+ *     echo ok
  *
  * written by the kernel through IORING_OP_WRITE. With `verbose` flipped on,
  * the acceptance chain of the earlier tickets prints first — the expected
@@ -241,8 +241,8 @@ static constexpr int RT_SOCK_STREAM = 1;
 static constexpr int RT_IPPROTO_TCP = 6;
 
 /* Milestone 2's first checkpoint: prove SOCKET -> BIND -> LISTEN -> ACCEPT ->
- * RECV -> CLOSE through the scheduler's ring. After SOCKET succeeds, every
- * path reaches CLOSE before the task returns. */
+ * RECV -> SEND -> CLOSE through the scheduler's ring. After SOCKET succeeds,
+ * every path reaches CLOSE before the task returns. */
 static void socket_task([[maybe_unused]] void *arg) {
   auto fd = rt_socket(RT_AF_INET, RT_SOCK_STREAM, RT_IPPROTO_TCP);
 
@@ -312,6 +312,24 @@ static void socket_task([[maybe_unused]] void *arg) {
     }
   }
 
+  unsigned sent = 0;
+  while (recv_res > 0 && sent < (unsigned)recv_res) {
+    auto send_res =
+        rt_send(client_fd, buf + sent, (unsigned)recv_res - sent);
+    if (send_res <= 0) {
+      put_str("socket: send returned ");
+      if (send_res < 0) {
+        put_str("-");
+        put_dec((unsigned long)-(long)send_res);
+      } else {
+        put_dec((unsigned long)send_res);
+      }
+      put('\n');
+      break;
+    }
+    sent += (unsigned)send_res;
+  }
+
   auto client_close_res = 0;
   if (client_fd >= 0) {
     client_close_res = rt_close(client_fd);
@@ -341,11 +359,11 @@ static void socket_task([[maybe_unused]] void *arg) {
   }
 
   if (bind_res != 0 || listen_res != 0 || client_fd < 0 || recv_res <= 0 ||
-      client_close_res != 0) {
+      sent != (unsigned)recv_res || client_close_res != 0) {
     return;
   }
 
-  static constexpr char success_msg[] = "recv ok\n";
+  static constexpr char success_msg[] = "echo ok\n";
   static constexpr unsigned success_len = (unsigned)(sizeof success_msg - 1);
 
   auto written = rt_write(1, success_msg, success_len);
@@ -387,7 +405,7 @@ static void rt006_demo(void) {
 
   /* Run the first milestone-2 probe separately, but on the same ring. Besides
    * keeping the console order exact, one task means SQ capacity cannot be the
-   * source of a SOCKET/BIND/LISTEN/ACCEPT/RECV/CLOSE failure here. */
+   * source of a SOCKET/BIND/LISTEN/ACCEPT/RECV/SEND/CLOSE failure here. */
   struct rt_task socket;
   rt_task_create(&socket, socket_task, nullptr);
   struct rt_task *socket_tasks[] = {&socket};
