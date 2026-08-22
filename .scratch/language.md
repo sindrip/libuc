@@ -12,7 +12,7 @@ failing to. Kernel claims cite the pinned 7.2 tree in `out/src/`.
 
 The name: **uc** — the language of libuc. Stdlib root `uc::`; module paths
 transliterate to the C ABI (`uc::net::socket` ≡ `uc_net_socket`), so the
-namespace tree *is* libuc's exported symbol table.
+namespace tree _is_ libuc's exported symbol table.
 
 ---
 
@@ -21,14 +21,14 @@ namespace tree *is* libuc's exported symbol table.
 The design's spine is a ladder of "exactly one way" decisions. Each deletion
 was made deliberately; sugar is how options creep back in.
 
-| dimension | the one way | what was deleted |
-|---|---|---|
-| consume a sum value | `match` (total) | `try`, `?`, `or`, `if let`, `unwrap`, wildcards over enums |
-| iterate | `for x := range it` | `while`, C-style `for`, hand-rolled recv loops |
-| wait on many | `select` (deterministic, declaration order) | randomized select, `default`-less polling variants (one `default` arm is the only try-form) |
-| place work | `spawn f(x)` = here; `s.spawn(f, x)` = there | `spawn on` syntax, SPMD, `layout` blocks, work stealing |
-| name a thing | full path, one spelling program-wide | `use`, aliases, re-exports, wildcards |
-| render a program | compiler-enforced formatter | style, config, two spellings of one AST |
+| dimension           | the one way                                  | what was deleted                                                                            |
+| ------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| consume a sum value | `match` (total)                              | `try`, `?`, `or`, `if let`, `unwrap`, wildcards over enums                                  |
+| iterate             | `for x := range it`                          | `while`, C-style `for`, hand-rolled recv loops                                              |
+| wait on many        | `select` (deterministic, declaration order)  | randomized select, `default`-less polling variants (one `default` arm is the only try-form) |
+| place work          | `spawn f(x)` = here; `s.spawn(f, x)` = there | `spawn on` syntax, SPMD, `layout` blocks, work stealing                                     |
+| name a thing        | full path, one spelling program-wide         | `use`, aliases, re-exports, wildcards                                                       |
+| render a program    | compiler-enforced formatter                  | style, config, two spellings of one AST                                                     |
 
 Loop inventory: `if`, `for`, `match`, `select`, keywords `spawn` /
 `return` / `break` / `continue`. `spawn` is the language's only special form
@@ -71,8 +71,8 @@ Three eliminators, one per shape, each total: `match` (one value), `for range`
 - Syscall truth is the ABI: CQE `res` is i32, negative = `-errno`. So
   `Result[T] = Ok(T) | Err(errno)`, zero-representation over ring ops. User
   error codes live above 4095 (the kernel reserves 1..4095).
-- **The sticky-error law**: *Result appears in a signature only where the
-  caller must branch.* Ops whose success payload and immediate error are both
+- **The sticky-error law**: _Result appears in a signature only where the
+  caller must branch._ Ops whose success payload and immediate error are both
   ignorable fold failure into the handle's state and surface it at a
   checkpoint. `Ok(_) => {}` in a diff is a review smell pointing at the API.
 - Checkpoints are where errors are true: sockets surface stuck errors at the
@@ -103,6 +103,7 @@ Borrow checking, decomposed — one job deleted, one trivialized, one declined:
    overflow → crash handler) and by determinism — remaining bugs reproduce.
 
 **No GC**, structurally:
+
 - Fiber arenas, bulk-freed at exit (the mass case; compilers/parsers are the
   canonical fit).
 - Self-managing containers: copy-in/copy-out APIs mean no external references
@@ -112,18 +113,19 @@ Borrow checking, decomposed — one job deleted, one trivialized, one declined:
   tick doubles as the RCU grace-period clock).
 - Same-core `Rc` (non-atomic — single-threaded cores make it cheap) as the
   rare escape valve.
-- A GC would also be *unwelcome*: stop-the-world is preemption (invariant 7);
+- A GC would also be _unwelcome_: stop-the-world is preemption (invariant 7);
   a concurrent collector is io-wq-class background interference.
 
 **Large binaries (`uc::mem::Blob`)** — the Erlang comparison sharpened this:
+
 - The graph fact: binaries are **leaf objects** (no outgoing references), and
   refcounting's only correctness hole is cycles, which require outgoing edges.
-  So refcounting is *complete* collection for blobs — enforced by type
+  So refcounting is _complete_ collection for blobs — enforced by type
   (`[]u8`-shaped; a blob cannot store a reference).
 - Erlang's actual pains are **discovery** (ProcBin references are implicit in
   process heaps; only a tracing GC pass notices they died → the "binary leak")
   and **contention** (atomic refc across schedulers). uc replaces discovery
-  with **registration** (every reference is a recorded *lease*: fiber resource
+  with **registration** (every reference is a recorded _lease_: fiber resource
   list / in-flight SQE / foreign-scheduler ledger — released by fiber exit /
   CQE / message) and atomics with **home-scheduler message decrements**
   (mimalloc's remote-free pattern; count is a plain int touched by one
@@ -153,7 +155,7 @@ CQE rule (`ring.h:150-153`) promoted from completions to payloads.
 The fiber is the unit of: (1) failure — supervision, `die` observed by the
 spawner; (2) resource scope — fds/conns auto-released at exit, which deleted
 `defer` (no captures needed, works from any death depth, and exit-time CLOSE is
-fire-and-forget — *better* than a source-level defer that must suspend);
+fire-and-forget — _better_ than a source-level defer that must suspend);
 (3) checkout scope — `pg.acquire()` moves a conn in; clean exit returns-and-
 resets it to the pool, death closes it (let-it-crash and connection hygiene are
 the same mechanism); (4) allocation scope — the arena; (5) channel-endpoint
@@ -201,7 +203,7 @@ concurrency scope. Here they are the same scope. Its three Go duties: unlock
 
 ## 7. Scheduling and topology
 
-- Cooperative only (invariant 7). Starvation is detected and *named* by the
+- Cooperative only (invariant 7). Starvation is detected and _named_ by the
   watchdog, never preempted. No safepoints in loop backedges.
 - **The kernel vetoes migration**: `SINGLE_ISSUER` binds a ring to its task at
   setup (`io_uring.c:3065-3067`, enforced `register.c:764`); only the
@@ -214,7 +216,7 @@ concurrency scope. Here they are the same scope. Its three Go duties: unlock
   granting can be refused). The runtime has **zero ambient concurrency**;
   a library that spawns threads at init is a rude guest, and incremental C
   adoption requires one-thread-at-a-time. `uc::rt::cpus()` reports the
-  *granted* set (affinity/cgroup mask), so `for cpu := range uc::rt::cpus()`
+  _granted_ set (affinity/cgroup mask), so `for cpu := range uc::rt::cpus()`
   is correct on bare metal and in a throttled container without options.
 - Consequence: **the runtime kernel is finished at single-core.** Multi-core
   is stdlib code (`uc::rt::scheduler` calls clone/pin/ring-setup), invoked by
@@ -223,7 +225,7 @@ concurrency scope. Here they are the same scope. Its three Go duties: unlock
   tree = fiber tree = Unix's init model). "All cores" is a for loop. Rejected
   on the way here: SPMD (`if core() == 0` is fork in a trenchcoat — structure
   decided by identity test), and a declarative `layout` block (a manifest;
-  config-DSL, no joy). Identity tests for *routing* (`owner == core()`) remain
+  config-DSL, no joy). Identity tests for _routing_ (`owner == core()`) remain
   fine — data locality, not program structure.
 - Placed spawn is a method, not syntax: `s.spawn(f, x)` — fn + one sendable
   value into the target scheduler's built-in inbox port. Lineage: X10
@@ -233,8 +235,8 @@ concurrency scope. Here they are the same scope. Its three Go duties: unlock
   never became keywords. Cross-scheduler shared structures are `uc::rt`
   internals or rt types.
 - **Teardown protocol** (hosted mode makes it mandatory): the hazard is that
-  an in-flight op is a kernel-held reference into our memory — *nothing a
-  pending SQE references is reclaimed until its CQE is observed* (per-fiber
+  an in-flight op is a kernel-held reference into our memory — _nothing a
+  pending SQE references is reclaimed until its CQE is observed_ (per-fiber
   in-flight count defers arena/stack reclaim; PBUF_RING's core-owned buffers
   exist so the common case pins nothing — plan.md already noted this).
   Cancellation is delivered as completion (`IORING_ASYNC_CANCEL_ALL/ANY/FD`,
@@ -328,26 +330,26 @@ second trip — no N-syscalls-per-entry surprises).
 
 ## 11. Kernel findings ledger (7.2, all verified in out/src/)
 
-| claim | citation |
-|---|---|
-| opcode surface is libc-complete: files, net lifecycle, pipes, timers, futex, waitid, epoll_wait | `io_uring.h:256-320` |
-| `IORING_OP_BIND`/`LISTEN` | `io_uring.h:312-313` |
-| setsockopt via URING_CMD (`SOCKET_URING_OP_SETSOCKOPT`) | `io_uring.h:1041`, `cmd_net.c:182` |
-| `IORING_OP_CONNECT` | `io_uring.h:272` |
-| REUSEPORT selection by 4-tuple hash | `net/core/sock_reuseport.c:527`, `net/ipv4/inet_hashtables.c:402` |
-| MSG_RING wakes DEFER_TASKRUN rings via remote task work | `msg_ring.c:68,113,93` |
-| MSG_RING carries 96 bits; can send a registered fd into a sibling's fixed table | `io_uring.h:464-465`, `msg_ring.c:254,206` |
-| SINGLE_ISSUER binds ring to creating task; only submitter completes | `io_uring.c:3065-3067,2242-2245`, `register.c:764` |
-| multishot streams: `CQE_F_MORE` = Some, terminal CQE = None | `io_uring.h:371,411` |
-| kernel-owned buffer direction: PBUF_RING, READ_MULTISHOT(305), RECV_ZC(314)+ZCRX_IFQ(710), MEM_REGION(715), CLONE_BUFFERS(704) | `io_uring.h` registers 653-724 |
-| incremental buffer rings: kernel retains buffer while chunks are out | `io_uring.h:889,899` (IOU_PBUF_RING_INC) |
-| the in-kernel loop: `loop_step` as BPF struct_ops; kfuncs submit_sqes/get_region — scheduler tick must stay BPF-sayable | `loop.c` (`__io_run_loop`), `bpf-ops.c:17,25,251-267` |
-| `bpf_filter.c` is SQE deny-filtering (sandboxing for hosted code), not steering | `bpf_filter.c:1-40`, `io_uring.h:724` |
-| graceful cancel-by-criteria | `io_uring.h:388-397` |
-| ring close cancels-until-drained (teardown backstop) | `io_uring.c:2318,2349` |
-| **no getdents opcode** — fs::list() needs the registry | grep of `out/src/io_uring/`: absent |
-| WAITID = PID-1 reaping through the ring | `io_uring.h:306` |
-| FUTEX ops = shared-structure waits stay ring-native | `io_uring.h:307-309` |
+| claim                                                                                                                          | citation                                                          |
+| ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| opcode surface is libc-complete: files, net lifecycle, pipes, timers, futex, waitid, epoll_wait                                | `io_uring.h:256-320`                                              |
+| `IORING_OP_BIND`/`LISTEN`                                                                                                      | `io_uring.h:312-313`                                              |
+| setsockopt via URING_CMD (`SOCKET_URING_OP_SETSOCKOPT`)                                                                        | `io_uring.h:1041`, `cmd_net.c:182`                                |
+| `IORING_OP_CONNECT`                                                                                                            | `io_uring.h:272`                                                  |
+| REUSEPORT selection by 4-tuple hash                                                                                            | `net/core/sock_reuseport.c:527`, `net/ipv4/inet_hashtables.c:402` |
+| MSG_RING wakes DEFER_TASKRUN rings via remote task work                                                                        | `msg_ring.c:68,113,93`                                            |
+| MSG_RING carries 96 bits; can send a registered fd into a sibling's fixed table                                                | `io_uring.h:464-465`, `msg_ring.c:254,206`                        |
+| SINGLE_ISSUER binds ring to creating task; only submitter completes                                                            | `io_uring.c:3065-3067,2242-2245`, `register.c:764`                |
+| multishot streams: `CQE_F_MORE` = Some, terminal CQE = None                                                                    | `io_uring.h:371,411`                                              |
+| kernel-owned buffer direction: PBUF_RING, READ_MULTISHOT(305), RECV_ZC(314)+ZCRX_IFQ(710), MEM_REGION(715), CLONE_BUFFERS(704) | `io_uring.h` registers 653-724                                    |
+| incremental buffer rings: kernel retains buffer while chunks are out                                                           | `io_uring.h:889,899` (IOU_PBUF_RING_INC)                          |
+| the in-kernel loop: `loop_step` as BPF struct_ops; kfuncs submit_sqes/get_region — scheduler tick must stay BPF-sayable        | `loop.c` (`__io_run_loop`), `bpf-ops.c:17,25,251-267`             |
+| `bpf_filter.c` is SQE deny-filtering (sandboxing for hosted code), not steering                                                | `bpf_filter.c:1-40`, `io_uring.h:724`                             |
+| graceful cancel-by-criteria                                                                                                    | `io_uring.h:388-397`                                              |
+| ring close cancels-until-drained (teardown backstop)                                                                           | `io_uring.c:2318,2349`                                            |
+| **no getdents opcode** — fs::list() needs the registry                                                                         | grep of `out/src/io_uring/`: absent                               |
+| WAITID = PID-1 reaping through the ring                                                                                        | `io_uring.h:306`                                                  |
+| FUTEX ops = shared-structure waits stay ring-native                                                                            | `io_uring.h:307-309`                                              |
 
 Purity-registry candidates discovered (each: no opcode exists): `getdents64`,
 `execve` (for `uc::proc::exec`), `bpf(2)` (if REUSEPORT-eBPF steering is ever
@@ -364,7 +366,7 @@ wanted). To be argued in explicitly, per the registry discipline.
 - **`layout` declaration** — a manifest; neither code nor data; no joy.
 - **Transparent scheduling / work stealing** — kernel-vetoed for blocked
   fibers (SINGLE_ISSUER); shared heap would reopen races+GC. The transparent
-  Go-like layer is a *library discipline* above `uc::rt`, not the language.
+  Go-like layer is a _library discipline_ above `uc::rt`, not the language.
 - **GC** — nothing to discover; see §4. Also architecturally unwelcome.
 - **Unbounded mailboxes, selective receive, location transparency, hot code
   loading, built-in distribution** — Erlang imports declined; total match on
@@ -385,7 +387,7 @@ preemptive (reduction counting), pinned vs migrating, arenas vs GC, native vs
 VM, bounded vs unbounded mailboxes, addressed vs location-transparent.
 NIFs are BEAM's hardest problem and uc's native mode; preemptive fairness is
 BEAM's crown and uc's declared non-feature. Steal OTP's supervision
-vocabulary (links, monitors, restart strategies) as *library* when
+vocabulary (links, monitors, restart strategies) as _library_ when
 supervision is designed.
 
 ## 14. Open questions / flags
