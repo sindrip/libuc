@@ -45,6 +45,7 @@
  *                         submitted — the tail was published without release,
  *                         or to_submit was zero.
  */
+#include "crash.h"
 #include "ring.h"
 #include "syscall.h"
 #include "task.h"
@@ -308,6 +309,10 @@ static void rt005_nop(void) {
 
 [[noreturn]] void rt_main(void *stack) {
   (void)stack;
+
+  /* First, before anything that can fault: a handler installed after the
+   * crash reports nothing. */
+  rt_crash_install();
 
   static const char banner[] = "rt: alive\n";
   raw_write(1, banner, sizeof banner - 1);
