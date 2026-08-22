@@ -304,6 +304,82 @@ traversal via the linker-provided `__init_array_start`/`__init_array_end`, and
 boot function, a spawn, and a scheduler loop that never returns, rather than a
 milestone driver with the boot inlined.
 
+## The boot contract
+
+Status: conversation-derived, 2026-08-22. The language-side statement is
+language.md §7 — init creates exactly one scheduler, every additional one is
+program text, `main` runs on scheduler 0. This section is the libc-side
+mechanics: what crt1's sequence above actually rests on, and the boot topology
+that was considered and rejected.
+
+**The scheduler is never created; the boot thread becomes it.** A fiber is a
+manufactured thread of control — `rt_task_create` mmaps a stack, places a
+guard page, and forges a context so the first switch lands in the trampoline.
+The scheduler needs none of that. `rt_sched_ctx` is a plain zeroed global
+(`task.c:37`), written for the first time by the switch *away* from it
+(`rt_sched_resume`, `task.c:113`): the scheduler's context is captured lazily
+by the act of leaving it. Its state — ring, run queue, arena — is a struct the
+boot thread fills in before anything runs. So there is no chicken-and-egg
+between fiber and scheduler: the scheduler is presupposed by the process
+existing, and a scheduler with zero fibers is valid — today's `rt006_demo`
+boots in exactly that order (`rt_sched_init`, then `rt_task_create`, then
+`rt_sched_run`; `main.c:233-252`).
+
+Boot is four steps, all on the kernel-supplied stack:
+
+1. `_start` — neither fiber nor scheduler; just the process.
+2. `rt_boot()` — fill in scheduler 0's state. The calling thread has now
+   *become* the scheduler.
+3. `rt_task_create(fiber 0)` — a stack and a primed context in the queue;
+   nothing running yet but the boot thread.
+4. Enter the loop. The first `rt_switch` stamps `rt_sched_ctx`, and from that
+   instruction the kernel stack is permanently the scheduler's home.
+
+**Fiber 0 is the runtime's identity.** It is not mechanically special — just
+the first thing the boot path spawns. In v1 its body is the crt1 wrapper: run
+`main(argc, argv, envp)`, then drive `exit()`. If a supervising root is ever
+wanted (language.md's `restart: OnCrash`), fiber 0's body becomes the
+supervisor and `main` its first child — same machinery, one more
+`rt_task_create`. The hierarchy above `main` is a fiber, never a scheduler.
+
+**Rejected: a boot-time runtime/work scheduler split** — a tiny scheduler for
+the runtime that spawns a work scheduler for the program. Four reasons, three
+of them decisions already made elsewhere:
+
+- **Nothing for it to do.** Zero ambient concurrency (language.md §7) means
+  there is no job category for a dedicated runtime scheduler: reaping,
+  resuming, timer expiry and the deadlock check all run inline in the
+  scheduler loop, which gets the CPU at every suspension point.
+- **A supervisor scheduler cannot supervise.** Invariant 7 forbids preempting
+  a wedged core, the kernel vetoes migrating fibers off it (`SINGLE_ISSUER`
+  binds a ring to its thread), and invariant 3 forbids the shared state that
+  even *observing* it would need. Cross-core liveness machinery was considered
+  and dropped (§3 above; plan.md milestone 3 accepts the wedged core as a bug
+  class for the debugger).
+- **It forces the open problems into boot.** Getting `main` onto a spawned
+  scheduler needs clone, a second ring, and cross-scheduler transport — the
+  unresolved question — before the first line of the program. "The runtime
+  kernel is finished at single-core" exists precisely so nothing before `main`
+  depends on transport.
+- **It spends the exact deadlock detector on every program**, including those
+  that never wanted topology; and on the 1-vCPU dev VM it is two threads
+  timesharing one core.
+
+The cost asymmetry is the argument in one line: a fiber is a 64 KB stack plus
+a 168-byte context; a scheduler is a cloned thread, a ring with two mappings,
+a crash altstack, an arena, and an unsolved transport problem. The runtime's
+identity lives in the thing that costs a struct, not the thing that costs a
+core.
+
+**The legitimate form of "a scheduler for the work" is inverted.** The one
+workload that genuinely wants another scheduler is CPU-bound batch work that
+would starve a cooperative core — plan.md's open offload path. There the
+*exceptional* work moves out, on demand, by program text
+(`uc::rt::scheduler(cpu)` then `s.spawn(f, x)`), while `main` and the
+latency-sensitive work stay on scheduler 0. Boot stays single; the split is a
+decision the program makes when it has a reason, not a posture the runtime
+assumes for it.
+
 ## TLS — one instruction, and errno falls out
 
 Under `-static`, `_Thread_local` relaxes to the **local-exec** model: the
@@ -320,7 +396,7 @@ Two things follow for free once this exists:
 
 - **`errno` is `_Thread_local int`** — per-fiber exactly as the north star
   requires, with no `__errno_location` indirection to design. The syscall
-  wrappers keep returning `-errno` internally (`src/syscall.h:12`); the
+  wrappers keep returning `-errno` internally (`src/syscall.h:9-11`); the
   translation to the C convention happens only at the libuc boundary, so the
   runtime's own purity is untouched.
 - **The stack canary is a plain global on aarch64.** `__stack_chk_guard` is a
