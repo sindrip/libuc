@@ -5,6 +5,11 @@
 
 #include "crash.h"
 
+#include <asm/sigcontext.h>
+#include <asm/siginfo.h>
+#include <asm/signal.h>
+#include <asm/ucontext.h>
+
 #include "fmt.h"
 #include "syscall.h"
 
@@ -26,41 +31,56 @@
   __builtin_trap();
 }
 
-/* TODO(6): The signal handler and the dump. Static — nothing outside this
- * file installs or calls it directly.
+/* The bounded frame-pointer walk, shared between on_fault (seeded from the
+ * interrupted context's regs[29]) and rt_panic (seeded from its own
+ * __builtin_frame_address(0)). One "  lr <hex>" line per frame.
  *
- * What to print, in order of usefulness when the console is all you get:
- *
- *   1. The signal number and si_addr — the faulting address answers "null
- *      pointer, wild pointer, or guard page?" before anything else does.
- *   2. pc and pstate.
- *   3. x0-x30 and sp, fixed-width hex in columns (fmt.h's TODO(2) exists for
- *      this).
- *   4. The frame-pointer walk: x29 is fp; each frame is [fp] = saved fp,
- *      [fp+8] = saved lr. Bound it (64 frames) and validate every fp before
- *      dereferencing — aligned, nonnull, inside a known stack — because the
- *      handler must not fault while reporting a fault. It terminates on the
- *      zeroed x29 that RT-003's _start planted for exactly this moment.
- *   5. Which task was running and its stack range — but rt_current arrives
- *      with RT-006, so leave the seam marked and print it then.
- *
- * The trap the ucontext layout hides: uc_mcontext sits after glibc-compat
- * padding sized 1024/8 - sizeof(sigset_t) (asm/ucontext.h) — hand-computing
- * its offset is exactly the retyping invariant 4 forbids. Include the uapi
- * header and let the compiler place it.
- */
+ * Each frame record is [fp] = saved fp, [fp+8] = saved lr. The walk must not
+ * fault while reporting a fault, so every fp is validated BEFORE the two
+ * loads: nonnull, 16-aligned, and strictly greater than the previous fp —
+ * stacks grow down, so walking toward older frames means addresses must
+ * rise, and the monotonic check breaks any cycle a corrupted chain could
+ * form. Bound the frame count (64) on top. Clean termination is the zero fp
+ * that _start planted (arch/aarch64/start.S) for exactly this moment; every
+ * other stop reason is also just a stop — print nothing extra, the frames
+ * already emitted are the evidence. */
+[[maybe_unused]] static void dump_frames(unsigned long fp) {
+  (void)fp;
+  __builtin_trap();
+}
 
-/* The handler, minimal until TODO(6) grows the dump. Its two jobs: prove
- * firing, and never return — returning re-executes the faulting instruction.
- * Declared as void (*)(int), which is exactly __sighandler_t, so no cast is
- * needed yet: SA_SIGINFO makes the kernel pass three arguments, and a
- * one-parameter function ignoring x1 and x2 is ABI-clean on aarch64. The
- * cast question arrives with the ucontext, at TODO(6).
+/* The handler. Never returns — returning re-executes the faulting
+ * instruction. raw_write only (the purity exception's third charter reason:
+ * the ring may be exactly what is broken); the halt loop, not exit_group,
+ * preserves the scene for ./debug.sh.
  *
- * raw_write from here is the purity exception's third charter reason: the
- * ring may be exactly what is broken. The halt loop, not exit_group,
- * preserves the scene for ./debug.sh. */
-static void on_fault(int sig) {
+ * Now three arguments, so the dump can reach the interrupted context. The
+ * third is void * by convention; it points at struct ucontext
+ * (asm/ucontext.h), whose LAST field — after the glibc-compat padding — is
+ * uc_mcontext, a struct sigcontext: fault_address, regs[31], sp, pc, pstate
+ * (asm/sigcontext.h). Include the header and let the compiler place the
+ * offset; hand-computing it is the retyping invariant 4 forbids.
+ *
+ * The dump, one raw_write per line so a mid-dump failure still leaves the
+ * earlier lines on the console:
+ *
+ *   a) What happened: "crash: sig <n> addr <hex>". si_addr answers "null
+ *      pointer, wild pointer, or guard page?" before anything else does —
+ *      the uapi spells it via the si_addr convenience macro
+ *      (asm-generic/siginfo.h).
+ *   b) Where: pc and pstate, one line.
+ *   c) The machine: x0-x30 from regs[31] and then sp, fixed-width hex — the
+ *      column format rt_fmt_hex was designed for. A few registers per line;
+ *      pick a count that survives an 80-column console.
+ *   d) How we got there: dump_frames(regs[29]) — x29 is fp.
+ *   e) The seam: which task was running and its stack range, when
+ *      rt_current arrives with RT-006.
+ *
+ * Then the halt loop. */
+static void on_fault(int sig, siginfo_t *info, void *ucv) {
+  (void)info;
+  (void)ucv;
+
   char buf[32];
   struct rt_fmt f = {buf, buf + sizeof buf};
 
@@ -73,6 +93,21 @@ static void on_fault(int sig) {
     __asm__ volatile("wfe");
   }
 }
+
+/* SA_SIGINFO changes how the kernel CALLS the handler, not where it is
+ * stored: the kernel's struct sigaction has only sa_handler, a
+ * void (*)(int). Storing the three-argument handler therefore needs a
+ * reinterpretation, and the union performs it without a function-pointer
+ * cast — which -Wcast-function-type-strict would (rightly) flag, since a
+ * cast between incompatible function types is exactly what this is. The
+ * union states the dual calling convention as a type instead of smuggling
+ * it through a cast; musl's kernel-sigaction fill does the same. All
+ * function pointers share one representation on aarch64, and the kernel
+ * calls through the three-argument type because SA_SIGINFO says so. */
+static const union {
+  void (*siginfo)(int, siginfo_t *, void *);
+  __sighandler_t handler;
+} on_fault_ptr = {.siginfo = on_fault};
 
 void rt_crash_install(void) {
   /* a) The wrappers, sys_rt_sigaction and sys_sigaltstack, are in syscall.h;
@@ -97,16 +132,16 @@ void rt_crash_install(void) {
   }
 
   /* c) One act, filled once, installed four times (the kernel copies it).
-   *    sa_handler takes on_fault directly — the kernel's raw struct
-   *    (asm-generic/signal.h:68) has NO sa_sigaction member; that union is a
-   *    libc invention. Flags are SA_SIGINFO | SA_ONSTACK; the designated
-   *    initializer zeroes the rest, including sa_restorer (must exist, must
-   *    be zero — the VDSO fact in crash.h) and sa_mask (the faulting signal
-   *    is blocked automatically; a handler that only dumps and halts needs
-   *    nothing else masked). The trap this step guards: a zeroed sa_handler
-   *    is SIG_DFL, so an empty act "succeeds" while installing the
-   *    frozen-VM status quo. */
-  const struct sigaction act = {.sa_handler = on_fault,
+   *    sa_handler takes the union-reinterpreted on_fault (see on_fault_ptr):
+   *    the kernel's raw struct (asm-generic/signal.h:68) has NO sa_sigaction
+   *    member — that union is a libc invention. Flags are SA_SIGINFO |
+   *    SA_ONSTACK; the designated initializer zeroes the rest, including
+   *    sa_restorer (must exist, must be zero — the VDSO fact in crash.h) and
+   *    sa_mask (the faulting signal is blocked automatically; a handler that
+   *    only dumps and halts needs nothing else masked). The trap this step
+   *    guards: a zeroed sa_handler is SIG_DFL, so an empty act "succeeds"
+   *    while installing the frozen-VM status quo. */
+  const struct sigaction act = {.sa_handler = on_fault_ptr.handler,
                                 .sa_flags = SA_SIGINFO | SA_ONSTACK};
 
   /* d) The four installs: loop over a constexpr array of SIGSEGV, SIGBUS,
@@ -131,6 +166,15 @@ void rt_crash_install(void) {
   }
 }
 
+/* TODO(5): the shared dump-and-halt for non-signal callers — the UBSan
+ * handlers, and anything else that discovers corruption without a fault.
+ * There is no ucontext here, so the dump is smaller: one line, "panic: "
+ * then `what` then the hex of `where` (the caller's
+ * __builtin_return_address(0), resolvable against System.map under
+ * ./debug.sh since the binary is -no-pie) — then dump_frames seeded from
+ * __builtin_frame_address(0), this frame's own fp, so the walk shows how
+ * execution arrived — then the same wfe halt loop as on_fault, and for the
+ * same reason: preserve the scene. */
 [[noreturn]] void rt_panic(const char *what, void *where) {
   (void)what;
   (void)where;
