@@ -26,7 +26,7 @@
 	.globl _start
 	.type  _start, %function
 _start:
-    /* TODO(1): Terminate the frame-pointer chain.
+    /* Terminate the frame-pointer chain.
      *
      * Zero x29 (frame pointer) and x30 (link register).
      *
@@ -41,17 +41,17 @@ _start:
 	mov x29, xzr
 	mov x30, xzr
 
-    /* TODO(2): Pass the original stack pointer as rt_main's first argument.
+    /* Pass the original stack pointer as rt_main's first argument.
      *
      * argc/argv/envp/auxv all live at sp, and we will want auxv later (it
      * carries AT_PAGESZ, AT_HWCAP and friends). Capture it *before* touching
-     * sp in TODO(3).
+     * sp in the alignment step below.
      *
      * First argument goes in x0.
      */
 	mov x0, sp
 
-    /* TODO(3): Force 16-byte stack alignment.
+    /* Force 16-byte stack alignment.
      *
      * AAPCS64 requires sp to be 16-byte aligned at every instruction that uses
      * it. Linux hands us an aligned sp already, so this is defensive — but it
@@ -65,10 +65,10 @@ _start:
      */
 	and sp, x0, #-16
 
-    /* TODO(4): Call rt_main. */
+    /* Call rt_main. */
 	bl rt_main
 
-    /* TODO(5): rt_main must never return. If it does, exit loudly.
+    /* rt_main must never return. If it does, exit loudly.
      *
      * exit_group(1) — syscall number in x8, status in x0, then svc #0.
      * Use __NR_exit_group, not a literal.

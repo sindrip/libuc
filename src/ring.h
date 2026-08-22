@@ -47,8 +47,7 @@ struct rt_ring {
   unsigned features;
 };
 
-/* The five operations. Implemented in ring.c, which currently stubs each one
- * with a trap; replacing a trap with a body is the work.
+/* The five operations, implemented in ring.c.
  *
  * Conventions, applied to all of them: an -errno in sys_failed()'s range comes
  * straight back to the caller rather than being collapsed into a bool, because
@@ -56,7 +55,7 @@ struct rt_ring {
  * sessions and there is no strace here to recover the difference.
  */
 
-/* TODO(3): Capability probe. Fills `out`; returns 0, or -errno.
+/* Capability probe. Fills `out`; returns 0, or -errno.
  *
  * io_uring_register with fd == -1 takes the "blind" path that needs no ring
  * (register.c:1031), which is the whole point — this runs before setup, so a
@@ -79,7 +78,7 @@ struct rt_ring {
  */
 int rt_ring_probe(struct io_uring_query_opcode *out);
 
-/* TODO(4): Create the ring and map it. Returns 0, or -errno.
+/* Create the ring and map it. Returns 0, or -errno.
  *
  * Zero the io_uring_params first — resv[3] is checked and setup fails if it
  * is not clear. Then io_uring_setup(entries, &params) returns the ring fd.
@@ -111,7 +110,7 @@ int rt_ring_probe(struct io_uring_query_opcode *out);
  */
 int rt_ring_setup(struct rt_ring *r, unsigned entries);
 
-/* TODO(5): Hand out the next free SQE, or nullptr if the SQ is full.
+/* Hand out the next free SQE, or nullptr if the SQ is full.
  *
  * Under NO_SQARRAY the slot is the tail masked by the ring mask, with no
  * indirection (io_uring.c:1990-1996).
@@ -125,7 +124,7 @@ int rt_ring_setup(struct rt_ring *r, unsigned entries);
  */
 struct io_uring_sqe *rt_ring_sqe(struct rt_ring *r);
 
-/* TODO(6): Publish the SQ tail and enter the kernel. Returns how many SQEs
+/* Publish the SQ tail and enter the kernel. Returns how many SQEs
  * the kernel consumed, or -errno.
  *
  * The tail store is the release: everything written into the SQE must be
@@ -140,9 +139,9 @@ struct io_uring_sqe *rt_ring_sqe(struct rt_ring *r);
 int rt_ring_submit_and_wait(struct rt_ring *r, unsigned to_submit,
                             unsigned min_complete);
 
-/* TODO(7): Take one CQE. Returns false if the CQ is empty.
+/* Take one CQE. Returns false if the CQ is empty.
  *
- * The mirror of TODO(6): an acquire load of the CQ tail, because the CQE the
+ * The mirror of the submit publish: an acquire load of the CQ tail, because the CQE the
  * kernel wrote must not be read before the tail that announced it; then a
  * release store of the head, because the slot must not be seen as free until
  * you have finished copying out of it.

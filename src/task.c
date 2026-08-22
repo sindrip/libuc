@@ -47,7 +47,7 @@ static_assert((RT_GUARD_SIZE + RT_STACK_SIZE) % 16 == 0,
 static struct rt_ctx sched_ctx;
 static struct rt_task *current;
 
-/* TODO(1): Implement rt_task_create.
+/* rt_task_create.
  *
  * Three steps:
  *
@@ -136,7 +136,7 @@ void rt_task_create(struct rt_task *t, void (*fn)(void *), void *arg) {
   t->state = RT_READY;
 }
 
-/* TODO(2): Implement rt_yield.
+/* rt_yield.
  *
  * The running task calls this to give up the CPU. Two things must
  * happen: it records that it is still runnable rather than finished —
@@ -157,7 +157,7 @@ void rt_yield(void) {
   rt_switch(&current->ctx, &sched_ctx);
 }
 
-/* TODO(3): Implement rt_task_exit.
+/* rt_task_exit.
  *
  * switch.S branches here when a task function returns. Look at the last
  * instruction of rt_task_entry and work out why it is a branch and not
@@ -181,7 +181,7 @@ void rt_yield(void) {
   __builtin_trap();
 }
 
-/* TODO(4): Implement rt_sched_resume.
+/* rt_sched_resume.
  *
  * The scheduler's half of the switch, called from rt_main. Three
  * things: record which task is now running — rt_yield depends on this,

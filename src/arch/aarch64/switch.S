@@ -32,7 +32,7 @@
  *     48    x25–x26
  *     64    x27–x28
  *     80    x29 (FP), x30 (LR)
- *     96    sp            (via scratch register — see TODO(2))
+ *     96    sp            (via scratch register — see the sp save below)
  *    104    d8–d9         (stp pair, 8 bytes each)
  *    120    d10–d11
  *    136    d12–d13
@@ -59,7 +59,7 @@
  * trampoline instead.
  */
 rt_switch:
-    /* TODO(1): Save general-purpose callee-saved registers.
+    /* Save general-purpose callee-saved registers.
      *
      * Use `stp` (store pair) with explicit offsets into `from` (x0),
      * matching the struct layout above. Five pairs:
@@ -80,7 +80,7 @@ rt_switch:
 	stp  x27, x28, [x0, #64]
 	stp  x29, x30, [x0, #80]
 
-    /* TODO(2): Save sp.
+    /* Save sp.
      *
      * `stp x29, sp, [x0, #80]` does NOT work — sp cannot appear as a
      * register operand in stp (see .scratch/aarch64.md, "sp is not a
@@ -94,7 +94,7 @@ rt_switch:
 	str  x2, [x0, #96]
 
 
-    /* TODO(3): Save floating-point callee-saved registers.
+    /* Save floating-point callee-saved registers.
      *
      * d8–d15. Only the low 64 bits of v8–v15 are callee-saved (AAPCS64
      * §6.1.2), so we use `d` (64-bit) not `q` (128-bit). Saving `q`
@@ -112,7 +112,7 @@ rt_switch:
 
     /* ---- the boundary: everything above wrote "from", below reads "to" ---- */
 
-    /* TODO(4): Restore everything from the "to" context.
+    /* Restore everything from the "to" context.
      *
      * Mirror image of the save, reading from x1 instead of writing to x0.
      * Order does not technically matter, but keeping it the same makes
@@ -137,7 +137,7 @@ rt_switch:
 	ldp  d14, d15, [x1, #152]
 
 
-    /* TODO(5): Return into the other context.
+    /* Return into the other context.
      *
      * `ret` jumps to x30 — which we just loaded from "to". If "to" was
      * previously suspended inside rt_switch, x30 points to its caller's
@@ -167,7 +167,7 @@ rt_switch:
 	.globl rt_task_entry
 	.type  rt_task_entry, %function
 rt_task_entry:
-    /* TODO(6): Establish a root frame.
+    /* Establish a root frame.
      *
      * Push a frame record with a null saved-FP. This terminates the FP
      * chain for RT-007's crash handler, just like _start zeroes x29.
@@ -185,7 +185,7 @@ rt_task_entry:
 	stp xzr, xzr, [sp, #-16]!
 	mov x29, sp
 
-    /* TODO(7): Call the task function.
+    /* Call the task function.
      *
      * x19 = fn, x20 = arg (primed by rt_task_create, survived the switch
      * because they are callee-saved). Move arg to x0 (first argument
@@ -198,7 +198,7 @@ rt_task_entry:
 	blr x19
 
 
-    /* TODO(8): The task function returned — hand off to C.
+    /* The task function returned — hand off to C.
      *
      * We must NOT `ret` here: there is no valid return address, and the
      * stack has nothing useful below. Instead, branch to rt_task_exit

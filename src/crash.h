@@ -27,7 +27,7 @@
 #ifndef RT_CRASH_H
 #define RT_CRASH_H
 
-/* TODO(4): Install the handlers. Called from rt_main before anything that
+/* Install the handlers. Called from rt_main before anything that
  * can fault — a handler installed after the crash reports nothing.
  *
  * sigaltstack first, then rt_sigaction for SIGSEGV, SIGBUS, SIGILL and
@@ -42,7 +42,7 @@
  */
 void rt_crash_install(void);
 
-/* TODO(5): The shared dump-and-halt. The UBSan handlers call this too, so it
+/* The shared dump-and-halt. The UBSan handlers call this too, so it
  * takes only what they have: a name and one address.
  *
  * Output through raw_write alone — the second reason the purity exception

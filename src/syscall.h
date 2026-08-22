@@ -35,17 +35,15 @@
  * sizeof(sigset_t) instead of a bare 8. */
 #include <asm/signal.h>
 
-/* TODO(2): sys_failed — did a raw syscall return fail?
+/* sys_failed — did a raw syscall return fail?
  *
  * Raw returns are -errno in -1..-4095. Anything else is a success value, and
  * some of those are huge (mmap returns an address). Return true only for the
  * error range.
- *
- * static inline bool sys_failed(long r) { ... }
  */
 static inline bool sys_failed(long r) { return r < 0 && r >= -4095; }
 
-/* TODO(3): raw_write — THE sanctioned purity exception.
+/* raw_write — THE sanctioned purity exception.
  *
  * A direct write(2) to a file descriptor. This is the only deliberate
  * direct-syscall I/O in the project, and it exists for three reasons:
@@ -58,15 +56,6 @@ static inline bool sys_failed(long r) { return r < 0 && r >= -4095; }
  * If you find yourself reaching for this anywhere else, that is the signal to
  * stop and reread invariant 1.
  *
- * static inline long raw_write(int fd, const void *buf, size_t len)
- * {
- *     return syscall3(__NR_write, ...);
- * }
- *
- * Note the casts: syscall3 takes long, and you are handed a pointer and a size.
- * Think about which cast is correct for a pointer -> long conversion and why
- * (uintptr_t exists in <stdint.h>, which is freestanding).
- *
  * Deliberately not [[nodiscard]], alone among the wrappers: the put family
  * ignores console-write failures because PID 1 has no recourse when the
  * console is gone — there is nowhere else to report.
@@ -75,7 +64,7 @@ static inline long raw_write(int fd, const void *buf, size_t len) {
   return syscall3(__NR_write, fd, (long)(uintptr_t)buf, (long)len);
 }
 
-/* TODO(4): sys_exit_group — terminate the whole process.
+/* sys_exit_group — terminate the whole process.
  *
  * PID 1 must never reach this on the happy path; it exists so that a fall
  * through _start is loud rather than undefined.
@@ -94,7 +83,7 @@ static inline long raw_write(int fd, const void *buf, size_t len) {
   unreachable();
 }
 
-/* TODO [RT-004]: sys_mmap — anonymous memory.
+/* sys_mmap — anonymous memory.
  *
  * Returns the mapped address, or -errno in the sys_failed() range. Note
  * the return type: long, not void *. A pointer cannot represent -ENOMEM,
@@ -114,7 +103,7 @@ static inline long raw_write(int fd, const void *buf, size_t len) {
                   (long)off);
 }
 
-/* TODO [RT-004]: sys_mprotect — change protection on an existing mapping.
+/* sys_mprotect — change protection on an existing mapping.
  *
  * Three arguments, so syscall3 covers it. Used to open the usable part of a
  * task stack after mapping the whole region PROT_NONE.
@@ -128,7 +117,7 @@ static inline long raw_write(int fd, const void *buf, size_t len) {
  * ring.c includes the real header. */
 struct io_uring_params;
 
-/* TODO [RT-005]: the three io_uring syscalls.
+/* the three io_uring syscalls.
  *
  * These are the only syscalls the runtime makes directly once the ring is up;
  * everything with an opcode goes through the ring instead (invariant 1).
@@ -159,7 +148,7 @@ sys_io_uring_register(int fd, unsigned opcode, void *arg, unsigned nr_args) {
                        nr_args);
 }
 
-/* TODO [RT-007]: sys_rt_sigaction and sys_sigaltstack — the crash handler's
+/* sys_rt_sigaction and sys_sigaltstack — the crash handler's
  * two installs. Direct syscalls: neither has an opcode (invariant 1's list).
  * Both return 0 or -errno in sys_failed()'s range.
  *

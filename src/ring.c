@@ -14,7 +14,7 @@
 
 #include "syscall.h"
 
-/* TODO(1) [RT-005]: the setup flags for every ring this runtime creates.
+/* the setup flags for every ring this runtime creates.
  *
  *   SINGLE_ISSUER  one thread owns this ring for its whole life. True by
  *                  construction in a shared-nothing design (invariant 3), and
@@ -28,15 +28,6 @@
  *
  * Never SQPOLL — rejected outright alongside DEFER_TASKRUN, COOP_TASKRUN and
  * TASKRUN_FLAG at io_uring.c:2815-2821.
- *
- * Zero is not a placeholder that fails loudly: a ring with no flags is a valid
- * ring, so nothing will tell you this was left alone except a scheduler whose
- * completions run at times it did not choose. It is safe only while
- * rt_ring_setup below is still a trap.
- *
- * [[maybe_unused]] until rt_ring_setup reads it — an unused constexpr is an
- * error under -Werror. Delete the attribute when you use it, so a constant
- * that later becomes orphaned is still reported.
  */
 constexpr unsigned RT_RING_FLAGS = IORING_SETUP_SINGLE_ISSUER |
                                    IORING_SETUP_DEFER_TASKRUN |

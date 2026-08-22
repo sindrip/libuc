@@ -50,10 +50,10 @@
 #include "syscall.h"
 #include "task.h"
 
-/* TODO(1) [RT-004]: Emit a single character. */
+/* Emit a single character. */
 static void put(char c) { raw_write(1, &c, 1); }
 
-/* TODO [RT-005]: Emit a NUL-terminated string in a single write.
+/* Emit a NUL-terminated string in a single write.
  *
  * One syscall per string, not per character — the same argument that made
  * put_dec format into a buffer rather than call put twenty times.
@@ -75,7 +75,7 @@ static void put_str(const char *s) {
   raw_write(1, s, n);
 }
 
-/* TODO(2) [RT-005]: Print an unsigned value in decimal.
+/* Print an unsigned value in decimal.
  *
  * Needed twice over: the probe has numbers to report, and the failure path has
  * to decode an -errno into something readable. Without it "reports a decoded
@@ -106,7 +106,7 @@ static void put_dec(unsigned long v) {
   raw_write(1, p, (size_t)(buf + sizeof buf - p));
 }
 
-/* TODO(3) [RT-004]: The task body. */
+/* The task body. */
 static void abc_task(void *arg) {
   (void)arg;
 
@@ -117,7 +117,7 @@ static void abc_task(void *arg) {
   put('C');
 }
 
-/* TODO(4) [RT-004]: The cooperative round trip, kept as a regression check. */
+/* The cooperative round trip, kept as a regression check. */
 static void rt004_selftest(void) {
   struct rt_task t;
   rt_task_create(&t, abc_task, nullptr);
@@ -131,7 +131,7 @@ static void rt004_selftest(void) {
   put('\n');
 }
 
-/* TODO(5) [RT-005]: Probe the kernel and report what it can do.
+/* Probe the kernel and report what it can do.
  *
  * rt_ring_probe fills an io_uring_query_opcode; print nr_request_opcodes,
  * nr_register_opcodes and feature_flags. That is one syscall, and it converts
@@ -167,7 +167,7 @@ static void rt005_probe(void) {
   put('\n');
 }
 
-/* TODO(6) [RT-005]: Exercise the failure path once, on purpose.
+/* Exercise the failure path once, on purpose.
  *
  * Call setup with a flag combination the kernel must reject and print the
  * decoded errno. SQPOLL alongside DEFER_TASKRUN is the honest choice: it fails
@@ -199,7 +199,7 @@ static void rt005_setup_failure(void) {
   put('\n');
 }
 
-/* TODO(7) [RT-005]: The NOP round trip.
+/* The NOP round trip.
  *
  * Set up a ring, take an SQE, make it a NOP with a sentinel user_data,
  * submit-and-wait for one completion, reap it.
@@ -276,30 +276,6 @@ static void rt005_nop(void) {
 
   put_str("nop ok\n");
 }
-
-/* TODO(8) [RT-005]: Wire the above into rt_main, in order: banner, RT-004
- * selftest, probe, failure path, NOP, then idle.
- *
- * Each of the four stubs above carries [[maybe_unused]] so the build stays
- * clean while they are unreferenced. Delete the attribute as you call each
- * one — that way an accidentally orphaned function still gets reported.
- */
-/* TODO(9) [RT-007]: Prove the crash handler before trusting it. Three
- * deliberate faults, wired into rt_main one at a time and removed after each
- * dump is observed on the console:
- *
- *   - a null dereference: expect SIGSEGV, si_addr 0, a plausible pc, and at
- *     least two frames from the walk
- *   - infinite recursion inside a task: the guard-page overflow. This is the
- *     SA_ONSTACK proof — it fails loudly if the alternate stack is
- *     misconfigured, and it is the case the handler most exists for
- *   - a shift like 1 << 40: the UBSan path end to end, with a return address
- *     that resolves to the offending line under ./debug.sh — proving it
- *     works, not merely that it links
- *
- * rt_crash_install() itself goes at the top of rt_main, before anything that
- * can fault. A handler installed after the crash reports nothing.
- */
 
 /* The only caller is start.S, which passes the pre-alignment stack pointer in
  * x0 (arch/aarch64/start.S:44). Declared here because assembly cannot be

@@ -15,12 +15,12 @@ struct rt_fmt {
   char *end;
 };
 
-/* TODO(1): Append a NUL-terminated string. The NUL itself is never written —
+/* Append a NUL-terminated string. The NUL itself is never written —
  * the buffer is length-delimited by the cursor, and raw_write takes a count.
  */
 void rt_fmt_str(struct rt_fmt *f, const char *s);
 
-/* TODO(2): Append v as exactly 16 lowercase hex digits, zero-padded.
+/* Append v as exactly 16 lowercase hex digits, zero-padded.
  *
  * Fixed width, not minimal: the dump prints 31 registers in columns, and
  * values that change width with their magnitude cannot be scanned. Padding
@@ -33,7 +33,7 @@ void rt_fmt_str(struct rt_fmt *f, const char *s);
  */
 void rt_fmt_hex(struct rt_fmt *f, unsigned long v);
 
-/* TODO(3): Append v in decimal — the same backwards fill as main.c's
+/* Append v in decimal — the same backwards fill as main.c's
  * put_dec, into the appender instead of the console.
  *
  * All digits or none, the hex policy for a worse hazard: a truncated decimal

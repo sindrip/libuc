@@ -17,7 +17,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* TODO(1): Define struct rt_ctx — the saved register state.
+/* struct rt_ctx — the saved register state.
  *
  * This struct is the C-side mirror of what switch.S saves and restores.
  * The field order and sizes must match switch.S's offsets *exactly*, or
@@ -59,7 +59,7 @@ struct rt_ctx {
 
 static_assert(sizeof(struct rt_ctx) == 168);
 
-/* TODO(2): Define the task states.
+/* The task states.
  *
  * enum rt_task_state { RT_READY, RT_RUNNING, RT_DEAD }
  *
@@ -74,7 +74,7 @@ static_assert(sizeof(struct rt_ctx) == 168);
  * A state added later must not push RT_READY off zero. */
 enum rt_task_state { RT_READY = 0, RT_RUNNING = 1, RT_DEAD = 2 };
 
-/* TODO(3): Define struct rt_task.
+/* struct rt_task.
  *
  * Fields:
  *   struct rt_ctx  ctx         — saved register context
@@ -97,7 +97,7 @@ struct rt_task {
  * Functions — implemented in task.c
  * ------------------------------------------------------------------------- */
 
-/* TODO(4): Declare rt_task_create.
+/* rt_task_create.
  *
  * void rt_task_create(struct rt_task *t, void (*fn)(void *), void *arg);
  *
@@ -107,7 +107,7 @@ struct rt_task {
  */
 void rt_task_create(struct rt_task *t, void (*fn)(void *), void *arg);
 
-/* TODO(5): Declare rt_yield.
+/* rt_yield.
  *
  * void rt_yield(void);
  *
@@ -116,7 +116,7 @@ void rt_task_create(struct rt_task *t, void (*fn)(void *), void *arg);
  */
 void rt_yield(void);
 
-/* TODO(6): Declare rt_switch (implemented in switch.S).
+/* rt_switch (implemented in switch.S).
  *
  * void rt_switch(struct rt_ctx *from, struct rt_ctx *to);
  *
@@ -125,7 +125,7 @@ void rt_yield(void);
  */
 extern void rt_switch(struct rt_ctx *from, struct rt_ctx *to);
 
-/* TODO(7): Declare rt_sched_resume.
+/* rt_sched_resume.
  *
  * void rt_sched_resume(struct rt_task *t);
  *
