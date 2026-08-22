@@ -8,7 +8,7 @@
  *
  *     hello a
  *     hello b
- *     bind ok
+ *     listen ok
  *
  * written by the kernel through IORING_OP_WRITE. With `verbose` flipped on,
  * the acceptance chain of the earlier tickets prints first — the expected
@@ -240,9 +240,9 @@ static constexpr int RT_AF_INET = 2;
 static constexpr int RT_SOCK_STREAM = 1;
 static constexpr int RT_IPPROTO_TCP = 6;
 
-/* Milestone 2's first checkpoint: prove SOCKET -> BIND -> CLOSE through the
- * scheduler's ring. Even when BIND fails, the successfully created fd still
- * reaches CLOSE before the task returns. */
+/* Milestone 2's first checkpoint: prove SOCKET -> BIND -> LISTEN -> CLOSE
+ * through the scheduler's ring. After SOCKET succeeds, every path reaches
+ * CLOSE before the task returns. */
 static void socket_task([[maybe_unused]] void *arg) {
   auto fd = rt_socket(RT_AF_INET, RT_SOCK_STREAM, RT_IPPROTO_TCP);
 
@@ -271,6 +271,21 @@ static void socket_task([[maybe_unused]] void *arg) {
     put('\n');
   }
 
+  auto listen_res = 0;
+  if (bind_res == 0) {
+    listen_res = rt_listen(fd, 8);
+    if (listen_res != 0) {
+      put_str("socket: listen returned ");
+      if (listen_res < 0) {
+        put_str("-");
+        put_dec((unsigned long)-(long)listen_res);
+      } else {
+        put_dec((unsigned long)listen_res);
+      }
+      put('\n');
+    }
+  }
+
   auto close_res = rt_close(fd);
   if (close_res != 0) {
     put_str("socket: close returned ");
@@ -284,11 +299,11 @@ static void socket_task([[maybe_unused]] void *arg) {
     return;
   }
 
-  if (bind_res != 0) {
+  if (bind_res != 0 || listen_res != 0) {
     return;
   }
 
-  static constexpr char success_msg[] = "bind ok\n";
+  static constexpr char success_msg[] = "listen ok\n";
   static constexpr unsigned success_len = (unsigned)(sizeof success_msg - 1);
 
   auto written = rt_write(1, success_msg, success_len);
@@ -330,7 +345,7 @@ static void rt006_demo(void) {
 
   /* Run the first milestone-2 probe separately, but on the same ring. Besides
    * keeping the console order exact, one task means SQ capacity cannot be the
-   * source of a SOCKET/BIND/CLOSE failure in this checkpoint. */
+   * source of a SOCKET/BIND/LISTEN/CLOSE failure in this checkpoint. */
   struct rt_task socket;
   rt_task_create(&socket, socket_task, nullptr);
   struct rt_task *socket_tasks[] = {&socket};

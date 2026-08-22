@@ -36,6 +36,7 @@
  * zero on success, or -errno on failure. */
 [[nodiscard]] int rt_socket(int domain, int type, int protocol);
 [[nodiscard]] int rt_bind(int fd, const void *addr, unsigned addr_len);
+[[nodiscard]] int rt_listen(int fd, int backlog);
 [[nodiscard]] int rt_close(int fd);
 
 /* The loop, over caller-owned tasks: run every RT_READY task to its next

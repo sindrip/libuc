@@ -99,6 +99,21 @@ int rt_bind(int fd, const void *addr, unsigned addr_len) {
   return rt_suspend(self, sqe);
 }
 
+int rt_listen(int fd, int backlog) {
+  struct rt_task *self = rt_current;
+  struct io_uring_sqe *sqe = rt_ring_sqe(&ring);
+  /* TODO(libuc): use the cooperative SQ-space retry sketched in rt_socket. */
+  if (sqe == nullptr) {
+    return -EAGAIN;
+  }
+
+  sqe->opcode = IORING_OP_LISTEN;
+  sqe->fd = fd;
+  sqe->len = (unsigned)backlog;
+
+  return rt_suspend(self, sqe);
+}
+
 int rt_close(int fd) {
   struct rt_task *self = rt_current;
   struct io_uring_sqe *sqe = rt_ring_sqe(&ring);
