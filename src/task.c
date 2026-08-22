@@ -157,6 +157,17 @@ void rt_yield(void) {
   rt_switch(&current->ctx, &sched_ctx);
 }
 
+/* TODO(1) [RT-006]: what the suspend protocol needs from this file. Per
+ * the spec's sketch, rt_nop reads `rt_current` and switches to
+ * `rt_sched_ctx` — so `current` and `sched_ctx` stop being file-static and
+ * take those exported names (declare them in task.h). And the blocked
+ * transition: a task suspending on a ring op must reach the scheduler
+ * WITHOUT becoming RT_READY — only the reap loop may make it ready again,
+ * or the ready scan re-runs a task whose CQE has not arrived. rt_yield's
+ * unconditional RT_READY is the line in question: either it learns to
+ * preserve a state the caller already set, or the suspend protocol calls
+ * rt_switch directly, as the spec's sketch in fact does. */
+
 /* rt_task_exit.
  *
  * switch.S branches here when a task function returns. Look at the last

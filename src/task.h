@@ -59,20 +59,20 @@ struct rt_ctx {
 
 static_assert(sizeof(struct rt_ctx) == 168);
 
-/* The task states.
- *
- * enum rt_task_state { RT_READY, RT_RUNNING, RT_DEAD }
- *
- * RT_BLOCKED appears in the ticket spec for a task waiting on I/O.
- * Nothing until RT-006 can block, so it is not defined here yet.
- */
+/* RT_BLOCKED is a task waiting on a CQE: skipped by the ready scan, made
+ * RT_READY only by the reap loop. */
 /* Values are pinned rather than left to declaration order, as the kernel
  * pins TASK_RUNNING (include/linux/sched.h:107). Zero meaning RT_READY is
  * deliberate: a struct rt_task that was zeroed and never created also has
  * ctx.lr == 0, so resuming it faults at address 0 — an unambiguous report,
  * where a non-runnable zero would instead make rt_main skip it in silence.
  * A state added later must not push RT_READY off zero. */
-enum rt_task_state { RT_READY = 0, RT_RUNNING = 1, RT_DEAD = 2 };
+enum rt_task_state {
+  RT_READY = 0,
+  RT_RUNNING = 1,
+  RT_BLOCKED = 2,
+  RT_DEAD = 3
+};
 
 /* struct rt_task.
  *
@@ -81,6 +81,9 @@ enum rt_task_state { RT_READY = 0, RT_RUNNING = 1, RT_DEAD = 2 };
  *   void          *stack_base  — the mmap base, INCLUDING the guard page
  *   size_t         stack_len   — total mmap length (guard + usable)
  *   enum rt_task_state state
+ *   int            result      — the reaper's delivery: the CQE's res,
+ *                                already in place when a blocked task
+ *                                resumes (RT-006's suspend protocol)
  *   void (*fn)(void *)         — the task's entry function
  *   void *arg                  — argument passed to fn
  */
@@ -89,6 +92,7 @@ struct rt_task {
   void *stack_base;
   size_t stack_len;
   enum rt_task_state state;
+  int result;
   void (*fn)(void *);
   void *arg;
 };

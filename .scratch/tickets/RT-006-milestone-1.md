@@ -96,10 +96,19 @@ trampoline contract.
 
 ## Design amendments (2026-08-22, from language.md / bpf-loop.md)
 
-Argued before implementation; the spec above predates these documents. The
-governing idea: **the userspace reap loop is `loop_step`'s twin** — write it
-as the reference implementation of the future in-kernel loop
-(bpf-loop.md), and the lowering later becomes a port, not a redesign.
+**Status: deferred back to notes (2026-08-22, same day).** These were briefly
+promoted to milestone-1 requirements and partially built; that was drift.
+The spec above already carried the right instruction for all of it — "note
+it now; don't build it yet" — and milestone 1 builds the spec's shape:
+pointer user_data, caller-owned tasks, a `result` field, nothing more. The
+items below are migration notes for the eras that need them (multishot and
+cancellation for inflight/F_MORE; the BPF loop for the offset encoding and
+the header split; milestone 3 for the scheduler struct). The arguments
+stand; the timing was wrong.
+
+The governing idea remains worth keeping for later: **the userspace reap
+loop is `loop_step`'s twin** — when those eras arrive, shape the loop so
+the lowering is a port, not a redesign.
 
 1. **`user_data` is a slab offset with tag bits, not a raw task pointer.**
    The spec's `(unsigned long)self` is replaced. bpf-loop.md's verdict —

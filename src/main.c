@@ -277,6 +277,14 @@ static void rt005_nop(void) {
   put_str("nop ok\n");
 }
 
+/* TODO(5) [RT-006]: the driver rewrite — the ticket's demonstration: tasks
+ * that rt_nop() then rt_write() hello through the ring (raw_write becomes
+ * forbidden in task bodies), two of them interleaving, verified by
+ * temporarily stubbing raw_write to trap. Forces the acceptance decision:
+ * the happy-path console shows `hello` and nothing else, so the RT-005
+ * driver lines retire or gate when this lands — decide then, not before.
+ */
+
 /* The only caller is start.S, which passes the pre-alignment stack pointer in
  * x0 (arch/aarch64/start.S:44). Declared here because assembly cannot be
  * checked against a C signature — without this, nothing at all verifies the
