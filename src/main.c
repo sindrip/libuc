@@ -8,7 +8,7 @@
  *
  *     hello a
  *     hello b
- *     socket ok
+ *     bind ok
  *
  * written by the kernel through IORING_OP_WRITE. With `verbose` flipped on,
  * the acceptance chain of the earlier tickets prints first — the expected
@@ -27,6 +27,9 @@
  * zero).
  */
 #include <stddef.h>
+
+#include <asm/byteorder.h>
+#include <linux/in.h>
 
 #include "crash.h"
 #include "ring.h"
@@ -237,8 +240,9 @@ static constexpr int RT_AF_INET = 2;
 static constexpr int RT_SOCK_STREAM = 1;
 static constexpr int RT_IPPROTO_TCP = 6;
 
-/* Milestone 2's first checkpoint: prove that SOCKET returns a descriptor and
- * CLOSE consumes it, both through the scheduler's ring. */
+/* Milestone 2's first checkpoint: prove SOCKET -> BIND -> CLOSE through the
+ * scheduler's ring. Even when BIND fails, the successfully created fd still
+ * reaches CLOSE before the task returns. */
 static void socket_task([[maybe_unused]] void *arg) {
   auto fd = rt_socket(RT_AF_INET, RT_SOCK_STREAM, RT_IPPROTO_TCP);
 
@@ -247,6 +251,24 @@ static void socket_task([[maybe_unused]] void *arg) {
     put_dec((unsigned long)-fd);
     put('\n');
     return;
+  }
+
+  struct sockaddr_in addr = {
+      .sin_family = RT_AF_INET,
+      .sin_port = __constant_htons(8080),
+      .sin_addr = {.s_addr = INADDR_ANY},
+  };
+
+  auto bind_res = rt_bind(fd, &addr, (unsigned)sizeof addr);
+  if (bind_res != 0) {
+    put_str("socket: bind returned ");
+    if (bind_res < 0) {
+      put_str("-");
+      put_dec((unsigned long)-(long)bind_res);
+    } else {
+      put_dec((unsigned long)bind_res);
+    }
+    put('\n');
   }
 
   auto close_res = rt_close(fd);
@@ -262,7 +284,11 @@ static void socket_task([[maybe_unused]] void *arg) {
     return;
   }
 
-  static constexpr char success_msg[] = "socket ok\n";
+  if (bind_res != 0) {
+    return;
+  }
+
+  static constexpr char success_msg[] = "bind ok\n";
   static constexpr unsigned success_len = (unsigned)(sizeof success_msg - 1);
 
   auto written = rt_write(1, success_msg, success_len);
@@ -304,7 +330,7 @@ static void rt006_demo(void) {
 
   /* Run the first milestone-2 probe separately, but on the same ring. Besides
    * keeping the console order exact, one task means SQ capacity cannot be the
-   * source of a SOCKET/CLOSE failure in this checkpoint. */
+   * source of a SOCKET/BIND/CLOSE failure in this checkpoint. */
   struct rt_task socket;
   rt_task_create(&socket, socket_task, nullptr);
   struct rt_task *socket_tasks[] = {&socket};
@@ -322,10 +348,10 @@ static void rt006_demo(void) {
    * crash reports nothing. */
   rt_crash_install();
 
-  /* The regression chain, compiled in but quiet: the happy path wants hello
-   * and nothing else, and AGENTS.md wants the old acceptance checks
-   * runnable when shared code changes. volatile keeps the chain alive in
-   * the binary; flip to true to re-run it. */
+  /* The regression chain, compiled in but quiet: the happy path wants the
+   * three lines documented above and nothing else, and AGENTS.md wants the old
+   * acceptance checks runnable when shared code changes. volatile keeps the
+   * chain alive in the binary; flip to true to re-run it. */
   static volatile bool verbose = false;
   if (verbose) {
     static constexpr char banner[] = "rt: alive\n";

@@ -83,6 +83,22 @@ int rt_socket(int domain, int type, int protocol) {
   return rt_suspend(self, sqe);
 }
 
+int rt_bind(int fd, const void *addr, unsigned addr_len) {
+  struct rt_task *self = rt_current;
+  struct io_uring_sqe *sqe = rt_ring_sqe(&ring);
+  /* TODO(libuc): use the cooperative SQ-space retry sketched in rt_socket. */
+  if (sqe == nullptr) {
+    return -EAGAIN;
+  }
+
+  sqe->opcode = IORING_OP_BIND;
+  sqe->fd = fd;
+  sqe->addr = (unsigned long)(uintptr_t)addr;
+  sqe->addr2 = addr_len;
+
+  return rt_suspend(self, sqe);
+}
+
 int rt_close(int fd) {
   struct rt_task *self = rt_current;
   struct io_uring_sqe *sqe = rt_ring_sqe(&ring);
