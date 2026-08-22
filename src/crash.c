@@ -53,7 +53,7 @@
  * escaped, and the death is loud. Real prevention is a range check against
  * known stacks, the kernel unwinder's design (stacktrace.c:227) — that
  * arrives with RT-006's task registry. */
-[[maybe_unused]] static void dump_frames(unsigned long fp) {
+static void dump_frames(unsigned long fp) {
   while (fp != 0 && fp % alignof(unsigned long) == 0) {
     const unsigned long *frame = (const unsigned long *)fp;
 
@@ -102,16 +102,51 @@
  *
  * Then the halt loop. */
 static void on_fault(int sig, siginfo_t *info, void *ucv) {
-  (void)info;
-  (void)ucv;
+  const struct ucontext *uc = ucv;
+  const struct sigcontext *mc = &uc->uc_mcontext;
 
-  char buf[32];
+  char buf[96];
   struct rt_fmt f = {buf, buf + sizeof buf};
 
+  /* a) What happened. */
   rt_fmt_str(&f, "crash: sig ");
   rt_fmt_dec(&f, (unsigned long)sig);
+  rt_fmt_str(&f, " addr ");
+  rt_fmt_hex(&f, (unsigned long)(uintptr_t)info->si_addr);
   rt_fmt_str(&f, "\n");
   raw_write(1, buf, (size_t)(f.p - buf));
+
+  /* b) Where. */
+  f.p = buf;
+  rt_fmt_str(&f, "  pc ");
+  rt_fmt_hex(&f, (unsigned long)mc->pc);
+  rt_fmt_str(&f, " pstate ");
+  rt_fmt_hex(&f, (unsigned long)mc->pstate);
+  rt_fmt_str(&f, "\n");
+  raw_write(1, buf, (size_t)(f.p - buf));
+
+  /* c) The machine, three registers per line; the label pad keeps the hex
+   *    columns aligned across one- and two-digit indices. */
+  for (int i = 0; i < 31; i += 3) {
+    f.p = buf;
+    for (int j = i; j < i + 3 && j < 31; j++) {
+      rt_fmt_str(&f, " x");
+      rt_fmt_dec(&f, (unsigned long)j);
+      rt_fmt_str(&f, j < 10 ? "  " : " ");
+      rt_fmt_hex(&f, (unsigned long)mc->regs[j]);
+    }
+    rt_fmt_str(&f, "\n");
+    raw_write(1, buf, (size_t)(f.p - buf));
+  }
+  f.p = buf;
+  rt_fmt_str(&f, " sp  ");
+  rt_fmt_hex(&f, (unsigned long)mc->sp);
+  rt_fmt_str(&f, "\n");
+  raw_write(1, buf, (size_t)(f.p - buf));
+
+  /* d) How we got there — x29 is fp. (e: the running task and its stack
+   *    range land here with RT-006.) */
+  dump_frames((unsigned long)mc->regs[29]);
 
   for (;;) {
     __asm__ volatile("wfe");
@@ -190,17 +225,28 @@ void rt_crash_install(void) {
   }
 }
 
-/* TODO(5): the shared dump-and-halt for non-signal callers — the UBSan
- * handlers, and anything else that discovers corruption without a fault.
- * There is no ucontext here, so the dump is smaller: one line, "panic: "
- * then `what` then the hex of `where` (the caller's
- * __builtin_return_address(0), resolvable against System.map under
- * ./debug.sh since the binary is -no-pie) — then dump_frames seeded from
- * __builtin_frame_address(0), this frame's own fp, so the walk shows how
- * execution arrived — then the same wfe halt loop as on_fault, and for the
+/* The shared dump-and-halt for non-signal callers — the UBSan handlers, and
+ * anything else that discovers corruption without a fault. There is no
+ * ucontext here, so the dump is smaller: the panic line names the caller's
+ * `where` (its __builtin_return_address(0), resolvable against the binary
+ * since -no-pie), and the walk is seeded from this frame's own fp, so the
+ * frames show how execution arrived. The same wfe halt as on_fault, for the
  * same reason: preserve the scene. */
 [[noreturn]] void rt_panic(const char *what, void *where) {
-  (void)what;
-  (void)where;
-  __builtin_trap();
+  char buf[96];
+  struct rt_fmt f = {buf, buf + sizeof buf};
+
+  rt_fmt_str(&f, "panic: ");
+  rt_fmt_str(&f, what);
+  rt_fmt_str(&f, " at ");
+  rt_fmt_hex(&f, (unsigned long)(uintptr_t)where);
+  rt_fmt_str(&f, "\n");
+  raw_write(1, buf, (size_t)(f.p - buf));
+
+  void *fp = __builtin_frame_address(0);
+  dump_frames((unsigned long)(uintptr_t)fp);
+
+  for (;;) {
+    __asm__ volatile("wfe");
+  }
 }
