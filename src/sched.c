@@ -114,6 +114,22 @@ int rt_listen(int fd, int backlog) {
   return rt_suspend(self, sqe);
 }
 
+int rt_accept(int fd) {
+  struct rt_task *self = rt_current;
+  struct io_uring_sqe *sqe = rt_ring_sqe(&ring);
+  /* TODO(libuc): use the cooperative SQ-space retry sketched in rt_socket. */
+  if (sqe == nullptr) {
+    return -EAGAIN;
+  }
+
+  sqe->opcode = IORING_OP_ACCEPT;
+  sqe->fd = fd;
+  /* The cleared addr/addr2 fields discard the peer address. Cleared ioprio
+   * makes this one-shot: multishot CQEs do not fit today's task wakeup model. */
+
+  return rt_suspend(self, sqe);
+}
+
 int rt_close(int fd) {
   struct rt_task *self = rt_current;
   struct io_uring_sqe *sqe = rt_ring_sqe(&ring);
