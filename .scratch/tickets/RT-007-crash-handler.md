@@ -1,7 +1,7 @@
 ---
 id: RT-007
 title: Crash handler — register dump + frame-pointer walk
-status: todo
+status: done
 depends: [RT-003]
 ---
 
@@ -141,3 +141,51 @@ reading a frozen VM.
 
 The formatter written here is reusable for all later diagnostic output; don't
 make it crash-specific.
+
+## Observed (2026-08-22, acceptance sweep; per-fault dumps in commit messages)
+
+- **Install, both paths**: a deliberate sigaction on signal 0 printed
+  `crash: sigaction failed: 22` then trapped — PID 1 panic `exitcode=0x5`
+  decodes to SIGTRAP per main.c's own table, and the absent banner proved the
+  install runs first. The clean install is silent: the full RT-005 console,
+  byte-identical, ending `nop ok`.
+- **Null dereference**: `crash: sig 11 addr 0`, pc disassembling to the
+  faulting `str wzr, [x8]` itself, full register file (x19 still carrying the
+  NOP sentinel `f00dfacedeadbeef` — capture provably real), and two frames:
+  lr into rt_main, lr into _start, then the planted zero. Getting two frames
+  required nesting the fault in a non-tail `[[gnu::noinline]]` helper —
+  recorded as a walk-reading fact, twice over: **leaf functions push no frame
+  record** (their return address stays in x30, printed in the register
+  block), and **a sole-call function becomes a tail call** (`b`, no record).
+  Missing frames for leaves and tails is AAPCS truth, not a walk bug.
+- **Guard-page recursion (the SA_ONSTACK proof)**: recursion inside a task
+  faulted at `addr 0000ffff9b8deff0` — the guard page, exactly the question
+  si_addr exists to answer. The dump was produced while the faulting stack
+  had zero bytes free, which is the alternate stack proving itself. The walk
+  printed 2048 frames and terminated: ~2046 recursion frames, then
+  `lr 210688` — **the origin, the task-entry trampoline, visible only
+  because the walk has no frame cap** — then the task root record's zero lr.
+  The task chain correctly ended at the task's own root; rt_main's frames on
+  the boot stack were unreachable, as shared-nothing stacks should be.
+- **./debug.sh**: attach after the crash halts the guest; lldb read
+  `pc = on_fault+620 at crash.c:151` sitting on the halt loop's back-branch,
+  and `sp = rt_crash_install.stack + 11456` — inside the 16 KiB alternate
+  stack (symbol size 0x4000 in .bss), the SA_ONSTACK fact confirmed by a
+  second witness. Live registers at the halt are the handler's context by
+  design; the faulted context's fidelity is the disassembly cross-checks
+  above.
+- **UBSan end to end**: `panic: ubsan: shift out of bounds at 211cb8` from a
+  volatile-laundered `1 << 40`; the at-address disassembles to the return of
+  the shift handler's `bl` and reappears as the walk's second frame — the
+  panic line's where and the frame record's saved lr agreeing from
+  independent sources. Eight handlers total, named lazily by link errors
+  (the eighth, function_type_mismatch, was demanded by the acceptance test's
+  own indirect call). The fully instrumented boring boot is silent — every
+  ring index computation and alignment claim checked live.
+- **Deferred**: "the dump names the running task and its stack range" needs
+  rt_current and stack ranges — arrives with RT-006; the seam is marked at
+  crash.c's d) comment. The same registry upgrades dump_frames from
+  count-free validation to the kernel unwinder's range-check design.
+- Constants for the record: SIGSTKSZ is 16384 on arm64 (not the generic
+  8192 — the signal frame carries sigcontext's 4 KiB reserved block); frame
+  alignment is 8, matching the kernel unwinder's `fp & 0x7`, not 16.
