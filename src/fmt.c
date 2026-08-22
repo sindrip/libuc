@@ -1,7 +1,5 @@
 /*
- * Formatting bodies. Contracts are in fmt.h, next to the declarations. Every
- * stub traps until implemented — a formatter that silently emits nothing
- * would make the crash dump lie by omission.
+ * Formatting bodies. Contracts are in fmt.h, next to the declarations.
  */
 
 #include "fmt.h"
@@ -13,27 +11,23 @@ void rt_fmt_str(struct rt_fmt *f, const char *s) {
 }
 
 void rt_fmt_hex(struct rt_fmt *f, unsigned long v) {
-  /* a) All or nothing. A register printed at half width reads as a smaller
-   *    value — a lie of distortion — so refuse outright unless all sixteen
-   *    digits fit. Pointer subtraction is signed (ptrdiff_t, which is what
-   *    auto deduces here), so a broken p > end invariant goes negative and
-   *    still refuses: fails closed. This one guard proves every write below
-   *    safe; there is deliberately no per-write check. */
+  /* All or nothing: refuse outright unless all sixteen digits fit. Pointer
+   * subtraction is signed (ptrdiff_t, which is what auto deduces), so a
+   * broken p > end invariant goes negative and still refuses — fails
+   * closed. This one guard proves every write below safe; there is
+   * deliberately no per-write check. */
   auto remaining = f->end - f->p;
   if (remaining < 16) {
     return;
   }
 
-  /* b) The mapping is data, not control flow: sixteen characters indexed by
-   *    the nibble. The & with 0b1111 is the bounds proof — a masked value
-   *    cannot exceed 15. */
   static constexpr char hexmap[] = "0123456789abcdef";
 
-  /* c) Sixteen positions, top nibble first: the shift walks 60 down to 0 in
-   *    steps of 4. The shift variable must be SIGNED — an unsigned counter
-   *    stepped below zero wraps huge and its >= 0 test never fails. Body:
-   *    shift, mask, index, write forward. Zero-padding is free — sixteen
-   *    unconditional iterations emit leading zeros with no special case. */
+  /* Sixteen positions, top nibble first: the shift walks 60 down to 0 in
+   * steps of 4, and must be SIGNED — an unsigned counter stepped below zero
+   * wraps huge and its >= 0 test never fails. The & with 0b1111 is the
+   * bounds proof for the hexmap index. Zero-padding is free: sixteen
+   * unconditional iterations emit leading zeros with no special case. */
   for (int shift = 60; shift >= 0; shift -= 4) {
     unsigned long nibble = (v >> shift) & 0b1111;
     *f->p++ = hexmap[nibble];
@@ -41,10 +35,10 @@ void rt_fmt_hex(struct rt_fmt *f, unsigned long v) {
 }
 
 void rt_fmt_dec(struct rt_fmt *f, unsigned long v) {
-  /* Digits emerge least-significant first, so fill a scratch buffer backwards
-   * from its end; do-while so zero prints one digit instead of none. Twenty
-   * bytes: the largest unsigned long is 18446744073709551615 — twenty digits
-   * exactly. */
+  /* Digits emerge least-significant first, so fill a scratch buffer
+   * backwards from its end; do-while so zero prints one digit instead of
+   * none. Twenty bytes: the largest unsigned long is 18446744073709551615 —
+   * twenty digits exactly. */
   char buf[20];
   char *p = buf + sizeof buf;
 

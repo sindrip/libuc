@@ -1,14 +1,11 @@
 /*
- * The scheduler: RT-004's coroutines joined to RT-005's ring. A task
- * suspends on a ring operation, the reap loop matches its completion back
- * by user_data, and the loop resumes it — the first moment this is a
- * runtime rather than a pile of parts.
+ * The scheduler: cooperative tasks suspended on ring completions.
  *
- * The design is the RT-006 spec's, deliberately minimal: user_data carries
- * the task pointer (the task IS the completion key — no table, no lookup),
- * tasks are caller-owned structs as in RT-004, and the one new channel is
- * task->result. The ticket's amendments section records the deferred
- * futures (offset encoding, header split, inflight) and why they wait.
+ * The dispatch mechanism is the whole design: a ring op stamps
+ * user_data = the task pointer, so the task IS the completion key — the
+ * reap loop casts it back, delivers cqe->res into task->result, and marks
+ * the task ready. No completion table, no lookup. Non-task completions,
+ * when they appear, will claim tag bits in user_data; noted, not built.
  */
 #ifndef RT_SCHED_H
 #define RT_SCHED_H
@@ -16,41 +13,33 @@
 #include "ring.h"
 #include "task.h"
 
-/* TODO(2): rt_sched_init — create the scheduler's ring. Returns 0 or
- * -errno straight from rt_ring_setup, same conventions as ring.h. */
+/* Create the scheduler's ring. Returns 0 or -errno straight from
+ * rt_ring_setup, same conventions as ring.h. */
 int rt_sched_init(unsigned entries);
 
-/* TODO(3): The suspend protocol — rt_nop, rt_write, the spec's sketch:
+/* Ring ops, callable only from a task: stage an SQE, suspend until the reap
+ * loop delivers the completion, return its res. A full SQ returns -EAGAIN
+ * with no suspension — rt_ring_sqe's backpressure, surfaced.
  *
- *   take an SQE (rt_ring_sqe), prep the op,
- *   user_data = (unsigned long)self — the task IS the completion key,
- *   self->state = RT_BLOCKED,
- *   switch to the scheduler; when it resumes us, return self->result.
+ * rt_write's off field is -1, the write(2) semantic: the kernel reads off
+ * unconditionally (rw.c:272), and -1 selects the file's own position,
+ * degrading to 0 for stream-mode files like the console (rw.c:483-493) —
+ * where a literal 0 would mean "write at offset zero" on seekable files.
  *
- * `self` comes from rt_current (task.h). rt_write is the same
- * shape over IORING_OP_WRITE, four SQE fields: fd, addr (the buffer, cast
- * per house idiom), len, and off = -1 — the write(2) semantic. The kernel
- * reads off unconditionally (rw.c:272); -1 means the file's own position,
- * degrading to 0 for stream-mode files like the console (rw.c:483-493),
- * while a literal 0 would mean "write at offset zero" on seekable files.
- * After milestone 1 wires rt_write, raw_write is forbidden outside the
- * purity registry's uses.
+ * raw_write is forbidden in task bodies; failure paths under the purity
+ * registry's charter are the only exception.
  */
 int rt_nop(void);
 int rt_write(int fd, const void *buf, unsigned len);
 
-/* TODO(4): rt_sched_run — the spec's loop over caller-owned tasks:
+/* The loop, over caller-owned tasks: run every RT_READY task to its next
+ * suspension point; publish the turn's staged SQEs and wait for one
+ * completion; reap CQEs back into their tasks. Returns when every task is
+ * RT_DEAD.
  *
- *   run every RT_READY task to its next suspension point
- *   if nothing alive: return (rt_main falls into its idle loop)
- *   submit staged SQEs, wait for one completion (rt_ring_submit_and_wait)
- *   for each CQE: t = (struct rt_task *)cqe->user_data;
- *                 t->result = cqe->res; t->state = RT_BLOCKED -> RT_READY
- *
- * Submission is batched once per turn — not an optimization: it is what
- * keeps SQ_REWIND and the in-kernel loop reachable (both assume the loop
- * owns submission timing), and it is what cached_sq_tail was designed for.
- */
+ * Submission is batched once per turn — not an optimization: SQ_REWIND and
+ * the in-kernel BPF loop both assume the loop owns submission timing, and
+ * batching is what cached_sq_tail exists for. */
 void rt_sched_run(struct rt_task **tasks, int ntasks);
 
 #endif /* RT_SCHED_H */

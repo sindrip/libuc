@@ -33,25 +33,24 @@
  * sigaltstack first, then rt_sigaction for SIGSEGV, SIGBUS, SIGILL and
  * SIGFPE with SA_SIGINFO | SA_ONSTACK. The order is the point: SA_ONSTACK
  * with no alternate stack behind it is an empty promise, and the
- * stack-overflow fault — the one you most want reported — needs the handler
+ * stack-overflow fault — the one most worth reporting — needs the handler
  * to run somewhere that is not the stack that just overflowed.
  *
- * The alternate stack is per-thread state: milestone 3's workers each
- * install their own before any task runs on them, or a worker-core overflow
- * loses exactly the report this ticket's acceptance proves.
+ * The alternate stack is per-thread state: a later worker thread must
+ * install its own before any task runs on it, or a worker-core overflow
+ * loses exactly this report.
  */
 void rt_crash_install(void);
 
 /* The shared dump-and-halt. The UBSan handlers call this too, so it
  * takes only what they have: a name and one address.
  *
- * Output through raw_write alone — the second reason the purity exception
- * exists. The ring may be exactly what is broken, and a handler that submits
- * an SQE to report a corrupted ring hangs instead of reporting.
+ * Output through raw_write alone, per the purity registry's charter: the
+ * ring may be exactly what is broken, and a handler that submits an SQE to
+ * report a corrupted ring hangs instead of reporting.
  *
  * Never returns. A tight loop, not exit_group: the halt preserves the scene
- * for ./debug.sh, and returning would just re-execute the faulting
- * instruction.
+ * for ./debug.sh.
  */
 [[noreturn]] void rt_panic(const char *what, void *where);
 

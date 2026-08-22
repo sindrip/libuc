@@ -1,7 +1,6 @@
 /*
- * Scheduler bodies. Contracts are in sched.h; the ticket carries the spec,
- * and this file is the spec's sketches made real — the ring the tasks
- * suspend on lives here, file-static, the milestone-1 shape.
+ * Scheduler bodies. Contracts are in sched.h; the ring the tasks suspend on
+ * lives here, file-static — one ring, one scheduler, one thread.
  */
 
 #include "sched.h"
@@ -15,7 +14,7 @@ static struct rt_ring ring;
 
 int rt_sched_init(unsigned entries) { return rt_ring_setup(&ring, entries); }
 
-/* The suspend tail shared by every ring op: stamp the ticket, mark
+/* The suspend tail shared by every ring op: stamp the completion key, mark
  * blocked, hand the CPU to the scheduler. When the reap loop resumes this
  * task, the CQE's res is already in self->result — the return below runs
  * arbitrarily later, and the caller cannot tell it was ever gone. */
@@ -77,8 +76,8 @@ void rt_sched_run(struct rt_task **tasks, int ntasks) {
     }
 
     /* Publish and wait. The staged count is the private cursor's lead over
-     * the published tail — the batching cached_sq_tail was designed for:
-     * every op staged this turn goes to the kernel in one enter. */
+     * the published tail: every op staged this turn goes to the kernel in
+     * one enter. */
     unsigned staged = ring.cached_sq_tail -
                       atomic_load_explicit(ring.sq_tail, memory_order_relaxed);
     int ret = rt_ring_submit_and_wait(&ring, staged, 1);
@@ -86,8 +85,8 @@ void rt_sched_run(struct rt_task **tasks, int ntasks) {
       rt_panic("sched: enter failed", __builtin_return_address(0));
     }
 
-    /* Reap: the CQE's user_data is the task, per the spec — cast it back,
-     * deliver the result, mark ready. The next scan resumes it. */
+    /* Reap: the CQE's user_data is the task — cast it back, deliver the
+     * result, mark ready. The next scan resumes it. */
     struct io_uring_cqe cqe;
     while (rt_ring_reap(&ring, &cqe)) {
       struct rt_task *t = (struct rt_task *)(uintptr_t)cqe.user_data;

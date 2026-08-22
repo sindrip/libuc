@@ -133,8 +133,8 @@ struct io_uring_sqe *rt_ring_sqe(struct rt_ring *r);
  * writes and the kernel will read a half-built request.
  *
  * Then enter with GETEVENTS, which under DEFER_TASKRUN is also what runs the
- * completion work. Passing min_complete makes the same call wait, so RT-005
- * needs no separate wait path.
+ * completion work. Passing min_complete makes the same call wait; submit and
+ * wait are one enter.
  */
 int rt_ring_submit_and_wait(struct rt_ring *r, unsigned to_submit,
                             unsigned min_complete);

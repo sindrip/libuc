@@ -48,7 +48,6 @@
 #ifndef RT_SYSCALL_ARCH_H
 #define RT_SYSCALL_ARCH_H
 
-/* One argument. Used by exit_group. */
 static inline long syscall1(long nr, long a0) {
   register long x8 __asm__("x8") = nr;
   register long x0 __asm__("x0") = a0;
@@ -58,8 +57,6 @@ static inline long syscall1(long nr, long a0) {
   return x0;
 }
 
-/* Two arguments. Used by io_uring_setup — SYSCALL_DEFINE2(entries, params)
- * at io_uring.c:3145 — and sigaltstack. */
 static inline long syscall2(long nr, long a0, long a1) {
   register long x8 __asm__("x8") = nr;
   register long x0 __asm__("x0") = a0;
@@ -69,8 +66,6 @@ static inline long syscall2(long nr, long a0, long a1) {
   return x0;
 }
 
-/* Three arguments. RT-003's worked example, from which the rest were
- * written. Used by write and mprotect. */
 static inline long syscall3(long nr, long a0, long a1, long a2) {
   register long x8 __asm__("x8") = nr;
   register long x0 __asm__("x0") = a0;
@@ -84,8 +79,6 @@ static inline long syscall3(long nr, long a0, long a1, long a2) {
   return x0;
 }
 
-/* Four arguments. Used by io_uring_register — SYSCALL_DEFINE4(fd, opcode,
- * arg, nr_args) at register.c:1016 — and rt_sigaction. */
 static inline long syscall4(long nr, long a0, long a1, long a2, long a3) {
   register long x8 __asm__("x8") = nr;
   register long x0 __asm__("x0") = a0;
@@ -101,8 +94,6 @@ static inline long syscall4(long nr, long a0, long a1, long a2, long a3) {
   return x0;
 }
 
-/* Six arguments — the ABI's widest. mmap is why it exists: addr, len, prot,
- * flags, fd, offset. io_uring_enter shares it. */
 static inline long syscall6(long nr, long a0, long a1, long a2, long a3,
                             long a4, long a5) {
   register long x8 __asm__("x8") = nr;

@@ -64,8 +64,8 @@ int rt_ring_probe(struct io_uring_query_opcode *out) {
 }
 
 int rt_ring_setup(struct rt_ring *r, unsigned entries) {
-  /* a) Create. The designated initializer also zeroes resv[3], which the
-   *    kernel checks. */
+  /* Create. The designated initializer also zeroes resv[3], which the
+   * kernel checks. */
   struct io_uring_params params = {.flags = RT_RING_FLAGS};
   int ret = sys_io_uring_setup(entries, &params);
   if (sys_failed(ret)) {
@@ -73,29 +73,29 @@ int rt_ring_setup(struct rt_ring *r, unsigned entries) {
   }
   r->fd = ret;
 
-  /* b) Refuse. Everything below assumes the SQ and CQ rings share one
-   *    mapping. Unconditional on this kernel (io_uring.c:3058), so this is a
-   *    tripwire for the kernel moving, not a branch we expect to take. The fd
-   *    leaks; nothing else has been acquired yet. */
+  /* Refuse. Everything below assumes the SQ and CQ rings share one mapping.
+   * Unconditional on this kernel (io_uring.c:3058), so this is a tripwire
+   * for the kernel moving, not a branch we expect to take. The fd leaks;
+   * nothing else has been acquired yet. */
   if (!(params.features & IORING_FEAT_SINGLE_MMAP)) {
     return -EOPNOTSUPP;
   }
 
-  /* c) Map. Both MAP_SHARED — this memory is shared with the kernel, and
-   *    MAP_PRIVATE would hand us a copy it never sees. The offsets are
-   *    positions in the ring fd's address space, which is how one fd yields
-   *    two mappings.
+  /* Map. Both MAP_SHARED — this memory is shared with the kernel, and
+   * MAP_PRIVATE would hand us a copy it never sees. The offsets are
+   * positions in the ring fd's address space, which is how one fd yields
+   * two mappings.
    *
-   *    The ring length must cover the furthest thing inside it, which is the
-   *    CQE array. Not sq_off.array: under NO_SQARRAY the kernel never assigns
-   *    it (io_uring.c:2941), so it is zero and that arithmetic yields a
-   *    mapping far too small — mmap succeeds and the fault arrives later, on a
-   *    CQE read, looking like a missing barrier.
+   * The ring length must cover the furthest thing inside it, which is the
+   * CQE array. Not sq_off.array: under NO_SQARRAY the kernel never assigns
+   * it (io_uring.c:2941), so it is zero and that arithmetic yields a
+   * mapping far too small — mmap succeeds and the fault arrives later, on a
+   * CQE read, looking like a missing barrier.
    *
-   *    A failure past this point leaks the fd and possibly the first mapping.
-   *    There is no close() wrapper yet and IORING_OP_CLOSE needs a working
-   *    ring, so for a ring created once at boot this is accepted rather than
-   *    handled. */
+   * A failure past this point leaks the fd and possibly the first mapping.
+   * There is no close() wrapper and IORING_OP_CLOSE needs a working ring,
+   * so for a ring created once at boot this is accepted rather than
+   * handled. */
   r->ring_len =
       params.cq_off.cqes + params.cq_entries * sizeof(struct io_uring_cqe);
 
@@ -115,17 +115,16 @@ int rt_ring_setup(struct rt_ring *r, unsigned entries) {
   }
   r->sqes = (struct io_uring_sqe *)(uintptr_t)m;
 
-  /* d) Derive. Two kinds of offset: head and tail change, so they stay
-   *    pointers; the masks never change after setup, so they are read once and
-   *    cached as values.
+  /* Derive. Two kinds of offset: head and tail change, so they stay
+   * pointers; the masks never change after setup, so they are read once and
+   * cached as values.
    *
-   *    __builtin_assume_aligned rather than a cast through void *: it states
-   *    the claim instead of hiding the cast from -Wcast-align, and
-   *    -fsanitize=alignment turns it into a runtime check. mmap returns
-   *    page-aligned memory and the kernel lays these fields out naturally
-   *    aligned within it, so the claim holds — but it is now checked rather
-   *    than asserted. (Only locally until the container build carries UBSan;
-   *    that is RT-007's __ubsan_handle_* work.) */
+   * __builtin_assume_aligned rather than a cast through void *: it states
+   * the claim instead of hiding the cast from -Wcast-align, and
+   * -fsanitize=alignment turns it into a runtime check. mmap returns
+   * page-aligned memory and the kernel lays these fields out naturally
+   * aligned within it, so the claim holds — but it is checked rather than
+   * asserted. */
   r->sq_head = (_Atomic unsigned *)__builtin_assume_aligned(
       r->ring + params.sq_off.head, alignof(_Atomic unsigned));
   r->sq_tail = (_Atomic unsigned *)__builtin_assume_aligned(
@@ -152,22 +151,21 @@ int rt_ring_setup(struct rt_ring *r, unsigned entries) {
 }
 
 struct io_uring_sqe *rt_ring_sqe(struct rt_ring *r) {
-  /* a) Fullness. Full when cached_sq_tail - head == sq_mask + 1. Both
-   *    counters are free-running — they wrap through UINT_MAX and are masked
-   *    only at the moment of indexing — and that is exactly what makes the
-   *    unsigned subtraction correct across the wrap; masking before
-   *    subtracting destroys it. The tail side is the private cursor, a plain
-   *    read: the shared tail is not consulted here, since it lags by the
-   *    staged slots and testing it would hand a staged slot out twice. The
-   *    head load is acquire: the kernel advancing sq_head is its statement
-   *    that it has finished reading the slots below, and the writes into the
-   *    reclaimed slot in c) must be ordered after observing it. (On this
-   *    kernel the SQ is only read inside our own enter call, so a plain load
-   *    happens to work — write the discipline, not the coincidence.)
+  /* Fullness. Full when cached_sq_tail - head == sq_mask + 1. Both counters
+   * are free-running — they wrap through UINT_MAX and are masked only at
+   * the moment of indexing — and that is exactly what makes the unsigned
+   * subtraction correct across the wrap; masking before subtracting
+   * destroys it. The tail side is the private cursor, a plain read: the
+   * shared tail is not consulted here, since it lags by the staged slots
+   * and testing it would hand a staged slot out twice. The head load is
+   * acquire: the kernel advancing sq_head is its statement that it has
+   * finished reading the slots below, and the writes into the reclaimed
+   * slot must be ordered after observing it. (On this kernel the SQ is only
+   * read inside our own enter call, so a plain load happens to work — write
+   * the discipline, not the coincidence.)
    *
-   *    The nullptr return is a real contract even though a one-deep NOP can
-   *    never hit it: it is the backpressure point the scheduler will later
-   *    lean on, so the first caller must not learn to ignore it. */
+   * The nullptr return is the backpressure point: the scheduler's ring ops
+   * surface it as -EAGAIN rather than suspending. */
   auto pending = r->cached_sq_tail -
                  atomic_load_explicit(r->sq_head, memory_order_acquire);
 
@@ -175,19 +173,19 @@ struct io_uring_sqe *rt_ring_sqe(struct rt_ring *r) {
     return nullptr;
   }
 
-  /* b) The slot. cached_sq_tail & sq_mask indexes sqes directly — NO_SQARRAY
-   *    deleted the array[] indirection, mirroring the kernel's own io_get_sqe
-   *    (io_uring.c:1990-1996). */
+  /* The slot. cached_sq_tail & sq_mask indexes sqes directly — NO_SQARRAY
+   * deleted the array[] indirection, mirroring the kernel's own io_get_sqe
+   * (io_uring.c:1990-1996). */
   struct io_uring_sqe *sqe = &r->sqes[r->cached_sq_tail & r->sq_mask];
 
-  /* c) Clear it. The slot still holds the whole previous request; a caller
-   *    who fills in three fields would inherit a stale buffer pointer, flags
-   *    and offset from whatever lived here before — a bug that only appears
-   *    on the second lap of the ring. */
+  /* Clear it. The slot still holds the whole previous request; a caller who
+   * fills in three fields would inherit a stale buffer pointer, flags and
+   * offset from whatever lived here before — a bug that only appears on the
+   * second lap of the ring. */
   *sqe = (struct io_uring_sqe){};
 
-  /* d) Advance the private cursor only. Nothing is published: the SQE is
-   *    still unfilled, and announcing it is submit's release store. */
+  /* Advance the private cursor only. Nothing is published: the SQE is still
+   * unfilled, and announcing it is submit's release store. */
   r->cached_sq_tail++;
   return sqe;
 }

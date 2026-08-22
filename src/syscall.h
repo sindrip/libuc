@@ -7,8 +7,8 @@
  * ring means reading this file.
  *
  * There is no errno. A failure comes back as -errno in the range -1..-4095,
- * which is why sys_failed() checks a *range* and not just r < 0: a syscall like
- * mmap legitimately returns large values whose top bit is set.
+ * which is why sys_failed() checks a *range* and not just r < 0: a syscall
+ * like mmap legitimately returns large values whose top bit is set.
  *
  * The machine half — registers, svc, the syscallN dispatchers — lives in
  * arch/aarch64/syscall_arch.h, next to start.S and switch.S: architecture is
@@ -35,47 +35,41 @@
  * sizeof(sigset_t) instead of a bare 8. */
 #include <asm/signal.h>
 
-/* sys_failed — did a raw syscall return fail?
- *
- * Raw returns are -errno in -1..-4095. Anything else is a success value, and
- * some of those are huge (mmap returns an address). Return true only for the
- * error range.
- */
+/* Raw returns are -errno in -1..-4095. Anything else is a success value, and
+ * some of those are huge (mmap returns an address). True only for the error
+ * range. */
 static inline bool sys_failed(long r) { return r < 0 && r >= -4095; }
 
-/* raw_write — THE sanctioned purity exception.
+/* raw_write — THE sanctioned purity exception: a direct write(2).
  *
- * A direct write(2) to a file descriptor. This is the only deliberate
- * direct-syscall I/O in the project, and it exists for three reasons:
- *   - nothing before RT-005 has a ring to write through;
- *   - io_uring_setup failure must be reportable, and cannot be reported via
- *     the ring that just failed to exist;
- *   - the crash handler may fire with the ring in an unknown state.
+ * Failure-path output only; everything else goes through IORING_OP_WRITE.
+ * The charter:
+ *   - io_uring_setup failure cannot be reported through the ring that just
+ *     failed to exist;
+ *   - the crash handler and rt_panic may fire with the ring mid-mutation,
+ *     the scheduler broken, or no current task — a diagnostic channel must
+ *     not depend on the subsystem it diagnoses;
+ *   - the boot-time regression chain probes the ring itself, and reporting
+ *     a ring probe's failure through the ring is circular.
+ * Reaching for this anywhere else is the signal to stop and reread
+ * invariant 1.
  *
- * Once RT-006 lands, all normal output goes through IORING_OP_WRITE instead.
- * If you find yourself reaching for this anywhere else, that is the signal to
- * stop and reread invariant 1.
- *
- * Deliberately not [[nodiscard]], alone among the wrappers: the put family
- * ignores console-write failures because PID 1 has no recourse when the
+ * Deliberately not [[nodiscard]], alone among the wrappers: the reporting
+ * paths ignore console-write failures because PID 1 has no recourse when the
  * console is gone — there is nowhere else to report.
  */
 static inline long raw_write(int fd, const void *buf, size_t len) {
   return syscall3(__NR_write, fd, (long)(uintptr_t)buf, (long)len);
 }
 
-/* sys_exit_group — terminate the whole process.
+/* sys_exit_group — terminate the whole process. PID 1 must never reach this
+ * on the happy path; it exists so that a fall through _start is loud rather
+ * than undefined.
  *
- * PID 1 must never reach this on the happy path; it exists so that a fall
- * through _start is loud rather than undefined.
- *
- * Mark it [[noreturn]] and make sure the compiler believes you — after the
- * syscall the function must not fall off the end. C23 standardized the way to
- * say so: unreachable(), from <stddef.h>, freestanding and already included.
- *
- * That is a kernel guarantee, not an assumption: do_group_exit is declared
- * __noreturn (include/linux/sched/task.h:93) and the syscall body is marked
- * NOTREACHED (kernel/exit.c:1161).
+ * The unreachable() after the svc rests on a kernel guarantee, not an
+ * assumption: do_group_exit is declared __noreturn
+ * (include/linux/sched/task.h:93) and the syscall body is marked NOTREACHED
+ * (kernel/exit.c:1161).
  */
 [[noreturn]] static inline void sys_exit_group(int status) {
   syscall1(__NR_exit_group, status);
@@ -83,18 +77,16 @@ static inline long raw_write(int fd, const void *buf, size_t len) {
   unreachable();
 }
 
-/* sys_mmap — anonymous memory.
+/* sys_mmap — anonymous memory. No io_uring opcode exists (invariant 1's
+ * permitted list).
  *
- * Returns the mapped address, or -errno in the sys_failed() range. Note
- * the return type: long, not void *. A pointer cannot represent -ENOMEM,
- * so the check has to happen before the caller converts.
+ * Returns the mapped address, or -errno in the sys_failed() range. The
+ * return type is long, not void *: a pointer cannot represent -ENOMEM, so
+ * the check has to happen before the caller converts.
  *
  * fd is the trap. mmap's argument is a long, and MAP_ANONYMOUS wants -1;
- * a bare -1 int sign-extends correctly only if you let it — pass it
- * through (long) explicitly here so no caller has to think about it.
- *
- * Direct syscall, not a ring op: mmap has no io_uring opcode, which is
- * why invariant 1 lists it as permitted.
+ * the explicit (long) inside the wrapper is what guarantees the sign
+ * extension so no caller has to think about it.
  */
 [[nodiscard]] static inline long sys_mmap(void *addr, size_t len, int prot,
                                           int flags, int fd,
@@ -103,11 +95,7 @@ static inline long raw_write(int fd, const void *buf, size_t len) {
                   (long)off);
 }
 
-/* sys_mprotect — change protection on an existing mapping.
- *
- * Three arguments, so syscall3 covers it. Used to open the usable part of a
- * task stack after mapping the whole region PROT_NONE.
- */
+/* sys_mprotect — change protection on an existing mapping. No opcode. */
 [[nodiscard]] static inline int sys_mprotect(void *addr, size_t len, int prot) {
   return (int)syscall3(__NR_mprotect, (long)(uintptr_t)addr, (long)len, prot);
 }
@@ -117,11 +105,9 @@ static inline long raw_write(int fd, const void *buf, size_t len) {
  * ring.c includes the real header. */
 struct io_uring_params;
 
-/* the three io_uring syscalls.
- *
- * These are the only syscalls the runtime makes directly once the ring is up;
- * everything with an opcode goes through the ring instead (invariant 1).
- * Typed parameters with the casts inside, like raw_write and sys_mmap.
+/* The three io_uring syscalls — the only ones the runtime makes directly
+ * once the ring is up; everything with an opcode goes through the ring
+ * instead (invariant 1).
  *
  * setup returns a ring fd, enter returns how many SQEs the kernel consumed,
  * register returns 0 — all three report failure in sys_failed()'s range.
@@ -148,20 +134,16 @@ sys_io_uring_register(int fd, unsigned opcode, void *arg, unsigned nr_args) {
                        nr_args);
 }
 
-/* sys_rt_sigaction and sys_sigaltstack — the crash handler's
- * two installs. Direct syscalls: neither has an opcode (invariant 1's list).
- * Both return 0 or -errno in sys_failed()'s range.
+/* sys_rt_sigaction and sys_sigaltstack — the crash handler's two installs.
+ * Direct syscalls: neither has an opcode. Both return 0 or -errno in
+ * sys_failed()'s range.
  *
- * rt_sigaction is syscall4-shaped: (signum, act, oldact, sigsetsize). Two
- * decisions belong inside the wrapper, following sys_mmap's fd precedent —
- * quirks live here so no caller has to think about them:
- *
- *   - sigsetsize is not a parameter of the wrapper: the kernel accepts
- *     exactly sizeof(sigset_t) and nothing else (kernel/signal.c:4648), so
- *     the wrapper supplies it. A wrapper that lets callers pass it is a
- *     wrapper that lets callers get it wrong.
- *   - oldact stays a parameter (nullable) — reading back the old action is
- *     legitimate, just unused today.
+ * rt_sigaction is syscall4-shaped: (signum, act, oldact, sigsetsize).
+ * sigsetsize is not a parameter of the wrapper: the kernel accepts exactly
+ * sizeof(sigset_t) and nothing else (kernel/signal.c:4648), so the wrapper
+ * supplies it — a wrapper that lets callers pass it is a wrapper that lets
+ * callers get it wrong. oldact stays a parameter (nullable): reading back
+ * the old action is legitimate, just unused today.
  *
  * sigaltstack is syscall2-shaped: (ss, old_ss), old_ss nullable.
  */

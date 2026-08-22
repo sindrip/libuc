@@ -1,49 +1,29 @@
 /*
- * RT-005 driver: one ring, one NOP, one CQE.
+ * The boot driver, PID 1. Order: crash handlers first (a handler installed
+ * after the crash reports nothing), then the gated regression chain, then
+ * the scheduler demonstration, then idle forever — rt_main never returns
+ * (invariant 6: the kernel panics with "Attempted to kill init").
  *
- * NOP is deliberate. It has no fd and touches no I/O path, so anything that
- * goes wrong here is submission or completion mechanics and nothing else.
+ * The happy-path console is exactly
  *
- * Expected console:
+ *     hello a
+ *     hello b
  *
- *     rt: alive
- *     1A2B3C
- *     ops <n> reg <n> feat <n>
- *     setup rejects bogus flags: <errno>
- *     nop ok
+ * written by the kernel through IORING_OP_WRITE. With `verbose` flipped on,
+ * the acceptance chain of the earlier tickets prints first — the expected
+ * line is documented at each rt00N_* function, and the values are exact,
+ * not approximate: the kernel is pinned, so a change means the kernel
+ * moved, which is worth knowing loudly. AGENTS.md's testing discipline is
+ * why the chain stays compiled in: there is no other regression net.
  *
- * The values are exact, not approximate — the kernel is pinned, so
- * nr_request_opcodes and the feature mask are constants for this tree. Record
- * what you observe in the ticket; a change in them later means the kernel
- * moved, which is worth knowing loudly.
- *
- * Every line is a proof:
- *   'rt: alive'   RT-003 substrate: start.S, syscall.h, raw_write
- *   '1A2B3C'      RT-004 still works. Not sentiment — this ticket edits
- *                 syscall.h, which task.c includes, and AGENTS.md requires
- *                 re-running the checks of every ticket that depends on code
- *                 you touched. Six characters is the whole cost.
- *   'ops ...'     io_uring_register reached the kernel on the ringless path,
- *                 so the query ABI and the hdr constraints are right
- *   'setup ...'   the failure path reports a decoded errno instead of hanging
- *                 or dying silently
- *   'nop ok'      setup, both mappings, SQE fill, tail publish, enter, and CQ
- *                 reap all agree
- *
- * Reading a failure:
- *
- *   nothing at all        substrate broken. Debug RT-003, not ring.c.
- *   stops after 1A2B3C    the probe faulted or trapped — a ring.c stub is
- *                         still a __builtin_trap(), or the query hdr was
- *                         rejected. A brk shows as exitcode=0x00000005.
- *   probe prints zeros    the syscall returned 0 but hdr.result did not; the
- *                         per-entry status was never checked.
- *   'nop ok' missing      reached the ring but the round trip failed: wrong
- *                         mapping size, wrong stride, or a missing barrier.
- *                         A too-small ring mapping faults on the CQE read.
- *   hangs after setup     enter is waiting for a completion that was never
- *                         submitted — the tail was published without release,
- *                         or to_submit was zero.
+ * Reading a chain failure: nothing at all means the substrate (start.S,
+ * raw_write) is broken; stopping after 1A2B3C means the probe faulted (a
+ * brk shows as exitcode=0x00000005); probe zeros mean hdr.result went
+ * unchecked; a missing "nop ok" means the ring round trip failed — wrong
+ * mapping size, wrong stride, or a missing barrier, and a too-small mapping
+ * faults on the CQE read; a hang after setup means enter waited for
+ * something never submitted (tail published without release, or to_submit
+ * zero).
  */
 #include "crash.h"
 #include "ring.h"
@@ -51,23 +31,14 @@
 #include "syscall.h"
 #include "task.h"
 
-/* Emit a single character. */
+/* Console output for the failure paths and the regression chain — the
+ * purity registry's charter. Task bodies use rt_write instead; the paths
+ * that need these cannot trust the ring, or predate it. */
 static void put(char c) { raw_write(1, &c, 1); }
 
-/* Emit a NUL-terminated string in a single write.
- *
- * One syscall per string, not per character — the same argument that made
- * put_dec format into a buffer rather than call put twenty times.
- *
- * raw_write needs a length and a C string does not carry one, so find the
- * terminator first and let the distance be the length. That subtraction is a
- * ptrdiff_t, which is signed, so it needs the same explicit cast put_dec uses.
- *
- * Taking `const char *` rather than a length is what keeps this a plain
- * function: a length would have to come from sizeof at each call site, and
- * sizeof only sees the array inside a macro. It costs nothing — clang folds
- * the walk to a constant for literals, emitting the length directly.
- */
+/* One write per string, not per character. raw_write needs a length and a C
+ * string does not carry one, so find the terminator and let the distance be
+ * the length; clang folds the walk to a constant for literals. */
 static void put_str(const char *s) {
   size_t n = 0;
   while (s[n]) {
@@ -76,25 +47,11 @@ static void put_str(const char *s) {
   raw_write(1, s, n);
 }
 
-/* Print an unsigned value in decimal.
- *
- * Needed twice over: the probe has numbers to report, and the failure path has
- * to decode an -errno into something readable. Without it "reports a decoded
- * errno" degrades to "returns nonzero", which is not a diagnostic.
- *
- * Digits come out least-significant first, so something has to reverse them —
- * a small buffer filled backwards, or recursion. Either is fine; pick the one
- * you would rather read at 3am.
- *
- * The freestanding question worth asking: does dividing by 10 emit a call to
- * a runtime library that does not exist here? On this target, no — clang
- * strength-reduces a constant divisor into a multiply-high and msub, so no
- * division instruction and no __udivdi3. Confirmed, not assumed; on a 32-bit
- * target the same code links against compiler-rt.
- *
- * Decide what zero prints. A `while (v)` loop emits nothing for it, and
- * silence is the worst possible rendering of a value you wanted to inspect.
- */
+/* Decimal, via a scratch buffer filled backwards — digits emerge
+ * least-significant first — with do-while so zero prints "0" instead of
+ * nothing. The % and / by a constant 10 compile to multiply-high, not a
+ * libcall: freestanding has no __udivdi3 to link (verified; a 32-bit target
+ * would need compiler-rt). */
 static void put_dec(unsigned long v) {
   char buf[20];
   char *p = buf + sizeof buf;
@@ -107,7 +64,6 @@ static void put_dec(unsigned long v) {
   raw_write(1, p, (size_t)(buf + sizeof buf - p));
 }
 
-/* The task body. */
 static void abc_task(void *arg) {
   (void)arg;
 
@@ -118,7 +74,9 @@ static void abc_task(void *arg) {
   put('C');
 }
 
-/* The cooperative round trip, kept as a regression check. */
+/* RT-004 acceptance: the cooperative round trip. Expected line: "1A2B3C" —
+ * the interleaving proves the resume/yield alternation, not just that both
+ * sides ran. */
 static void rt004_selftest(void) {
   struct rt_task t;
   rt_task_create(&t, abc_task, nullptr);
@@ -132,22 +90,13 @@ static void rt004_selftest(void) {
   put('\n');
 }
 
-/* Probe the kernel and report what it can do.
+/* RT-005 acceptance: the ringless capability probe. Expected line:
+ * "ops <n> reg <n> feat <n>".
  *
- * rt_ring_probe fills an io_uring_query_opcode; print nr_request_opcodes,
- * nr_register_opcodes and feature_flags. That is one syscall, and it converts
- * every future "why doesn't this opcode work" into a question with an answer
- * already on the console.
- *
- * Two of those fields are worth understanding rather than just printing.
- * nr_request_opcodes is IORING_OP_LAST (query.c:23), so it is a count and the
- * highest valid opcode is one less. feature_flags is the full mask the kernel
- * supports, which is not the same thing as params.features from setup — that
- * one describes the ring you actually created.
- *
- * IORING_FEAT_NO_IOWAIT (bit 17) is new on 7.2 and worth noticing in the
- * output. The ticket says log it, not act on it.
- */
+ * nr_request_opcodes is IORING_OP_LAST (query.c:23) — a count, so the
+ * highest valid opcode is one less. feature_flags is the full mask the
+ * kernel supports, which is not the same thing as params.features from
+ * setup: that one describes the ring actually created. */
 static void rt005_probe(void) {
   struct io_uring_query_opcode q = {};
 
@@ -168,21 +117,12 @@ static void rt005_probe(void) {
   put('\n');
 }
 
-/* Exercise the failure path once, on purpose.
+/* RT-005 acceptance: the failure path, exercised on purpose while the
+ * answer is known. Expected line: "setup rejects bogus flags: <errno>".
  *
- * Call setup with a flag combination the kernel must reject and print the
- * decoded errno. SQPOLL alongside DEFER_TASKRUN is the honest choice: it fails
- * for a reason this design depends on, at io_uring.c:2815-2821, rather than
- * because a bit is nonsense.
- *
- * This is the sanctioned purity exception doing its job — a ring that failed
- * to exist cannot report its own failure, so this goes out through raw_write.
- * It is also the last chance to prove the reporting path works while you still
- * know the answer; after this, failures will be ones you did not predict.
- *
- * Do not leak the fd if it unexpectedly succeeds. There is no close() wrapper
- * yet, and IORING_OP_CLOSE cannot help before a ring exists.
- */
+ * SQPOLL alongside DEFER_TASKRUN is the honest choice of bogus flags: it
+ * fails for a reason this design depends on (io_uring.c:2815-2821), rather
+ * than because a bit is nonsense. */
 static void rt005_setup_failure(void) {
   /* Valid entries, so the flags are the only possible cause of failure. */
   struct io_uring_params params = {.flags = IORING_SETUP_SQPOLL |
@@ -200,30 +140,15 @@ static void rt005_setup_failure(void) {
   put('\n');
 }
 
-/* The NOP round trip.
- *
- * Set up a ring, take an SQE, make it a NOP with a sentinel user_data,
- * submit-and-wait for one completion, reap it.
- *
- * Pick a sentinel that cannot be confused with zero-filled memory or with a
- * pointer — if user_data comes back as 0 you want to know whether that means
- * "the kernel echoed our value" or "we read an SQE that was never written".
- *
- * Three things the acceptance criteria actually pin down, all of which can
- * fail independently:
- *   - enter returns 1, meaning the kernel consumed exactly the one SQE
- *   - the CQE's res is 0, meaning NOP itself succeeded
- *   - the CQE's user_data equals the sentinel, meaning you reaped *your*
- *     completion out of the slot you think you did
- *
- * Check all three before printing "nop ok". A reaping loop with the stride
- * wrong reads a plausible-looking CQE from the wrong offset, and only the
- * user_data comparison catches it.
- */
 /* Top byte set: cannot be mistaken for zero-filled memory or for any
  * userspace pointer (aarch64 user VAs keep the high bits clear). */
 static constexpr __u64 NOP_SENTINEL = 0xF00DFACEDEADBEEF;
 
+/* RT-005 acceptance: one ring, one NOP, one CQE. Expected line: "nop ok",
+ * printed only after three independent checks: enter consumed exactly one
+ * SQE, the CQE's res is 0, and its user_data echoes the sentinel — the last
+ * is what catches a wrong-stride reap reading a plausible-looking CQE from
+ * the wrong offset. */
 static void rt005_nop(void) {
   struct rt_ring ring;
 
@@ -278,11 +203,9 @@ static void rt005_nop(void) {
   put_str("nop ok\n");
 }
 
-/* The RT-006 demonstration: NOP, then hello through the ring — the task
- * suspends twice and survives both. raw_write is forbidden in task bodies
- * from here on; the put_* below are failure reporting only, which is the
- * purity exception's charter. The acceptance decision (RT-005 lines retire
- * or gate for the quiet console) is pending the first green boot. */
+/* The milestone demonstration: NOP, then hello through the ring — the task
+ * suspends twice and survives both. raw_write is forbidden in task bodies;
+ * the put_* here are failure reporting only. */
 static void hello_task(void *arg) {
   const char *msg = arg;
 
@@ -315,8 +238,9 @@ static void rt006_demo(void) {
     return;
   }
 
-  /* Two tasks, per the acceptance: one task cannot distinguish "resumes
-   * the right task" from "resumes the only task". */
+  /* Two tasks with distinct messages: one task cannot distinguish "resumes
+   * the right task" from "resumes the only task", and identical lines would
+   * prove count, not identity. */
   static char msg_a[] = "hello a\n";
   static char msg_b[] = "hello b\n";
   struct rt_task a;
@@ -329,7 +253,7 @@ static void rt006_demo(void) {
 }
 
 /* The only caller is start.S, which passes the pre-alignment stack pointer in
- * x0 (arch/aarch64/start.S:44). Declared here because assembly cannot be
+ * x0 (arch/aarch64/start.S). Declared here because assembly cannot be
  * checked against a C signature — without this, nothing at all verifies the
  * two agree. */
 [[noreturn]] void rt_main(void *stack);
@@ -341,10 +265,10 @@ static void rt006_demo(void) {
    * crash reports nothing. */
   rt_crash_install();
 
-  /* The RT-003..005 regression chain, compiled in but quiet: the spec wants
-   * hello and nothing else on the happy path, and AGENTS.md wants the old
-   * acceptance checks runnable when shared code changes. volatile so the
-   * compiler keeps the chain alive; flip to true when bringing up. */
+  /* The regression chain, compiled in but quiet: the happy path wants hello
+   * and nothing else, and AGENTS.md wants the old acceptance checks
+   * runnable when shared code changes. volatile keeps the chain alive in
+   * the binary; flip to true to re-run it. */
   static volatile bool verbose = false;
   if (verbose) {
     static const char banner[] = "rt: alive\n";

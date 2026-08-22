@@ -1,7 +1,7 @@
 /*
  * Minimal formatting into a caller-owned buffer. Written for the crash
- * handler but deliberately not crash-specific (RT-007's note): every later
- * diagnostic reuses this instead of growing a printf.
+ * handler but deliberately not crash-specific: every later diagnostic
+ * reuses this instead of growing a printf.
  */
 #ifndef RT_FMT_H
 #define RT_FMT_H
