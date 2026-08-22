@@ -103,10 +103,21 @@ void rt_sched_run(struct rt_task **tasks, int ntasks) {
     }
 
     /* Reap: the CQE's user_data is the task — cast it back, deliver the
-     * result, mark ready. The next scan resumes it. */
+     * result, mark ready. The next scan resumes it.
+     *
+     * The state check codifies this milestone's one-shot contract: a task
+     * stages exactly one SQE and becomes RT_BLOCKED before the scheduler can
+     * observe its CQE. A duplicate or stale CQE must not overwrite result or
+     * make an already-runnable task ready again. This is a tripwire, not the
+     * future multishot/cancellation model: RT_BLOCKED identifies a task state,
+     * not which operation it is awaiting. */
     struct io_uring_cqe cqe;
     while (rt_ring_reap(&ring, &cqe)) {
       struct rt_task *t = (struct rt_task *)(uintptr_t)cqe.user_data;
+      if (t->state != RT_BLOCKED) {
+        rt_panic("sched: cqe for nonblocked task",
+                 __builtin_return_address(0));
+      }
       t->result = cqe.res;
       t->state = RT_READY;
     }

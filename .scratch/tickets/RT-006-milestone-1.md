@@ -158,6 +158,13 @@ the lowering is a port, not a redesign.
   tasks blocked forever. Milestone 1 now requires `ret == staged` and panics
   otherwise. The recoverable design must count
   `cached_sq_tail - sq_head` and retry a partially consumed batch.
+- **Reap-state tripwire**: before delivering a CQE, the scheduler requires its
+  decoded task to be `RT_BLOCKED`. Under milestone 1's immediate-suspend,
+  one-shot contract, any other state means a duplicate or stale completion;
+  panicking prevents it from silently overwriting `result` or making an
+  already-runnable task ready again. This does not identify the awaited
+  operation and therefore does not replace the slab offsets, tags, generations
+  and `inflight` accounting required by multishot and cancellation.
 - RT-007's deferred criterion (the dump naming the running task) remains
   open — rt_current now exists and crash.c's e) seam can consume it in a
   follow-up; the task registry the walk's range-check wants is still a
