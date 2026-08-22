@@ -109,8 +109,9 @@ Borrow checking, decomposed — one job deleted, one trivialized, one declined:
 - Self-managing containers: copy-in/copy-out APIs mean no external references
   into container internals, so slabs reuse eagerly and can't dangle anyone.
 - Epochs for shared read-mostly snapshots: publisher-owned versions, freed
-  after every scheduler's watchdog tick passes publication (the milestone-3
-  tick doubles as the RCU grace-period clock).
+  once every scheduler's quiescence counter (a plain per-scheduler counter
+  bumped each scheduler pass) advances past publication — RCU grace periods
+  from a counter the loop maintains anyway.
 - Same-core `Rc` (non-atomic — single-threaded cores make it cheap) as the
   rare escape valve.
 - A GC would also be _unwelcome_: stop-the-world is preemption (invariant 7);
@@ -203,8 +204,10 @@ concurrency scope. Here they are the same scope. Its three Go duties: unlock
 
 ## 7. Scheduling and topology
 
-- Cooperative only (invariant 7). Starvation is detected and _named_ by the
-  watchdog, never preempted. No safepoints in loop backedges.
+- Cooperative only (invariant 7). Never preempted, no safepoints in loop
+  backedges: a fiber that won't yield starves its core, and that is accepted
+  as a bug class — deterministic, so it reproduces under the debugger.
+  Runtime starvation detection is deliberately out of the language design.
 - **The kernel vetoes migration**: `SINGLE_ISSUER` binds a ring to its task at
   setup (`io_uring.c:3065-3067`, enforced `register.c:764`); only the
   submitter completes requests (`io_uring.c:2242-2245`). A suspended fiber is
@@ -343,7 +346,7 @@ second trip — no N-syscalls-per-entry surprises).
 | multishot streams: `CQE_F_MORE` = Some, terminal CQE = None                                                                    | `io_uring.h:371,411`                                              |
 | kernel-owned buffer direction: PBUF_RING, READ_MULTISHOT(305), RECV_ZC(314)+ZCRX_IFQ(710), MEM_REGION(715), CLONE_BUFFERS(704) | `io_uring.h` registers 653-724                                    |
 | incremental buffer rings: kernel retains buffer while chunks are out                                                           | `io_uring.h:889,899` (IOU_PBUF_RING_INC)                          |
-| the in-kernel loop: `loop_step` as BPF struct_ops; kfuncs submit_sqes/get_region — scheduler tick must stay BPF-sayable        | `loop.c` (`__io_run_loop`), `bpf-ops.c:17,25,251-267`             |
+| the in-kernel loop: `loop_step` as BPF struct_ops; kfuncs submit_sqes/get_region — the scheduler's loop step must stay BPF-sayable        | `loop.c` (`__io_run_loop`), `bpf-ops.c:17,25,251-267`             |
 | `bpf_filter.c` is SQE deny-filtering (sandboxing for hosted code), not steering                                                | `bpf_filter.c:1-40`, `io_uring.h:724`                             |
 | graceful cancel-by-criteria                                                                                                    | `io_uring.h:388-397`                                              |
 | ring close cancels-until-drained (teardown backstop)                                                                           | `io_uring.c:2318,2349`                                            |
@@ -374,6 +377,13 @@ wanted). To be argued in explicitly, per the registry discipline.
 - **Rust surface** — `&mut`/lifetime syntax writes checks the semantics won't
   cash; ceremony serves machinery we don't have. Kept: match-as-expression,
   `let`/`var` mutability marking.
+- **The ring-native watchdog** (2026-08-22) — cross-scheduler tick
+  surveillance, dropped everywhere (plan.md milestone 3 included). It was
+  also the only cross-scheduler shared state besides the slot rings, so the
+  designated-sharing ledger shrinks. Consequences accepted openly:
+  starvation and cross-core deadlock are undetected-at-runtime bug classes,
+  deterministic and debugger-found; the epoch grace clock is an ordinary
+  per-scheduler quiescence counter, not a watchdog byproduct.
 - **Flag-word APIs** (`O_*` style) — options in a trenchcoat; intent
   constructors instead.
 
@@ -399,8 +409,20 @@ supervision is designed.
 - **Formatter comment-anchoring model**: in the v0 spec, day one.
 - **Supervision/OTP vocabulary**: restart strategies, monitors — design when
   the fiber tree gets teardown (§7) and `uc::proc`.
-- **Blob dup protocol details**: transfer-not-dup default is settled;
-  dup-message ordering argument sketched, needs the full write-up.
+- **Blob dup protocol — RESOLVED (2026-08-22, mechanized twice)**: the
+  sketched naive +1/-1 counting is **unsafe even over FIFO rings** — an
+  exhaustive model checker found the use-after-free (A dups, +1 rides A→H;
+  A transfers the duplicate to B; B releases, -1 rides B→H; the -1 wins,
+  count hits 0 under a live lease). Per-source FIFO never ordered the two
+  rings. Adopted fix: **weighted refcounting** (dup splits the token's
+  weight locally, no message; release sends its weight home) — verified
+  safe by the same checker, and weight conservation proven inductive over
+  every protocol step in F* (`Lease.fst`: zero count ⟹ zero live weight,
+  so premature free is impossible at any bound). Known cost: a weight-1
+  token cannot split — generous initial weight, refill round-trip in the
+  rare exhaustion case. Spikes: `/tmp/uc-spikes` (ring-index arithmetic and
+  the release/acquire barrier claims also verified there — `RingIndex.fst`
+  discharged in F* on first attempt).
 - **`splice`'s home** (`fs` vs a `pipe` module) — decide when it grows friends.
 - **Slot-ring "slots freed" doorbell** (sender-side backpressure wake) —
   mechanism sketched, not designed.

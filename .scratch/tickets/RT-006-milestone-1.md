@@ -32,8 +32,8 @@ long rt_nop(void) {
 scheduler casts it back, stores `cqe->res` into `task->result`, marks the task
 `RT_READY`, and resumes it. No completion table, no lookup.
 
-Tag the low bits later if non-task completions appear (the watchdog timeout in
-milestone 3 will need this). Note it now; don't build it yet.
+Tag the low bits later if non-task completions appear (milestone 4's
+`MSG_RING` doorbells will need this). Note it now; don't build it yet.
 
 ### The scheduler loop
 

@@ -92,18 +92,7 @@ before anything can be tried. Still to verify: minimal scheduler size.
 needs no config work — and `CONFIG_IO_URING_ZCRX=y` (zero-copy receive) is
 on, adjacent to direction 3's steering ideas.)
 
-### 5. Kernel-resident watchdog
-
-The planned watchdog (core *i* watches core *i+1* via `IORING_OP_TIMEOUT` and
-relaxed ticks) requires the watcher's userspace to be alive. A BPF timer in the
-kernel checking per-core heartbeat words detects a wedged core even when every
-userspace thread is spinning, and can dump state from kernel context. Strictly
-stronger; still no extra thread, no extra core.
-
-Verify: `bpf_timer` and map sharing shape on 7.2; what a BPF program may do on
-detection (trace? console? reboot needs thought).
-
-### 6. RT-008 becomes precise: fentry on the io-wq enqueue path
+### 5. RT-008 becomes precise: fentry on the io-wq enqueue path
 
 Today's tripwire is polling `/proc/self/task` for `iou-wrk-*`. A fentry program
 on the io-wq enqueue function fires at the moment of the first punt, carrying
@@ -112,7 +101,7 @@ the opcode that caused it. The tripwire becomes an alarm with a culprit.
 Verify: the enqueue symbol in `out/src/io_uring/io-wq.c`; fentry availability
 under this config.
 
-### 7. The observability plane
+### 6. The observability plane
 
 The VM has no shell, no perf, no ptrace tooling. BPF on io_uring's tracepoints
 gives uringscope-class introspection of submission/completion behaviour from
@@ -121,14 +110,14 @@ console inspection stops scaling (Testing section names the revisit
 conditions), this is where the tooling comes from — not from reintroducing a
 userland.
 
-### 8. In-kernel loop — promoted to `.scratch/bpf-loop.md`
+### 7. In-kernel loop — promoted to `.scratch/bpf-loop.md`
 
 The interface has been read and verified (loop.c, bpf-ops.c, register.c) and
 the reap-loop lowering mapped in detail, including a program sketch, the
 user_data encoding change it wants, and the real cost (a freestanding
 struct_ops loader). See bpf-loop.md.
 
-### 9. sockmap/sk_msg splice — the proxy fast path
+### 8. sockmap/sk_msg splice — the proxy fast path
 
 If a proxy is ever the demo application: sockmap redirection forwards payload
 socket-to-socket entirely in-kernel, tasks touch only control decisions.

@@ -2,7 +2,7 @@
 
 Status: conversation-derived, 2026-08-18. Interface claims **verified against
 `out/src/`** (cites inline); the lowering design itself is a proposal.
-Promotes bpf.md direction 8, which now points here. Config is already
+Promotes bpf.md direction 7, which now points here. Config is already
 resolved on: `CONFIG_IO_URING_BPF=y`, `CONFIG_IO_URING_BPF_OPS=y`.
 
 ## The interface as 7.2 ships it

@@ -29,7 +29,7 @@ is architecturally meaningful but not measurable.
 | Toolchain | Clang for the runtime, GCC for the kernel |
 | Userspace | Runtime is PID 1 |
 | io-wq | Designed never to trigger; low `IOWQ_MAX_WORKERS` as a tripwire |
-| Preemption | None. Cooperative + `rt_yield()` + ring-native watchdog |
+| Preemption | None. Cooperative + `rt_yield()` |
 | BPF loop | Not now, but stay reachable |
 
 Verified against the pinned 7.2 tree in `out/src/`:
@@ -243,9 +243,8 @@ possible.
    keeps task teardown from waiting on in-flight reads — decide the two
    together.
 3. **Multi-core** — `clone()`, `sched_setaffinity`, N rings, one per pinned
-   thread. Watchdog: each scheduler arms an `IORING_OP_TIMEOUT`, bumps its own
-   relaxed atomic tick, and reads its neighbour's in a ring — core *i* watches
-   core *i+1*. Fully ring-native, no watchdog thread, no extra core.
+   thread. No cross-core liveness machinery: a starving or wedged core is an
+   accepted bug class, found by the debugger, not detected at runtime.
 4. **Cross-core transport** — still open. `MSG_RING` gives a ring-native
    doorbell but only 96 bits, so the payload/ownership question is unresolved.
    Not needed before milestone 3.

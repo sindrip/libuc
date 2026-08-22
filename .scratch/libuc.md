@@ -185,11 +185,12 @@ question, and it applies to any vendored library that threads for speedup.
 **The casualty is the deadlock detector.** "Run queue empty and some fiber still
 blocked" is exact with one scheduler and merely *local* with N — core A can be
 idle with blocked fibers while core B is about to signal them. Global deadlock
-becomes a distributed quiescence problem. plan.md's watchdog (core *i* watches
-core *i+1* through relaxed atomic ticks) is the right machinery to carry an
-"idle with blocked fibers" bit, so this is recoverable — but the best diagnostic
-property of the single-core design is the first thing multi-core takes away, and
-it should be rebuilt deliberately rather than missed later.
+becomes a distributed quiescence problem. The design carries no cross-core
+liveness machinery (a tick-based watchdog was considered and dropped), so
+nothing exists to carry an "idle with blocked fibers" bit — the best diagnostic
+property of the single-core design is the first thing multi-core takes away,
+and it is currently rebuilt by nothing. If the gap ever needs closing, that is
+a deliberate design job, not a revival by default.
 
 If cross-core pthreads are ever wanted anyway, `IORING_OP_FUTEX_WAIT`/`WAKE`
 (`io_uring.h:307-309`) makes them ring-native: a fiber blocks on a futex without
