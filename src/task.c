@@ -41,11 +41,11 @@ static_assert((RT_GUARD_SIZE + RT_STACK_SIZE) % 16 == 0,
  * not a task — it is rt_main, running on the original process stack. Its
  * register state lives here.
  *
- * `current` points to whatever task is presently running. rt_yield uses it
+ * `rt_current` points to whatever task is presently running. rt_yield uses it
  * to know whose context to save.
  * ------------------------------------------------------------------------- */
-static struct rt_ctx sched_ctx;
-static struct rt_task *current;
+struct rt_ctx rt_sched_ctx;
+struct rt_task *rt_current;
 
 /* rt_task_create.
  *
@@ -153,20 +153,9 @@ void rt_task_create(struct rt_task *t, void (*fn)(void *), void *arg) {
  * whole point of the ticket.
  */
 void rt_yield(void) {
-  current->state = RT_READY;
-  rt_switch(&current->ctx, &sched_ctx);
+  rt_current->state = RT_READY;
+  rt_switch(&rt_current->ctx, &rt_sched_ctx);
 }
-
-/* TODO(1) [RT-006]: what the suspend protocol needs from this file. Per
- * the spec's sketch, rt_nop reads `rt_current` and switches to
- * `rt_sched_ctx` — so `current` and `sched_ctx` stop being file-static and
- * take those exported names (declare them in task.h). And the blocked
- * transition: a task suspending on a ring op must reach the scheduler
- * WITHOUT becoming RT_READY — only the reap loop may make it ready again,
- * or the ready scan re-runs a task whose CQE has not arrived. rt_yield's
- * unconditional RT_READY is the line in question: either it learns to
- * preserve a state the caller already set, or the suspend protocol calls
- * rt_switch directly, as the spec's sketch in fact does. */
 
 /* rt_task_exit.
  *
@@ -186,8 +175,8 @@ void rt_yield(void) {
  * linker placed next.
  */
 [[noreturn]] void rt_task_exit(void) {
-  current->state = RT_DEAD;
-  rt_switch(&current->ctx, &sched_ctx);
+  rt_current->state = RT_DEAD;
+  rt_switch(&rt_current->ctx, &rt_sched_ctx);
 
   __builtin_trap();
 }
@@ -210,7 +199,7 @@ void rt_yield(void) {
  * Returns when the task yields or exits.
  */
 void rt_sched_resume(struct rt_task *t) {
-  current = t;
-  current->state = RT_RUNNING;
-  rt_switch(&sched_ctx, &current->ctx);
+  rt_current = t;
+  rt_current->state = RT_RUNNING;
+  rt_switch(&rt_sched_ctx, &rt_current->ctx);
 }

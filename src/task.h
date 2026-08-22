@@ -144,6 +144,13 @@ extern void rt_switch(struct rt_ctx *from, struct rt_ctx *to);
  */
 extern void rt_sched_resume(struct rt_task *t);
 
+/* The running task and the scheduler's context, exported for RT-006's
+ * suspend protocol: rt_nop reads rt_current and switches to rt_sched_ctx
+ * directly (the spec's sketch). Blocked tasks bypass rt_yield — it would
+ * mark them RT_READY; only the reap loop may do that. */
+extern struct rt_ctx rt_sched_ctx;
+extern struct rt_task *rt_current;
+
 /* rt_task_entry is in switch.S — the trampoline for first entry. */
 extern void rt_task_entry(void);
 

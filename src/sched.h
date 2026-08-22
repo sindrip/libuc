@@ -27,7 +27,7 @@ int rt_sched_init(unsigned entries);
  *   self->state = RT_BLOCKED,
  *   switch to the scheduler; when it resumes us, return self->result.
  *
- * `self` comes from rt_current (task.c, TODO(1)). rt_write is the same
+ * `self` comes from rt_current (task.h). rt_write is the same
  * shape over IORING_OP_WRITE, four SQE fields: fd, addr (the buffer, cast
  * per house idiom), len, and off = -1 — the write(2) semantic. The kernel
  * reads off unconditionally (rw.c:272); -1 means the file's own position,

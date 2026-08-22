@@ -42,7 +42,7 @@ RUN clang --target=aarch64-unknown-linux-gnu -std=c23 \
         -fsanitize=undefined -fsanitize-minimal-runtime -fno-sanitize-recover=all \
         -fno-sanitize-link-runtime \
         -o /init /src/arch/aarch64/start.S /src/arch/aarch64/switch.S \
-        /src/task.c /src/ring.c /src/fmt.c /src/crash.c /src/ubsan.c /src/main.c \
+        /src/task.c /src/ring.c /src/sched.c /src/fmt.c /src/crash.c /src/ubsan.c /src/main.c \
     && mkdir -p /rootfs \
     && cp /init /rootfs/init \
     && cd /rootfs \

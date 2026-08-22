@@ -47,6 +47,7 @@
  */
 #include "crash.h"
 #include "ring.h"
+#include "sched.h"
 #include "syscall.h"
 #include "task.h"
 
@@ -277,13 +278,55 @@ static void rt005_nop(void) {
   put_str("nop ok\n");
 }
 
-/* TODO(5) [RT-006]: the driver rewrite — the ticket's demonstration: tasks
- * that rt_nop() then rt_write() hello through the ring (raw_write becomes
- * forbidden in task bodies), two of them interleaving, verified by
- * temporarily stubbing raw_write to trap. Forces the acceptance decision:
- * the happy-path console shows `hello` and nothing else, so the RT-005
- * driver lines retire or gate when this lands — decide then, not before.
- */
+/* The RT-006 demonstration: NOP, then hello through the ring — the task
+ * suspends twice and survives both. raw_write is forbidden in task bodies
+ * from here on; the put_* below are failure reporting only, which is the
+ * purity exception's charter. The acceptance decision (RT-005 lines retire
+ * or gate for the quiet console) is pending the first green boot. */
+static void hello_task(void *arg) {
+  const char *msg = arg;
+
+  int res = rt_nop();
+  if (res != 0) {
+    put_str("task: nop res ");
+    put_dec((unsigned long)(res < 0 ? -res : res));
+    put('\n');
+    return;
+  }
+
+  size_t n = 0;
+  while (msg[n]) {
+    n++;
+  }
+  res = rt_write(1, msg, (unsigned)n);
+  if (res != (int)n) {
+    put_str("task: write res ");
+    put_dec((unsigned long)(res < 0 ? -res : res));
+    put('\n');
+  }
+}
+
+static void rt006_demo(void) {
+  int ret = rt_sched_init(8);
+  if (sys_failed(ret)) {
+    put_str("sched init failed: ");
+    put_dec((unsigned long)-ret);
+    put('\n');
+    return;
+  }
+
+  /* Two tasks, per the acceptance: one task cannot distinguish "resumes
+   * the right task" from "resumes the only task". */
+  static char msg_a[] = "hello a\n";
+  static char msg_b[] = "hello b\n";
+  struct rt_task a;
+  struct rt_task b;
+  rt_task_create(&a, hello_task, msg_a);
+  rt_task_create(&b, hello_task, msg_b);
+
+  struct rt_task *tasks[] = {&a, &b};
+  rt_sched_run(tasks, 2);
+}
 
 /* The only caller is start.S, which passes the pre-alignment stack pointer in
  * x0 (arch/aarch64/start.S:44). Declared here because assembly cannot be
@@ -305,6 +348,7 @@ static void rt005_nop(void) {
   rt005_probe();
   rt005_setup_failure();
   rt005_nop();
+  rt006_demo();
 
   for (;;) {
     __asm__ volatile("wfe");
