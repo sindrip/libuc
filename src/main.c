@@ -8,7 +8,7 @@
  *
  *     hello a
  *     hello b
- *     accept ok
+ *     recv ok
  *
  * written by the kernel through IORING_OP_WRITE. With `verbose` flipped on,
  * the acceptance chain of the earlier tickets prints first — the expected
@@ -241,8 +241,8 @@ static constexpr int RT_SOCK_STREAM = 1;
 static constexpr int RT_IPPROTO_TCP = 6;
 
 /* Milestone 2's first checkpoint: prove SOCKET -> BIND -> LISTEN -> ACCEPT ->
- * CLOSE through the scheduler's ring. After SOCKET succeeds, every path
- * reaches CLOSE before the task returns. */
+ * RECV -> CLOSE through the scheduler's ring. After SOCKET succeeds, every
+ * path reaches CLOSE before the task returns. */
 static void socket_task([[maybe_unused]] void *arg) {
   auto fd = rt_socket(RT_AF_INET, RT_SOCK_STREAM, RT_IPPROTO_TCP);
 
@@ -296,6 +296,22 @@ static void socket_task([[maybe_unused]] void *arg) {
     }
   }
 
+  char buf[256];
+  auto recv_res = 0;
+  if (client_fd >= 0) {
+    recv_res = rt_recv(client_fd, buf, (unsigned)sizeof buf);
+    if (recv_res <= 0) {
+      put_str("socket: recv returned ");
+      if (recv_res < 0) {
+        put_str("-");
+        put_dec((unsigned long)-(long)recv_res);
+      } else {
+        put_dec((unsigned long)recv_res);
+      }
+      put('\n');
+    }
+  }
+
   auto client_close_res = 0;
   if (client_fd >= 0) {
     client_close_res = rt_close(client_fd);
@@ -324,12 +340,12 @@ static void socket_task([[maybe_unused]] void *arg) {
     return;
   }
 
-  if (bind_res != 0 || listen_res != 0 || client_fd < 0 ||
+  if (bind_res != 0 || listen_res != 0 || client_fd < 0 || recv_res <= 0 ||
       client_close_res != 0) {
     return;
   }
 
-  static constexpr char success_msg[] = "accept ok\n";
+  static constexpr char success_msg[] = "recv ok\n";
   static constexpr unsigned success_len = (unsigned)(sizeof success_msg - 1);
 
   auto written = rt_write(1, success_msg, success_len);
@@ -371,7 +387,7 @@ static void rt006_demo(void) {
 
   /* Run the first milestone-2 probe separately, but on the same ring. Besides
    * keeping the console order exact, one task means SQ capacity cannot be the
-   * source of a SOCKET/BIND/LISTEN/ACCEPT/CLOSE failure in this checkpoint. */
+   * source of a SOCKET/BIND/LISTEN/ACCEPT/RECV/CLOSE failure here. */
   struct rt_task socket;
   rt_task_create(&socket, socket_task, nullptr);
   struct rt_task *socket_tasks[] = {&socket};
