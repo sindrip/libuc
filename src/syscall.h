@@ -38,7 +38,9 @@
 /* Raw returns are -errno in -1..-4095. Anything else is a success value, and
  * some of those are huge (mmap returns an address). True only for the error
  * range. */
-static inline bool sys_failed(long r) { return r < 0 && r >= -4095; }
+[[nodiscard]] static inline bool sys_failed(long r) {
+  return r < 0 && r >= -4095;
+}
 
 /* raw_write — THE sanctioned purity exception: a direct write(2).
  *

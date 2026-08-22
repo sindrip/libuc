@@ -9,12 +9,15 @@
 #define RT_TASK_H
 
 #include <stddef.h>
-#include <stdint.h>
 
 /* The saved register state — the C-side mirror of what switch.S saves and
  * restores. Field order and sizes must match switch.S's offset table
- * exactly; the static_assert catches inserted padding, which would make the
- * struct and the asm disagree and silently corrupt registers.
+ * exactly; the static_asserts pin each offset the table promises, so a
+ * reordered field, a changed type, or inserted padding breaks the build
+ * instead of making the struct and the asm disagree and silently corrupt
+ * registers. The size alone would not catch a reorder that preserves the
+ * total — swapping fp and lr costs nothing in sizeof and sends
+ * rt_task_create's primed lr into the slot the asm restores as x29.
  *
  * 168, not 176 — no "rounding up for 16-byte alignment". That instinct
  * confuses two rules that share a number:
@@ -40,6 +43,10 @@ struct rt_ctx {
 };
 
 static_assert(sizeof(struct rt_ctx) == 168);
+static_assert(offsetof(struct rt_ctx, fp) == 80);
+static_assert(offsetof(struct rt_ctx, lr) == 88);
+static_assert(offsetof(struct rt_ctx, sp) == 96);
+static_assert(offsetof(struct rt_ctx, d) == 104);
 
 /* Values are pinned rather than left to declaration order, as the kernel
  * pins TASK_RUNNING (include/linux/sched.h:107). Zero meaning RT_READY is
@@ -50,7 +57,7 @@ static_assert(sizeof(struct rt_ctx) == 168);
  *
  * RT_BLOCKED is a task parked on a CQE: skipped by the ready scan, made
  * RT_READY only by the reap loop. */
-enum rt_task_state {
+enum rt_task_state : int {
   RT_READY = 0,
   RT_RUNNING = 1,
   RT_BLOCKED = 2,

@@ -8,6 +8,7 @@
 #include "ring.h"
 
 #include <stdatomic.h>
+#include <stdint.h>
 
 #include <asm/errno.h>  /* EOPNOTSUPP */
 #include <linux/mman.h> /* MAP_SHARED, MAP_POPULATE, PROT_* */
@@ -55,7 +56,7 @@ int rt_ring_probe(struct io_uring_query_opcode *out) {
       .size = (__u32)sizeof *out,
   };
 
-  int r = sys_io_uring_register(-1, IORING_REGISTER_QUERY, &hdr, 0);
+  auto r = sys_io_uring_register(-1, IORING_REGISTER_QUERY, &hdr, 0);
   if (sys_failed(r)) {
     return r;
   }
@@ -67,7 +68,7 @@ int rt_ring_setup(struct rt_ring *r, unsigned entries) {
   /* Create. The designated initializer also zeroes resv[3], which the
    * kernel checks. */
   struct io_uring_params params = {.flags = RT_RING_FLAGS};
-  int ret = sys_io_uring_setup(entries, &params);
+  auto ret = sys_io_uring_setup(entries, &params);
   if (sys_failed(ret)) {
     return ret;
   }
@@ -99,7 +100,7 @@ int rt_ring_setup(struct rt_ring *r, unsigned entries) {
   r->ring_len =
       params.cq_off.cqes + params.cq_entries * sizeof(struct io_uring_cqe);
 
-  long m = sys_mmap(nullptr, r->ring_len, PROT_READ | PROT_WRITE,
+  auto m = sys_mmap(nullptr, r->ring_len, PROT_READ | PROT_WRITE,
                     MAP_SHARED | MAP_POPULATE, r->fd, IORING_OFF_SQ_RING);
   if (sys_failed(m)) {
     return (int)m;
@@ -216,8 +217,8 @@ bool rt_ring_reap(struct rt_ring *r, struct io_uring_cqe *out) {
    * in io_commit_cqring ("order cqe stores with ring update", io_uring.h:416):
    * the CQE must not be read before the tail that announced it. Our own head
    * is relaxed; this thread is its only writer. */
-  unsigned head = atomic_load_explicit(r->cq_head, memory_order_relaxed);
-  unsigned tail = atomic_load_explicit(r->cq_tail, memory_order_acquire);
+  auto head = atomic_load_explicit(r->cq_head, memory_order_relaxed);
+  auto tail = atomic_load_explicit(r->cq_tail, memory_order_acquire);
   if (head == tail) {
     return false;
   }

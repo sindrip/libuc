@@ -25,6 +25,8 @@
  * something never submitted (tail published without release, or to_submit
  * zero).
  */
+#include <stddef.h>
+
 #include "crash.h"
 #include "ring.h"
 #include "sched.h"
@@ -64,9 +66,7 @@ static void put_dec(unsigned long v) {
   raw_write(1, p, (size_t)(buf + sizeof buf - p));
 }
 
-static void abc_task(void *arg) {
-  (void)arg;
-
+static void abc_task([[maybe_unused]] void *arg) {
   put('A');
   rt_yield();
   put('B');
@@ -127,7 +127,7 @@ static void rt005_setup_failure(void) {
   /* Valid entries, so the flags are the only possible cause of failure. */
   struct io_uring_params params = {.flags = IORING_SETUP_SQPOLL |
                                             IORING_SETUP_DEFER_TASKRUN};
-  int ret = sys_io_uring_setup(8, &params);
+  auto ret = sys_io_uring_setup(8, &params);
   if (!sys_failed(ret)) {
     /* The kernel moved. The fd leaks — closing needs an opcode and a working
      * ring (invariant 1) — so report loudly and carry on. */
@@ -142,7 +142,7 @@ static void rt005_setup_failure(void) {
 
 /* Top byte set: cannot be mistaken for zero-filled memory or for any
  * userspace pointer (aarch64 user VAs keep the high bits clear). */
-static constexpr __u64 NOP_SENTINEL = 0xF00DFACEDEADBEEF;
+static constexpr __u64 NOP_SENTINEL = 0xF00D'FACE'DEAD'BEEF;
 
 /* RT-005 acceptance: one ring, one NOP, one CQE. Expected line: "nop ok",
  * printed only after three independent checks: enter consumed exactly one
@@ -152,7 +152,7 @@ static constexpr __u64 NOP_SENTINEL = 0xF00DFACEDEADBEEF;
 static void rt005_nop(void) {
   struct rt_ring ring;
 
-  int ret = rt_ring_setup(&ring, 8);
+  auto ret = rt_ring_setup(&ring, 8);
   if (sys_failed(ret)) {
     put_str("nop: setup failed: ");
     put_dec((unsigned long)-ret);
@@ -209,7 +209,7 @@ static void rt005_nop(void) {
 static void hello_task(void *arg) {
   const char *msg = arg;
 
-  int res = rt_nop();
+  auto res = rt_nop();
   if (res != 0) {
     put_str("task: nop res ");
     put_dec((unsigned long)(res < 0 ? -res : res));
@@ -230,7 +230,7 @@ static void hello_task(void *arg) {
 }
 
 static void rt006_demo(void) {
-  int ret = rt_sched_init(8);
+  auto ret = rt_sched_init(8);
   if (sys_failed(ret)) {
     put_str("sched init failed: ");
     put_dec((unsigned long)-ret);
@@ -258,9 +258,7 @@ static void rt006_demo(void) {
  * two agree. */
 [[noreturn]] void rt_main(void *stack);
 
-[[noreturn]] void rt_main(void *stack) {
-  (void)stack;
-
+[[noreturn]] void rt_main([[maybe_unused]] void *stack) {
   /* First, before anything that can fault: a handler installed after the
    * crash reports nothing. */
   rt_crash_install();
@@ -271,7 +269,7 @@ static void rt006_demo(void) {
    * the binary; flip to true to re-run it. */
   static volatile bool verbose = false;
   if (verbose) {
-    static const char banner[] = "rt: alive\n";
+    static constexpr char banner[] = "rt: alive\n";
     raw_write(1, banner, sizeof banner - 1);
     rt004_selftest();
     rt005_probe();

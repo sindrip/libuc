@@ -5,6 +5,9 @@
 
 #include "crash.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <asm/sigcontext.h>
 #include <asm/siginfo.h>
 #include <asm/signal.h>
@@ -164,7 +167,7 @@ void rt_crash_install(void) {
   static alignas(16) char stack[SIGSTKSZ];
 
   const stack_t ss = {.ss_sp = stack, .ss_size = sizeof stack};
-  int ret = sys_sigaltstack(&ss, nullptr);
+  auto ret = sys_sigaltstack(&ss, nullptr);
   if (sys_failed(ret)) {
     install_fail("sigaltstack", ret);
   }

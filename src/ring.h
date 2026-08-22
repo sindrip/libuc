@@ -9,9 +9,7 @@
 #ifndef RT_RING_H
 #define RT_RING_H
 
-#include <stdatomic.h>
 #include <stddef.h>
-#include <stdint.h>
 
 #include <linux/io_uring.h>
 #include <linux/io_uring/query.h>
@@ -52,7 +50,9 @@ struct rt_ring {
  * Conventions, applied to all of them: an -errno in sys_failed()'s range comes
  * straight back to the caller rather than being collapsed into a bool, because
  * "setup failed" and "setup failed with -EPERM" are different debugging
- * sessions and there is no strace here to recover the difference.
+ * sessions and there is no strace here to recover the difference. And all five
+ * are [[nodiscard]], syscall.h's convention: every return is an errno, a
+ * backpressure signal, or a CQE, and ignoring any of them is a bug.
  */
 
 /* Capability probe. Fills `out`; returns 0, or -errno.
@@ -76,7 +76,7 @@ struct rt_ring {
  * And the part that bites: the syscall returning 0 does not mean the query
  * succeeded. Per-entry status lands in hdr.result (query.c:112). Check both.
  */
-int rt_ring_probe(struct io_uring_query_opcode *out);
+[[nodiscard]] int rt_ring_probe(struct io_uring_query_opcode *out);
 
 /* Create the ring and map it. Returns 0, or -errno.
  *
@@ -108,7 +108,7 @@ int rt_ring_probe(struct io_uring_query_opcode *out);
  * Use the offsets, never a hand-computed layout of struct io_rings; it is an
  * internal type and is not in the uapi headers for exactly this reason.
  */
-int rt_ring_setup(struct rt_ring *r, unsigned entries);
+[[nodiscard]] int rt_ring_setup(struct rt_ring *r, unsigned entries);
 
 /* Hand out the next free SQE, or nullptr if the SQ is full.
  *
@@ -122,7 +122,7 @@ int rt_ring_setup(struct rt_ring *r, unsigned entries);
  * holding the last request that occupied it, so it must be cleared before the
  * caller fills in three fields and leaves the rest stale.
  */
-struct io_uring_sqe *rt_ring_sqe(struct rt_ring *r);
+[[nodiscard]] struct io_uring_sqe *rt_ring_sqe(struct rt_ring *r);
 
 /* Publish the SQ tail and enter the kernel. Returns how many SQEs
  * the kernel consumed, or -errno.
@@ -136,8 +136,9 @@ struct io_uring_sqe *rt_ring_sqe(struct rt_ring *r);
  * completion work. Passing min_complete makes the same call wait; submit and
  * wait are one enter.
  */
-int rt_ring_submit_and_wait(struct rt_ring *r, unsigned to_submit,
-                            unsigned min_complete);
+[[nodiscard]] int rt_ring_submit_and_wait(struct rt_ring *r,
+                                          unsigned to_submit,
+                                          unsigned min_complete);
 
 /* Take one CQE. Returns false if the CQ is empty.
  *
@@ -150,6 +151,6 @@ int rt_ring_submit_and_wait(struct rt_ring *r, unsigned to_submit,
  * the head advances, that slot belongs to the kernel again, and a caller
  * holding a pointer into it has a use-after-free with no allocator involved.
  */
-bool rt_ring_reap(struct rt_ring *r, struct io_uring_cqe *out);
+[[nodiscard]] bool rt_ring_reap(struct rt_ring *r, struct io_uring_cqe *out);
 
 #endif /* RT_RING_H */

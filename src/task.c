@@ -6,6 +6,9 @@
  */
 #include "task.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 /* linux/mman.h, not asm/mman.h: MAP_SHARED/MAP_PRIVATE/MAP_SHARED_VALIDATE
  * (0x01-0x03) are the three flags an arch may not override, so they live here
  * rather than in asm-generic/mman-common.h, which says so at its line 20.
@@ -38,7 +41,7 @@ void rt_task_create(struct rt_task *t, void (*fn)(void *), void *arg) {
   /* One mapping, entirely PROT_NONE, then open only the usable part: the
    * bottom page is never made accessible at all, so an overflow faults at a
    * known address instead of quietly corrupting whatever lies below. */
-  long base = sys_mmap(nullptr, RT_GUARD_SIZE + RT_STACK_SIZE, PROT_NONE,
+  auto base = sys_mmap(nullptr, RT_GUARD_SIZE + RT_STACK_SIZE, PROT_NONE,
                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (sys_failed(base)) {
     sys_exit_group((int)-base);
@@ -49,10 +52,10 @@ void rt_task_create(struct rt_task *t, void (*fn)(void *), void *arg) {
   t->fn = fn;
   t->arg = arg;
 
-  long ret = sys_mprotect((char *)t->stack_base + RT_GUARD_SIZE, RT_STACK_SIZE,
+  auto ret = sys_mprotect((char *)t->stack_base + RT_GUARD_SIZE, RT_STACK_SIZE,
                           PROT_READ | PROT_WRITE);
   if (sys_failed(ret)) {
-    sys_exit_group((int)-ret);
+    sys_exit_group(-ret);
   }
 
   /* The caller's struct rt_task is an uninitialized local, so start from a

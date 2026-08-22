@@ -15,7 +15,7 @@
 
 /* Create the scheduler's ring. Returns 0 or -errno straight from
  * rt_ring_setup, same conventions as ring.h. */
-int rt_sched_init(unsigned entries);
+[[nodiscard]] int rt_sched_init(unsigned entries);
 
 /* Ring ops, callable only from a task: stage an SQE, suspend until the reap
  * loop delivers the completion, return its res. A full SQ returns -EAGAIN
@@ -29,8 +29,8 @@ int rt_sched_init(unsigned entries);
  * raw_write is forbidden in task bodies; failure paths under the purity
  * registry's charter are the only exception.
  */
-int rt_nop(void);
-int rt_write(int fd, const void *buf, unsigned len);
+[[nodiscard]] int rt_nop(void);
+[[nodiscard]] int rt_write(int fd, const void *buf, unsigned len);
 
 /* The loop, over caller-owned tasks: run every RT_READY task to its next
  * suspension point; publish the turn's staged SQEs and wait for one

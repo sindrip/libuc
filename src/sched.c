@@ -5,6 +5,9 @@
 
 #include "sched.h"
 
+#include <stdatomic.h>
+#include <stdint.h>
+
 #include <asm/errno.h> /* EAGAIN */
 
 #include "crash.h"
@@ -78,9 +81,9 @@ void rt_sched_run(struct rt_task **tasks, int ntasks) {
     /* Publish and wait. The staged count is the private cursor's lead over
      * the published tail: every op staged this turn goes to the kernel in
      * one enter. */
-    unsigned staged = ring.cached_sq_tail -
-                      atomic_load_explicit(ring.sq_tail, memory_order_relaxed);
-    int ret = rt_ring_submit_and_wait(&ring, staged, 1);
+    auto staged = ring.cached_sq_tail -
+                  atomic_load_explicit(ring.sq_tail, memory_order_relaxed);
+    auto ret = rt_ring_submit_and_wait(&ring, staged, 1);
     if (sys_failed(ret)) {
       rt_panic("sched: enter failed", __builtin_return_address(0));
     }
