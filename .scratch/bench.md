@@ -22,8 +22,11 @@ misleading here: the ring figure alone swings 38% between boots, which is
 wider than several of the effects being measured. `libuc.md` records a
 performance claim that was made on one run of each and did not survive.
 
-The bench code lives in `main.c` behind a `bench` flag, off by default, in the
-same shape as `verbose`.
+**The harness is not in the tree.** It was ~220 lines of never-executed code in
+`main.c` plus a `rt_ticks`/`rt_tick_hz` pair with no other caller, which is the
+kind of thing this codebase deletes rather than carries. The findings below are
+the deliverable; the method above is enough to rebuild it when a number needs
+rechecking. It was last run at `36ef8cb`, recoverable from there if wanted.
 
 ## Runtime primitives
 
