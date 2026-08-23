@@ -32,13 +32,14 @@
 #include <linux/in.h>
 
 #include "crash.h"
+#include "fiber.h"
+#include "io.h"
 #include "ring.h"
-#include "sched.h"
+#include "scheduler.h"
 #include "syscall.h"
-#include "task.h"
 
 /* Console output for the failure paths and the regression chain — the
- * purity registry's charter. Task bodies use rt_write instead; the paths
+ * purity registry's charter. Fiber bodies use rt_write instead; the paths
  * that need these cannot trust the ring, or predate it. */
 static void put(char c) { raw_write(1, &c, 1); }
 
@@ -70,26 +71,36 @@ static void put_dec(unsigned long v) {
   raw_write(1, p, (size_t)(buf + sizeof buf - p));
 }
 
-static void abc_task([[maybe_unused]] void *arg) {
+static void abc_fiber([[maybe_unused]] void *arg) {
   put('A');
-  rt_yield();
+  rt_fiber_yield();
   put('B');
-  rt_yield();
+  rt_fiber_yield();
   put('C');
 }
 
 /* RT-004 acceptance: the cooperative round trip. Expected line: "1A2B3C" —
  * the interleaving proves the resume/yield alternation, not just that both
- * sides ran. */
-static void rt004_selftest(void) {
-  struct rt_task t;
-  rt_task_create(&t, abc_task, nullptr);
+ * sides ran.
+ *
+ * rt_fiber_create rather than rt_scheduler_spawn, and rt_scheduler_resume
+ * rather than rt_scheduler_run: this drives the switch by hand, so the fiber
+ * must stay off the ready queue and out of the live count. The scheduler is
+ * still needed and always was — it is what a yielding fiber switches back
+ * into; before it was a struct, that was an implicit global. */
+static void rt004_selftest(struct rt_scheduler *s) {
+  struct rt_fiber t;
+  rt_fiber_create(&t, abc_fiber, nullptr);
 
+  /* Loops on the request rather than the state: driving resume by hand means
+   * no dispatch runs, and state is the scheduler's to assign at dispatch. The
+   * request is what the fiber itself said, which is the honest thing to read
+   * when standing in for the loop. */
   int count = 0;
-  while (t.state != RT_DEAD) {
+  while (t.request.kind != RT_REQUEST_EXIT) {
     count++;
     put((char)('0' + count));
-    rt_sched_resume(&t);
+    rt_scheduler_resume(s, &t);
   }
   put('\n');
 }
@@ -207,15 +218,15 @@ static void rt005_nop(void) {
   put_str("nop ok\n");
 }
 
-/* The milestone demonstration: NOP, then hello through the ring — the task
- * suspends twice and survives both. raw_write is forbidden in task bodies;
+/* The milestone demonstration: NOP, then hello through the ring — the fiber
+ * suspends twice and survives both. raw_write is forbidden in fiber bodies;
  * the put_* here are failure reporting only. */
-static void hello_task(void *arg) {
+static void hello_fiber(void *arg) {
   const char *msg = arg;
 
   auto res = rt_nop();
   if (res != 0) {
-    put_str("task: nop res ");
+    put_str("fiber: nop res ");
     put_dec((unsigned long)(res < 0 ? -res : res));
     put('\n');
     return;
@@ -227,7 +238,7 @@ static void hello_task(void *arg) {
   }
   res = rt_write(1, msg, (unsigned)n);
   if (res != (int)n) {
-    put_str("task: write res ");
+    put_str("fiber: write res ");
     put_dec((unsigned long)(res < 0 ? -res : res));
     put('\n');
   }
@@ -242,8 +253,8 @@ static constexpr int RT_IPPROTO_TCP = 6;
 
 /* Milestone 2's first checkpoint: prove SOCKET -> BIND -> LISTEN -> ACCEPT ->
  * RECV -> SEND -> CLOSE through the scheduler's ring. After SOCKET succeeds,
- * every path reaches CLOSE before the task returns. */
-static void socket_task([[maybe_unused]] void *arg) {
+ * every path reaches CLOSE before the fiber returns. */
+static void socket_fiber([[maybe_unused]] void *arg) {
   auto fd = rt_socket(RT_AF_INET, RT_SOCK_STREAM, RT_IPPROTO_TCP);
 
   if (fd < 0) {
@@ -381,35 +392,31 @@ static void socket_task([[maybe_unused]] void *arg) {
   }
 }
 
-static void rt006_demo(void) {
-  auto ret = rt_sched_init(8);
-  if (sys_failed(ret)) {
-    put_str("sched init failed: ");
-    put_dec((unsigned long)-ret);
-    put('\n');
-    return;
-  }
-
-  /* Two tasks with distinct messages: one task cannot distinguish "resumes
-   * the right task" from "resumes the only task", and identical lines would
+static void rt006_demo(struct rt_scheduler *s) {
+  /* Two fibers with distinct messages: one fiber cannot distinguish "resumes
+   * the right fiber" from "resumes the only fiber", and identical lines would
    * prove count, not identity. */
   static char msg_a[] = "hello a\n";
   static char msg_b[] = "hello b\n";
-  struct rt_task a;
-  struct rt_task b;
-  rt_task_create(&a, hello_task, msg_a);
-  rt_task_create(&b, hello_task, msg_b);
+  struct rt_fiber a;
+  struct rt_fiber b;
+  rt_scheduler_spawn(s, &a, hello_fiber, msg_a);
+  rt_scheduler_spawn(s, &b, hello_fiber, msg_b);
 
-  struct rt_task *tasks[] = {&a, &b};
-  rt_sched_run(tasks, 2);
+  rt_scheduler_run(s);
 
-  /* Run the first milestone-2 probe separately, but on the same ring. Besides
-   * keeping the console order exact, one task means SQ capacity cannot be the
-   * source of a SOCKET/BIND/LISTEN/ACCEPT/RECV/SEND/CLOSE failure here. */
-  struct rt_task socket;
-  rt_task_create(&socket, socket_task, nullptr);
-  struct rt_task *socket_tasks[] = {&socket};
-  rt_sched_run(socket_tasks, 1);
+  /* Run the first milestone-2 probe separately, but on the same scheduler.
+   * Besides keeping the console order exact, one fiber means SQ capacity
+   * cannot be the source of a SOCKET/BIND/LISTEN/ACCEPT/RECV/SEND/CLOSE
+   * failure here.
+   *
+   * Two phases on one scheduler is why rt_scheduler_run returns at all: the
+   * loop stops when its last fiber dies, and the spawn below refills a
+   * scheduler whose queue is empty and whose in-flight count is zero. The
+   * destination loop does not return (.scratch/scheduler.md). */
+  struct rt_fiber socket;
+  rt_scheduler_spawn(s, &socket, socket_fiber, nullptr);
+  rt_scheduler_run(s);
 }
 
 /* The only caller is start.S, which passes the pre-alignment stack pointer in
@@ -423,6 +430,22 @@ static void rt006_demo(void) {
    * crash reports nothing. */
   rt_crash_install();
 
+  /* The scheduler is not created, it is *become*: this thread fills in
+   * scheduler 0's state and from here on it is the scheduler, running on the
+   * kernel-supplied stack. Every later scheduler follows the same sequence on
+   * its own thread — nothing manufactures one on another thread's behalf
+   * (.scratch/scheduler.md). */
+  struct rt_scheduler sched;
+  auto init = rt_scheduler_init(&sched, 8);
+  if (sys_failed(init)) {
+    put_str("scheduler init failed: ");
+    put_dec((unsigned long)-init);
+    put('\n');
+    for (;;) {
+      __asm__ volatile("wfe");
+    }
+  }
+
   /* The regression chain, compiled in but quiet: the happy path wants the
    * three lines documented above and nothing else, and AGENTS.md wants the old
    * acceptance checks runnable when shared code changes. volatile keeps the
@@ -431,12 +454,12 @@ static void rt006_demo(void) {
   if (verbose) {
     static constexpr char banner[] = "rt: alive\n";
     raw_write(1, banner, sizeof banner - 1);
-    rt004_selftest();
+    rt004_selftest(&sched);
     rt005_probe();
     rt005_setup_failure();
     rt005_nop();
   }
-  rt006_demo();
+  rt006_demo(&sched);
 
   for (;;) {
     __asm__ volatile("wfe");

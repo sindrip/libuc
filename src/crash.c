@@ -55,7 +55,7 @@
  * the one-raw_write-per-line policy means every frame already printed has
  * escaped, and the death is loud. Real prevention is a range check against
  * known stacks, the kernel unwinder's design (stacktrace.c:227) — that needs
- * a registry of task stacks, which does not exist yet. */
+ * a registry of fiber stacks, which does not exist yet. */
 static void dump_frames(unsigned long fp) {
   while (fp != 0 && fp % alignof(unsigned long) == 0) {
     const unsigned long *frame = (const unsigned long *)fp;
@@ -131,8 +131,8 @@ static void on_fault(int sig, siginfo_t *info, void *ucv) {
   rt_fmt_str(&f, "\n");
   raw_write(1, buf, (size_t)(f.p - buf));
 
-  /* How we got there — x29 is fp. (The seam for naming the running task and
-   * its stack range, once a task registry exists.) */
+  /* How we got there — x29 is fp. (The seam for naming the running fiber and
+   * its stack range, once a fiber registry exists.) */
   dump_frames((unsigned long)mc->regs[29]);
 
   for (;;) {
@@ -162,7 +162,7 @@ void rt_crash_install(void) {
    * every signal frame carries sigcontext's 4096-byte __reserved block for
    * SIMD/SVE state, so the generic size could lose half a stack to one
    * frame. ss_sp is the buffer's BASE — its lowest address; the kernel
-   * computes the top itself, unlike the task stacks. Per-thread state: a
+   * computes the top itself, unlike the fiber stacks. Per-thread state: a
    * later worker thread installs its own (crash.h). */
   static alignas(16) char stack[SIGSTKSZ];
 

@@ -80,8 +80,8 @@ These are the design. Code that breaks one is wrong even if it works.
 5. **Do not add liburing.** Ring mechanics are hand-written on purpose.
 6. **PID 1 must never return.** The kernel panics with `Attempted to kill init`.
    `rt_main` ends in a loop or a deliberate reboot.
-7. **Cooperative scheduling only.** No preemption. Tasks yield at I/O points or
-   via `rt_yield()`.
+7. **Cooperative scheduling only.** No preemption. Fibers yield at I/O points
+   or via `rt_fiber_yield()`.
 8. **One purity exception exists.** See below. Do not add a second without
    recording it there.
 
@@ -125,6 +125,11 @@ run.sh                    boot under QEMU (hvf; ACCEL/SMP overridable)
 debug.sh                  same boot, halted, gdbstub on :1234
 src.sh                    export the pinned kernel tree -> out/src/
 src/                      the runtime
+  context.h               struct rt_ctx + rt_switch; arch, implemented in arch/
+  fiber.{c,h}             a fiber, and the three ways it gives up the CPU
+  io.{c,h}                the operations it can ask for — descriptions only
+  scheduler.{c,h}         queues, the loop, staging, reaping
+  ring.{c,h}              the raw io_uring, no liburing
 out/                      GENERATED — gitignored, never edit
 out/vmlinuz               the kernel
 out/kernel.config         what Kconfig actually resolved — read this, not the fragment
@@ -263,8 +268,9 @@ harness.
 The cost, stated plainly: **there is no regression net.** Nothing catches a
 change that breaks an earlier ticket. The discipline that makes this survivable:
 
-- When touching shared code (`switch.c`, `ring.c`, `task.c`), re-run the
-  acceptance checks of every ticket that depends on it, not just the current one.
+- When touching shared code (`switch.c`, `ring.c`, `fiber.c`, `scheduler.c`),
+  re-run the acceptance checks of every ticket that depends on it, not just
+  the current one.
 - Keep acceptance criteria mechanically checkable — an exact expected console
   string, not "looks right". `RT-004`'s `1A2B3C` is the model.
 - The crash handler (RT-007) is load-bearing under this policy. With no tests,

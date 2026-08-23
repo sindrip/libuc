@@ -117,7 +117,7 @@ magnitude; Platform reality forbids performance claims from this machine.
 Flat, which is exactly right: concurrency without parallelism. The important
 half is that it is flat rather than *degrading* — 16 fibers of coordination cost
 2% against the single-threaded path, so the shim is free and the only thing lost
-is the speedup. Context switch measured at ~6 ns (12 ns per `rt_yield` round
+is the speedup. Context switch measured at ~6 ns (12 ns per `rt_fiber_yield` round
 trip), against roughly a microsecond for a futex-mediated thread wake.
 
 **The deadlock detector works, and earned its keep immediately.** The first run
@@ -285,7 +285,7 @@ are ABI-compatible.
 
 | layer | examples | contract |
 |---|---|---|
-| probe/runtime | `rt_socket`, `rt_close`, `rt_yield` | Raw `-errno`, task-only where applicable, and submission-capacity details may still be visible. |
+| probe/runtime | `rt_socket`, `rt_close`, `rt_fiber_yield` | Raw `-errno`, task-only where applicable, and submission-capacity details may still be visible. |
 | private libuc | `__libuc_await_socket`, `__libuc_await_close`, `__libuc_fiber_yield` | Reserved implementation namespace; ring-mediated suspension and scheduler mechanics. |
 | public C/POSIX | `socket`, `close`, `read`, `write`, `thrd_yield` | Standard declarations, types, return conventions, and per-fiber `errno`. |
 
@@ -313,8 +313,9 @@ void thrd_yield(void)
 }
 ```
 
-Keep `rt_yield()` while this is still the probe. At the libuc boundary, make
-`thrd_yield()` the public ABI and keep the scheduler primitive private. A custom
+Keep `rt_fiber_yield()` while this is still the probe — spelled for the fiber
+now that "task" and "fiber" no longer both name it. At the libuc boundary make
+`thrd_yield()` the public ABI and keep the fiber primitive private. A custom
 bare `yield()` adds a non-standard surface, while `sched_yield()` describes the
 kernel thread rather than the fiber and would violate the ring/direct-syscall
 boundary if used as the primitive.
@@ -393,34 +394,40 @@ mechanics: what crt1's sequence above actually rests on, and the boot topology
 that was considered and rejected.
 
 **The scheduler is never created; the boot thread becomes it.** A fiber is a
-manufactured thread of control — `rt_task_create` mmaps a stack, places a
+manufactured thread of control — `rt_fiber_create` mmaps a stack, places a
 guard page, and forges a context so the first switch lands in the trampoline.
-The scheduler needs none of that. `rt_sched_ctx` is a plain zeroed global
-(`task.c:37`), written for the first time by the switch *away* from it
-(`rt_sched_resume`, `task.c:113`): the scheduler's context is captured lazily
-by the act of leaving it. Its state — ring, run queue, arena — is a struct the
-boot thread fills in before anything runs. So there is no chicken-and-egg
-between fiber and scheduler: the scheduler is presupposed by the process
-existing, and a scheduler with zero fibers is valid — today's `rt006_demo`
-boots in exactly that order (`rt_sched_init`, then `rt_task_create`, then
-`rt_sched_run`; `main.c:233-252`).
+The scheduler needs none of that. `struct rt_scheduler`'s own `context`
+(`scheduler.h:62`) is never primed; it is written for the first time by the
+switch *away* from it (`rt_scheduler_resume`, `scheduler.c:82`), so the
+scheduler's context is captured lazily by the act of leaving it. Its state —
+ring, ready queue, arena — is a struct the boot thread fills in before
+anything runs. So there is no chicken-and-egg between fiber and scheduler: the
+scheduler is presupposed by the process existing, and a scheduler with zero
+fibers is valid — `rt_main` boots in exactly that order (`rt_scheduler_init`,
+then `rt_scheduler_spawn`, then `rt_scheduler_run`).
+
+**This is now structural, not just the boot path's habit.** There is no call
+that creates a scheduler on another thread's behalf: `rt_scheduler_init` runs
+on the thread that is becoming one, and the public surface is `become`, not
+`create` (`.scratch/scheduler.md`). Boot is not a special case that the rest
+of the design works around — it is the only case, replicated.
 
 Boot is four steps, all on the kernel-supplied stack:
 
 1. `_start` — neither fiber nor scheduler; just the process.
 2. `rt_boot()` — fill in scheduler 0's state. The calling thread has now
    *become* the scheduler.
-3. `rt_task_create(fiber 0)` — a stack and a primed context in the queue;
+3. `rt_fiber_create(fiber 0)` — a stack and a primed context in the queue;
    nothing running yet but the boot thread.
-4. Enter the loop. The first `rt_switch` stamps `rt_sched_ctx`, and from that
-   instruction the kernel stack is permanently the scheduler's home.
+4. Enter the loop. The first `rt_switch` stamps the scheduler's `context`,
+   and from that instruction the kernel stack is permanently its home.
 
 **Fiber 0 is the runtime's identity.** It is not mechanically special — just
 the first thing the boot path spawns. In v1 its body is the crt1 wrapper: run
 `main(argc, argv, envp)`, then drive `exit()`. If a supervising root is ever
 wanted (language.md's `restart: OnCrash`), fiber 0's body becomes the
 supervisor and `main` its first child — same machinery, one more
-`rt_task_create`. The hierarchy above `main` is a fiber, never a scheduler.
+`rt_fiber_create`. The hierarchy above `main` is a fiber, never a scheduler.
 
 **Rejected: a boot-time runtime/work scheduler split** — a tiny scheduler for
 the runtime that spawns a work scheduler for the program. Four reasons, three
@@ -485,22 +492,22 @@ Two things follow for free once this exists:
   layout must reserve those offsets before it ossifies (strategy.md).
 
 TLS is the item on this page with the worst retrofit cost, because it touches
-the context switch and `struct rt_task` — both already written. It is the one
+the context switch and `struct rt_fiber` — both already written. It is the one
 piece worth deciding ahead of need.
 
 ## The C11 surface
 
 | API | becomes | notes |
 |---|---|---|
-| `thrd_create` | `rt_task_create` + enqueue | on the calling core, always |
+| `thrd_create` | `rt_fiber_create` + enqueue | on the calling core, always |
 | `thrd_join` | park until target is `RT_DEAD`, then drain | "joined" means *drained*, per language.md |
 | `thrd_detach` | mark for self-reap at exit | |
-| `thrd_yield` | `__libuc_fiber_yield()` | public standard wrapper over today's `rt_yield()`; no C `yield` keyword |
+| `thrd_yield` | `__libuc_fiber_yield()` | public standard wrapper over today's `rt_fiber_yield()`; no C `yield` keyword |
 | `thrd_sleep` | `IORING_OP_TIMEOUT` | `io_uring.h:267` |
 | `thrd_exit` | task exit + `tss` destructor pass | |
 | `mtx_*` | intra-core wait queue | no atomics; `mtx_timedlock` adds a linked `TIMEOUT` |
 | `cnd_*` | same wait queue | `cnd_broadcast` requeues all, resumes none — the scheduler does that |
-| `tss_*` | slot array in `struct rt_task` | `TSS_DTOR_ITERATIONS` = 4 loop at exit |
+| `tss_*` | slot array in `struct rt_fiber` | `TSS_DTOR_ITERATIONS` = 4 loop at exit |
 | `call_once` | plain flag | no atomics, same reason as `mtx` |
 
 The threading layer is the *small* part of libuc. `task.c` already is it.

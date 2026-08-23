@@ -49,7 +49,7 @@
  *   - io_uring_setup failure cannot be reported through the ring that just
  *     failed to exist;
  *   - the crash handler and rt_panic may fire with the ring mid-mutation,
- *     the scheduler broken, or no current task — a diagnostic channel must
+ *     the scheduler broken, or no current fiber — a diagnostic channel must
  *     not depend on the subsystem it diagnoses;
  *   - the boot-time regression chain probes the ring itself, and reporting
  *     a ring probe's failure through the ring is circular.

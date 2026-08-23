@@ -37,7 +37,7 @@
  * to run somewhere that is not the stack that just overflowed.
  *
  * The alternate stack is per-thread state: a later worker thread must
- * install its own before any task runs on it, or a worker-core overflow
+ * install its own before any fiber runs on it, or a worker-core overflow
  * loses exactly this report.
  */
 void rt_crash_install(void);

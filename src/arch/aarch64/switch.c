@@ -1,5 +1,5 @@
 /*
- * Stackful context switch. Every task suspension and resumption passes
+ * Stackful context switch. Every fiber suspension and resumption passes
  * through rt_switch, and a single wrong line here corrupts state that
  * surfaces far away, often only under optimisation or floating-point load.
  * Register reference: .scratch/aarch64.md.
@@ -34,7 +34,7 @@
 
 #include <stddef.h>
 
-#include "../../task.h"
+#include "../../context.h"
 
 /* The layout, named once: consumed by the assert below and by the asm
  * operand lists. Never address-taken, so no storage is emitted. */
@@ -61,9 +61,9 @@ static_assert(offsetof(struct rt_ctx, lr) == ctx_fp + sizeof(unsigned long));
  * placed them in x0 and x1, which is what the body assumes.
  *
  * The magic is the final `ret`: it jumps to the restored x30, which for a
- * resumed task is wherever *it* last called rt_switch — the task resumes as
- * if rt_switch had returned normally. For a brand-new task, x30 was primed
- * to rt_task_entry (task.c), so `ret` enters the trampoline instead.
+ * resumed fiber is wherever *it* last called rt_switch — the fiber resumes as
+ * if rt_switch had returned normally. For a brand-new fiber, x30 was primed
+ * to rt_fiber_entry (fiber.c), so `ret` enters the trampoline instead.
  */
 [[gnu::naked]] void rt_switch(struct rt_ctx *from, struct rt_ctx *to) {
   __asm__ volatile(
@@ -109,14 +109,14 @@ static_assert(offsetof(struct rt_ctx, lr) == ctx_fp + sizeof(unsigned long));
         [ctx_d] "i"(ctx_d));
 }
 
-/* First entry into a fresh task. It has never called rt_switch, so there is
- * no natural x30 to return into; rt_task_create primes the context instead:
- *   x19 = the task's function pointer
- *   x20 = the task's argument
- *   x30 = rt_task_entry
+/* First entry into a fresh fiber. It has never called rt_switch, so there is
+ * no natural x30 to return into; rt_fiber_create primes the context instead:
+ *   x19 = the fiber's function pointer
+ *   x20 = the fiber's argument
+ *   x30 = rt_fiber_entry
  * so rt_switch's `ret` lands on the first instruction here.
  */
-[[gnu::naked]] void rt_task_entry(void) {
+[[gnu::naked]] void rt_fiber_entry(void) {
   __asm__ volatile(
       /* Push a root frame record with both halves null: a null saved-fp
        * terminates the crash handler's walk, exactly as _start zeroes x29,
@@ -128,10 +128,10 @@ static_assert(offsetof(struct rt_ctx, lr) == ctx_fp + sizeof(unsigned long));
       I(mov x0, x20)
       I(blr x19)
 
-      /* The task function returned. No `ret` — there is no valid return
-       * address below — so a plain branch, never coming back: rt_task_exit
-       * marks the task dead and switches away for good. */
-      I(b rt_task_exit));
+      /* The fiber function returned. No `ret` — there is no valid return
+       * address below — so a plain branch, never coming back: rt_fiber_exit
+       * marks the fiber dead and switches away for good. */
+      I(b rt_fiber_exit));
 }
 
 #undef I
