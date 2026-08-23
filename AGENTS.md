@@ -139,8 +139,8 @@ src/                      the runtime
   scheduler.{c,h}         queues, the loop, staging, reaping
   ring.{c,h}              the raw io_uring, no liburing
   arch/<arch>/            everything that knows the instruction set
-    context.c             the register layout, the naked switch, rt_ctx_init
-    context_arch.h        RT_CTX_SIZE / RT_CTX_ALIGN — the blob's contract
+    context.c             the naked switch, rt_ctx_init
+    context_arch.h        struct rt_ctx_regs — the layout the blob is sized from
     syscall_arch.h        the svc sequence and register assignment
     start.S               _start: sp points at argc; align, call, exit_group
 ```
