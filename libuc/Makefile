@@ -48,7 +48,7 @@ CORE := $(OUT)/arch/aarch64/start.o $(OUT)/start.o $(OUT)/ubsan.o \
 OBJECTS     := $(CORE) $(OUT)/main.o
 LZ4_OBJECTS := $(CORE) $(OUT)/vendor/lz4.o $(OUT)/lz4test.o
 
-.PHONY: all check verify clean
+.PHONY: all check verify initramfs clean
 
 all: $(OUT)/start.elf $(OUT)/lz4.elf
 
@@ -111,6 +111,20 @@ compile_commands.json: Makefile $(wildcard src/*.c test/*.c)
 	    "$(CLANG) $(CFLAGS) $$extra $(CPPFLAGS) -c $$f" >> $@; \
 	  sep=","; done
 	@printf '\n]\n' >> $@
+
+# Wraps an ELF as /init for the VM: INITRD=out/libuc/lz4.initramfs.cpio.gz
+# ./run.sh. PID 1 exiting panics the kernel, and the panic line carries the
+# status: exitcode=0x1700 is 23. Deliberately no prerequisite on the ELF —
+# it links in the container, and the host, which cannot link, only packages
+# whatever the container last built.
+$(OUT)/%.initramfs.cpio.gz:
+	@test -f $(OUT)/$*.elf || \
+	  { echo "$(OUT)/$*.elf missing: run make verify in the container first"; exit 1; }
+	@rm -rf $(OUT)/root-$* && mkdir -p $(OUT)/root-$*
+	@cp $(OUT)/$*.elf $(OUT)/root-$*/init
+	cd $(OUT)/root-$* && echo init | cpio -o -H newc | gzip > $(abspath $@)
+
+initramfs: $(OUT)/start.initramfs.cpio.gz $(OUT)/lz4.initramfs.cpio.gz
 
 clean:
 	rm -rf $(OUT) compile_commands.json

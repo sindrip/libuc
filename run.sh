@@ -16,6 +16,10 @@ cd "$(dirname "$0")"
 # -cpu host is hvf-only; tcg rejects it (and offers only cortex-a53/a57/max).
 ACCEL="${ACCEL:-hvf}"
 SMP="${SMP:-1}"
+
+# What boots as PID 1. The default is the runtime's image; libuc's Makefile
+# wraps its test ELFs the same way (INITRD=out/libuc/<name>.initramfs.cpio.gz).
+INITRD="${INITRD:-out/initramfs.cpio.gz}"
 case "$ACCEL" in
   hvf) CPU=host ;;
   *)   CPU=max  ;;
@@ -33,7 +37,7 @@ exec qemu-system-aarch64 \
   -accel "$ACCEL" -cpu "$CPU" \
   -m 2G -smp "$SMP" \
   -kernel out/vmlinuz \
-  -initrd out/initramfs.cpio.gz \
+  -initrd "$INITRD" \
   -append "console=hvc0 ip=dhcp" \
   -display none -serial none -no-reboot \
   -netdev user,id=net0,hostfwd=tcp:127.0.0.1:8080-:8080 \
