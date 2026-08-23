@@ -28,13 +28,6 @@ WARN := -Weverything -Wno-pre-c23-compat -Wno-pre-c11-compat \
 IMPL_WARN  := -Wno-reserved-identifier
 UBSAN_WARN := $(IMPL_WARN) -Wno-empty-translation-unit
 
-# Vendored code compiles with its upstream's expectations, not -Weverything;
-# the contract is enforced where it is defined — at the link.
-VENDOR_CFLAGS := --target=$(TRIPLE) -std=c17 -ffreestanding \
-                 -fno-stack-protector -fno-omit-frame-pointer -g -O1 -Wall \
-                 $(UBSAN) -isystem include -DLZ4_FREESTANDING=1 \
-                 -DLZ4_memcpy=__builtin_memcpy -DLZ4_memset=__builtin_memset \
-                 -DLZ4_memmove=__builtin_memmove
 CFLAGS := --target=$(TRIPLE) -std=c23 -ffreestanding -fno-stack-protector \
           -fno-omit-frame-pointer -g -O1 $(WARN) -Werror $(UBSAN)
 ASFLAGS := --target=$(TRIPLE) -ffreestanding -g
@@ -48,27 +41,22 @@ LDFLAGS := --target=$(TRIPLE) -nostdlib -nostartfiles -static -fuse-ld=lld \
 CORE := $(OUT)/arch/$(ARCH)/start.o $(OUT)/start.o $(OUT)/ubsan.o \
         $(OUT)/string.o
 
-OBJECTS     := $(CORE) $(OUT)/main.o
-LZ4_OBJECTS := $(CORE) $(OUT)/vendor/lz4.o $(OUT)/lz4test.o
+OBJECTS := $(CORE) $(OUT)/main.o
 
 .PHONY: all check verify initramfs clean
 
-all: $(OUT)/start.elf $(OUT)/lz4.elf
+all: $(OUT)/start.elf
 
 # clangd picks the nearest compile_commands.json walking up from each
 # file, so libuc/ carries its own and the root one keeps src/.
-check: compile_commands.json $(OBJECTS) $(LZ4_OBJECTS)
+check: compile_commands.json $(OBJECTS)
 
 # Runs the probe, so it needs the aarch64 container; 23 is the pass status.
 verify: all
 	$(OUT)/start.elf; test $$? -eq 23
-	$(OUT)/lz4.elf; test $$? -eq 23
 
 $(OUT)/start.elf: $(OBJECTS) libuc.ld
 	$(CLANG) $(LDFLAGS) -o $@ $(OBJECTS)
-
-$(OUT)/lz4.elf: $(LZ4_OBJECTS) libuc.ld
-	$(CLANG) $(LDFLAGS) -o $@ $(LZ4_OBJECTS)
 
 $(OUT)/arch/$(ARCH)/start.o: src/arch/$(ARCH)/start.S Makefile
 	@mkdir -p $(@D)
@@ -87,14 +75,6 @@ $(OUT)/string.o: src/string.c Makefile
 	@mkdir -p $(@D)
 	$(CLANG) $(CFLAGS) -fno-builtin $(CPPFLAGS) -c $< -o $@
 
-$(OUT)/vendor/lz4.o: vendor/lz4/lz4.c Makefile
-	@mkdir -p $(@D)
-	$(CLANG) $(VENDOR_CFLAGS) $(CPPFLAGS) -c $< -o $@
-
-$(OUT)/lz4test.o: test/lz4.c Makefile
-	@mkdir -p $(@D)
-	$(CLANG) $(CFLAGS) -isystem vendor/lz4 $(CPPFLAGS) -c $< -o $@
-
 $(OUT)/main.o: test/main.c Makefile
 	@mkdir -p $(@D)
 	$(CLANG) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
@@ -106,7 +86,6 @@ compile_commands.json: Makefile $(wildcard src/*.c test/*.c)
 	    src/ubsan.c)  extra="$(UBSAN_WARN)";; \
 	    src/string.c) extra="-fno-builtin";; \
 	    src/*)        extra="$(IMPL_WARN)";; \
-	    test/lz4.c)   extra="-isystem vendor/lz4";; \
 	    *)            extra="";; \
 	  esac; \
 	  printf '%s\n  {"directory": "%s", "file": "%s", "command": "%s"}' \
@@ -115,7 +94,7 @@ compile_commands.json: Makefile $(wildcard src/*.c test/*.c)
 	  sep=","; done
 	@printf '\n]\n' >> $@
 
-# Wraps an ELF as /init for the VM: INITRD=out/libuc/lz4.initramfs.cpio.gz
+# Wraps the ELF as /init for the VM: INITRD=out/libuc/start.initramfs.cpio.gz
 # ./run.sh. PID 1 exiting panics the kernel, and the panic line carries the
 # status: exitcode=0x1700 is 23. Deliberately no prerequisite on the ELF —
 # it links in the container, and the host, which cannot link, only packages
@@ -127,7 +106,7 @@ $(OUT)/%.initramfs.cpio.gz:
 	@cp $(OUT)/$*.elf $(OUT)/root-$*/init
 	cd $(OUT)/root-$* && echo init | cpio -o -H newc | gzip > $(abspath $@)
 
-initramfs: $(OUT)/start.initramfs.cpio.gz $(OUT)/lz4.initramfs.cpio.gz
+initramfs: $(OUT)/start.initramfs.cpio.gz
 
 clean:
 	rm -rf $(OUT) compile_commands.json

@@ -1,0 +1,13 @@
+option(
+  'tests',
+  type: 'boolean',
+  value: true,
+  description: 'Build and register the freestanding startup probe',
+)
+
+option(
+  'ubsan',
+  type: 'feature',
+  value: 'auto',
+  description: 'Instrument libuc with Clang\'s freestanding minimal UBSan ABI',
+)
