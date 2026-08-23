@@ -111,9 +111,36 @@ ubsan_impl = static_library(
   pic: false,
 )
 
-string_impl = static_library(
-  'uc-string-internal',
-  'src/string.c',
+memcmp_impl = static_library(
+  'uc-memcmp-internal',
+  'src/string/memcmp.c',
+  build_by_default: false,
+  c_args: common_c_args + ['-fno-builtin'],
+  include_directories: public_include,
+  pic: false,
+)
+
+memcpy_impl = static_library(
+  'uc-memcpy-internal',
+  'src/string/memcpy.c',
+  build_by_default: false,
+  c_args: common_c_args + ['-fno-builtin'],
+  include_directories: public_include,
+  pic: false,
+)
+
+memmove_impl = static_library(
+  'uc-memmove-internal',
+  'src/string/memmove.c',
+  build_by_default: false,
+  c_args: common_c_args + ['-fno-builtin'],
+  include_directories: public_include,
+  pic: false,
+)
+
+memset_impl = static_library(
+  'uc-memset-internal',
+  'src/string/memset.c',
   build_by_default: false,
   c_args: common_c_args + ['-fno-builtin'],
   include_directories: public_include,
@@ -124,7 +151,14 @@ libc = static_library(
   'c',
   build_by_default: true,
   install: true,
-  link_whole: [startup_impl, ubsan_impl, string_impl],
+  link_whole: [
+    startup_impl,
+    ubsan_impl,
+    memcmp_impl,
+    memcpy_impl,
+    memmove_impl,
+    memset_impl,
+  ],
   pic: false,
 )
 
@@ -172,23 +206,16 @@ if get_option('tests')
     name_suffix: 'elf',
   )
 
-  sh = find_program('sh', native: true)
-  expect_exit = files('tools/expect-exit.sh')
-  mkinitramfs = files('tools/mkinitramfs.sh')
-
-  # A native wrapper preserves status 23 on stable Meson releases. Do not run
-  # target code unless the machine file says it is executable here or supplies
-  # an exe_wrapper.
+  # Do not run target code unless the machine file says it is executable here
+  # or supplies an exe_wrapper.
   if meson.can_run_host_binaries()
-    test(
-      'startup contract',
-      sh,
-      args: [expect_exit, '23', start_probe],
-      depends: start_probe,
-    )
+    test('startup contract', start_probe)
   else
     message('probe execution disabled: add cross/runnable.ini in a matching Linux environment')
   endif
+
+  sh = find_program('sh', native: true)
+  mkinitramfs = files('tools/mkinitramfs.sh')
 
   start_initramfs = custom_target(
     'start-initramfs',

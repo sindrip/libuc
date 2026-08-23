@@ -17,8 +17,8 @@ cd "$(dirname "$0")"
 ACCEL="${ACCEL:-hvf}"
 SMP="${SMP:-1}"
 
-# What boots as PID 1. The default is the runtime's image; libuc's Makefile
-# wraps its test ELFs the same way (INITRD=out/libuc/aarch64/<name>.initramfs.cpio.gz).
+# What boots as PID 1. The default is the runtime's image; libuc's Meson
+# `initramfs` target wraps its startup probe the same way.
 INITRD="${INITRD:-out/initramfs.cpio.gz}"
 case "$ACCEL" in
   hvf) CPU=host ;;
