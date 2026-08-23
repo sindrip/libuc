@@ -35,7 +35,7 @@ mechanics. When the runtime later runs hosted, the kernel pin becomes a version
 *floor* plus capability probing at init — never a compatibility matrix.
 
 Read the invariants in that light. The ring as syscall ABI, shared-nothing
-pinned cores, and cooperative fibers are the product and survive into libuc
+schedulers, and cooperative fibers are the product and survive into libuc
 unchanged. The absences — no `errno`, no allocator, no TLS — are phase
 discipline: each returns as a libuc deliverable when vendored C code first
 needs it, per-fiber where the C world assumed per-thread. Vendored static
@@ -56,9 +56,19 @@ These are the design. Code that breaks one is wrong even if it works.
    `DEFER_TASKRUN`, `COOP_TASKRUN`, and `TASKRUN_FLAG`
    (`out/src/io_uring/io_uring.c:2815-2821`). Rings are
    `SINGLE_ISSUER | DEFER_TASKRUN | NO_SQARRAY`.
-3. **Shared-nothing, no migration.** A fiber is born on a core and dies there.
-   No work stealing. No cross-core allocation or free. Per-core state is reached
-   without atomics; the only shared state is explicitly designated as such.
+3. **Shared-nothing, no migration.** A fiber is born on a scheduler and dies
+   there. No work stealing. No allocation on one scheduler and free on another.
+   Per-scheduler state is reached without atomics; the only shared state is
+   explicitly designated as such.
+
+   **The unit is the scheduler, not the core.** The kernel binds a ring to a
+   *task*: `ctx->submitter_task = get_task_struct(current)`
+   (`out/src/io_uring/io_uring.c:3067`), enforced against `current` at
+   `tctx.c:202-204`, `register.c:764`, `rsrc.c:1433-1434`, `tw.c:313` and
+   `tw.h:108`. "One scheduler, one thread" is therefore what is actually
+   enforced, and everything a scheduler owns — ring, arena, stack pool, buffer
+   pool — is owned per scheduler. How many schedulers share a core is a
+   program's placement decision, not a rule of this design.
 
    This is the invariant, and it holds. `.scratch/scheduler.md` records what
    migration *would* cost rather than permitting it — the design deliberately

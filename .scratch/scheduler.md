@@ -26,12 +26,20 @@ typedef uint64_t uc_scheduler_id;
 
 constexpr uc_scheduler_id UC_SCHEDULER_INVALID = {};
 
-/* Called by a thread, on itself. Returns UC_SCHEDULER_INVALID on failure. */
-[[nodiscard]] uc_scheduler_id uc_scheduler_become(unsigned cpu);
+/* Called by a thread, on itself. Returns UC_SCHEDULER_INVALID on failure.
+   cpu < 0 leaves placement to the kernel. */
+[[nodiscard]] uc_scheduler_id uc_scheduler_become(int cpu);
 [[noreturn]] void uc_scheduler_run(void);
+
+/* Clone a thread that becomes a scheduler on itself. Suspends the calling
+   fiber until the new scheduler has published its slot. */
+[[nodiscard]] uc_scheduler_id uc_scheduler_spawn(int cpu);
 
 [[nodiscard]] uc_scheduler_id uc_scheduler_current(void);
 ```
+
+`int cpu` rather than `unsigned`, so that "any cpu" is sayable. Pinning is the
+default, not part of a scheduler's identity — see below.
 
 `{}` rather than `0` so the initializer survives the id becoming a struct
 (generation plus slot) without touching call sites.
@@ -40,38 +48,85 @@ constexpr uc_scheduler_id UC_SCHEDULER_INVALID = {};
 is the only route to a scheduler is the strongest case for it — especially
 once the zero handle means failure.
 
-## Rejected: a create call that spawns its own thread
+## Reconsidered: create, layered over become
 
-The obvious shape is `uc_scheduler_create_on(cpu)` — the runtime clones a
-thread, pins it, sets up its ring, and hands back a handle once the new
-scheduler is ready. It was drafted that way and is wrong. Three reasons:
+The first version of this section rejected `uc_scheduler_create_on(cpu)`
+outright — the runtime clones a thread, pins it, sets up its ring, and hands
+back a handle once the new scheduler is ready. The decision has since changed:
+**spawning a scheduler is a library call**, and the program chooses how many
+exist and where they sit. `language.md`'s boot contract already said so; this
+file contradicted it.
 
-- **It invents a runtime that does not exist.** At `_start` there is no
-  scheduler and no runtime object, just a thread. `libuc.md`'s boot contract
-  is explicit that **the scheduler is never created; the boot thread becomes
-  it** — its state is a struct the thread fills in for itself. A create call
-  implies an ambient owner with the standing to manufacture threads, and
-  nothing in the design is that.
-- **It makes one object with two origins.** Scheduler 0 would be a thread that
-  became a scheduler; scheduler N would be a thread some other scheduler
-  produced. Same struct, same loop, two incompatible stories about how it came
-  to exist — and the boot path, which is the one that has to work before
-  anything else does, would be the special case.
-- **It hides a rendezvous.** "Returns once the new scheduler is pinned and its
-  ring is ready" is a handshake between two threads, in a design whose whole
-  premise is that threads do not share state. Become-on-self needs no
-  handshake at all: the thread that needs the state is the thread that writes
-  it, and `SINGLE_ISSUER` wants exactly that thread to own the ring anyway.
+Two of the three original objections survive intact, because the call is
+layered over `become` rather than replacing it:
 
-So the sequence is identical for every scheduler, boot included: a thread
-exists, it calls become on itself, it enters the loop. `rt_scheduler_init`
-already has this shape.
+- **It invents a runtime that does not exist.** Still honoured. `spawn` creates
+  a *thread*; that thread calls `become` on itself. Nothing manufactures a
+  scheduler on another thread's behalf, and `libuc.md`'s boot contract — the
+  scheduler is never created, the thread becomes it — is untouched.
+- **It makes one object with two origins.** Still honoured, for the same
+  reason. Every scheduler becomes. Boot is not a special case; it is the case
+  with the clone omitted.
+- **It hides a rendezvous.** This one was right, so it is answered rather than
+  avoided. `spawn` must return a usable id, which means waiting for the child
+  to publish its slot. The ring-native answer: the calling fiber suspends on
+  `IORING_OP_FUTEX_WAIT` (`io_uring.h:307-309`) while its scheduler keeps
+  running. A fiber waits; no thread blocks. That is the same primitive
+  `libuc.md` declines for a cross-scheduler `thrd_create`, spent here on the
+  one operation that genuinely spans two threads.
 
-The cost, stated plainly: **the program creates the thread.** Placing a thread
-on a CPU stays program text, which is the right place for it in a
-thread-per-core design — `libuc.md` already spends `pthread_create` on fibers
-for the calling scheduler, so scheduler creation was never going to be that
-call regardless.
+What changed, stated plainly: **the library creates the thread.** The earlier
+text left that to the program and called it "the right place for it in a
+thread-per-core design" — an argument that assumed one scheduler per core. Once
+the program picks the topology, placement is an argument to a call rather than
+a reason to own thread creation.
+
+## Why pinning is the default
+
+Correctness does not need it. `SINGLE_ISSUER` stores `get_task_struct(current)`
+(`io_uring.c:3067`) and every enforcement site compares against `current`
+(`tctx.c:202-204`, `register.c:764`, `rsrc.c:1433-1434`, `tw.c:313`,
+`tw.h:108`). The only `set_cpus_allowed_ptr` calls in io_uring are
+`sqpoll.c:307-311` and `io-wq.c:791` — the two mechanisms this design forbids
+and tripwires. A scheduler thread that migrates carries its ring, arena and
+stacks with it; nothing is unmapped and no pointer changes.
+
+What pinning buys is the wakeup path. The loop passes `min_complete = 1` when
+nothing is ready (`scheduler.c:150`), so the thread sleeps in the kernel and is
+woken by `wake_up_state(ctx->submitter_task, TASK_INTERRUPTIBLE)` (`tw.c:205`).
+That is `try_to_wake_up(p, state, 0)` (`core.c:4551-4554`) plus `WF_TTWU`
+(`core.c:4256`) — no `WF_SYNC`, no `WF_CURRENT_CPU` — so `select_task_rq_fair`
+(`fair.c:9546`) picks the cpu on **every idle iteration of the event loop**.
+
+| `fair.c` | unpinned | pinned |
+|---|---|---|
+| 9574 `want_affine = !wake_wide(p) && cpumask_test_cpu(cpu, p->cpus_ptr)` | mask test always passes; only `wake_wide` gates | fails when the waker is elsewhere, so `want_affine = 0` |
+| 9581-9589 | `wake_affine()` weighs waker-cpu against prev-cpu | skipped |
+| 9597-9599 `tmp->flags & sd_flag`, `sd_flag = WF_TTWU = SD_BALANCE_WAKE` | — | `SD_BALANCE_WAKE` is 0 in our domains, so `sd = NULL` and the loop breaks |
+| 9605 `select_idle_sibling` | may move it again | confined to the allowed cpu |
+
+The waker is whatever completed the request — for network I/O, softirq on the
+cpu that took the device interrupt. An unpinned scheduler therefore drifts
+toward the IRQ cpu, and N of them drift toward the same one.
+
+Our own kernel config makes this worse than a distro kernel's would be.
+`CONFIG_SCHED_MC`, `CONFIG_SCHED_CLUSTER` and `CONFIG_SCHED_SMT` are all absent
+from `out/kernel.config`, so `default_topology[]` (`topology.c:2088-2100`)
+collapses to a single `PKG` level and `arch_llc_mask` falls back to
+`cpumask_of(cpu)` (`topology.c:2074-2076`) — **the kernel believes every cpu is
+its own LLC**. That one domain gets `sd_init`'s defaults
+(`topology.c:1963-1975`): `SD_WAKE_AFFINE` on, `SD_SHARE_LLC` off. No domain
+knows that any two cpus share cache, so no placement decision can prefer a warm
+one.
+
+The cache-hot brake does not cover this path either.
+`sysctl_sched_migration_cost = 500000` ns (`fair.c:82`) is read by
+`preempt_sync` (`fair.c:9745`) and idle-balance costing (`core.c:9025-9026`),
+never by wakeup placement.
+
+NUMA is not in play on this build — `# CONFIG_NUMA is not set` — so first-touch
+page placement, where the penalty is permanent rather than a re-warm, is a
+bare-metal concern and not a current one.
 
 ## Rejected: an attribute struct, for now
 
@@ -133,14 +188,15 @@ Named so the interface above is not read as complete.
   queue behind per-fiber errno, a deliverable `libuc.md` already schedules.
   Shaping the public call around today's constraint would buy nothing, since
   none of this interface is implementable at the current milestone anyway.
-- **Nothing is pinned.** `struct rt_scheduler` has no cpu field either, and
-  `sched_setaffinity` is never called; there is one thread. Placement returns
-  as a parameter to `rt_scheduler_init`, which is where the become model puts
-  it — a thread pins *itself* at the moment it becomes a scheduler, in the
-  same call that binds its ring to it under `SINGLE_ISSUER`.
+- **Nothing is pinned yet.** `struct rt_scheduler` has no cpu field either,
+  and `sched_setaffinity` is never called; there is one thread. Placement
+  returns as a parameter to `rt_scheduler_init`, which is where the become
+  model puts it — a thread pins *itself* at the moment it becomes a scheduler,
+  in the same call that binds its ring to it under `SINGLE_ISSUER`.
 - **Placement is a single cpu, not a mask.** `sched_setaffinity` takes a set.
-  A program that wants "any of these four" cannot say so. Kept narrow
-  deliberately; noted so the narrowness is a choice.
+  A program that wants "any of these four" cannot say so. `cpu < 0` says "any
+  cpu at all", which is the kernel's default rather than a mask we chose. Kept
+  narrow deliberately; noted so the narrowness is a choice.
 
 ## The request protocol
 
