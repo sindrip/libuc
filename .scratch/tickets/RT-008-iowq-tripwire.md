@@ -7,7 +7,9 @@ depends: [RT-005]
 
 ## Goal
 
-Make the runtime's central claim checkable: *N threads, N rings, nothing else.*
+Make the runtime's central claim checkable: *N threads, N rings, nothing else*
+— where N is the number of **schedulers**, which a program chooses and which is
+not derivable from the cpu count.
 io_uring is not threadless, and the design depends on never triggering its
 fallback thread pool.
 
@@ -41,9 +43,12 @@ Never trigger it, and make an accidental trigger **loud**:
    leak.
 
 2. Assert the thread count. At startup, after ring setup, count entries in
-   `/proc/self/task` and compare against the expected scheduler count (1 at
-   milestone 1, N at milestone 3). Report via `raw_write` and, in a debug build,
-   halt on mismatch.
+   `/proc/self/task` and compare against the **scheduler count** — 1 at
+   milestone 1, whatever the program spawned at milestone 3. Compare against
+   the scheduler registry, never against the cpu count: the two are unrelated
+   by design, and a check written against cpus would fail on any program that
+   oversubscribes or under-subscribes its cores. Report via `raw_write` and, in
+   a debug build, halt on mismatch.
 
    Reading `/proc` requires `openat`/`read`/`close` — all of which have opcodes,
    so this goes **through the ring**, not via direct syscalls. It is also a

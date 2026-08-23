@@ -228,10 +228,19 @@ implementation:
   reaches no yield point, and invariant 7 forbids the fix. The vendoring policy
   falls out of this: libuc hosts C that *blocks on I/O*, not C that spins. State
   this before vendoring anything, not after a hang.
-- **Mutexes need no atomics.** No preemption plus no migration means every
-  contender for an `mtx_t` is a fiber on the same core. Uncontended lock is a
-  load and a store; contended is a push onto a wait queue and a switch. This is
-  a win the shared-nothing model hands us, not a compromise it forces.
+- **Mutexes need no atomics.** Every contender for an `mtx_t` is a fiber on
+  the same **scheduler**, and a fiber is never preempted by its own scheduler
+  nor migrated to another, so the whole critical section runs with nothing else
+  able to reach the word. Uncontended lock is a load and a store; contended is
+  a push onto a wait queue and a switch. This is a win the shared-nothing model
+  hands us, not a compromise it forces.
+
+  Same-scheduler is the load-bearing half, and it is worth stating separately
+  from same-core now that they can differ: two schedulers sharing a cpu are
+  preempted against each other by the kernel, and if an `mtx_t` were reachable
+  from both, none of the above would hold. Nothing makes one reachable — a
+  `thrd_t` is a fiber on the calling scheduler — but the property comes from
+  that, not from the topology.
 - **Cross-core `thrd_create` is deliberately not in v1.** The ring-native
   primitive exists if it is ever wanted — `IORING_OP_FUTEX_WAIT`/`WAKE`/`WAITV`,
   verified at `out/src/include/uapi/linux/io_uring.h:307-309` — but a shared

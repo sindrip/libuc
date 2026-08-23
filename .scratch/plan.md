@@ -221,8 +221,17 @@ both are sequenced ahead of the hard parts.
 on 7.2/arm64 resolving to `CONFIG_PREEMPT_LAZY=y` — not `PREEMPT_NONE`, which is
 worth knowing since it contradicts the obvious assumption. The fragment does not
 state it, because the fragment's rule is that it carries only what we ask for,
-and nothing currently depends on the preemption model: one pinned runnable
-thread per core with nothing competing means there is almost nothing to preempt.
+and nothing currently depends on the preemption model: there is one runnable
+thread, and nothing competing for the cpu it sits on.
+
+**That argument now has a stated boundary.** It held because one scheduler per
+core was assumed, so "nothing competing" was structural. A program is free to
+place several schedulers on one core, and those threads do compete — the kernel
+preempts between them at whatever `PREEMPT_LAZY` decides. Invariant 7 is
+untouched, since it forbids *the runtime* preempting a fiber and says nothing
+about the kernel preempting a scheduler thread. What changes is that the
+preemption model stops being a don't-care the moment a program oversubscribes a
+core, and the question above becomes answerable only against a topology.
 
 Two things were tried and rejected:
 
@@ -384,6 +393,12 @@ stride the arithmetic assumes matches the ring that was actually created.
 - Cross-scheduler message transport and buffer ownership (deferred, needed at #3).
 - Offload path for genuinely CPU-bound work that steps outside the model.
 - Per-scheduler arena allocator design and task stack sizing/guard pages.
+- **What oversubscription costs.** Two schedulers pinned to one cpu timeshare
+  under the kernel's preemption, so each pays latency equal to the other's
+  timeslice, and every fiber on both pays it. `.scratch/scheduler.md`'s pinning
+  argument is about which cpu a scheduler lands on and says nothing about the
+  case where that cpu is shared. Unmeasured, and now a topology a program is
+  allowed to ask for.
 
 ## Verification
 
