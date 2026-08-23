@@ -63,7 +63,6 @@ void rt_fiber_start(struct rt_fiber *f, void (*fn)(void *), void *arg);
 void rt_fiber_create(struct rt_fiber *f, void (*fn)(void *), void *arg);
 
 [[nodiscard]] struct rt_fiber *rt_fiber_current(void);
-void rt_fiber_set_current(struct rt_fiber *f);
 
 void rt_fiber_yield(void);
 [[nodiscard]] int rt_fiber_await_io(struct io_uring_sqe sqe);

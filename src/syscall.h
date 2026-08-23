@@ -36,6 +36,10 @@ static inline long raw_write(int fd, const void *buf, size_t len) {
   return (int)syscall3(__NR_mprotect, (long)(uintptr_t)addr, (long)len, prot);
 }
 
+[[nodiscard]] static inline int sys_munmap(void *addr, size_t len) {
+  return (int)syscall2(__NR_munmap, (long)(uintptr_t)addr, (long)len);
+}
+
 struct io_uring_params;
 
 [[nodiscard]] static inline int sys_io_uring_setup(unsigned entries,

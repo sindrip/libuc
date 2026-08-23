@@ -52,8 +52,6 @@ void rt_scheduler_resume(struct rt_scheduler *s, struct rt_fiber *t) {
 
   t->request.kind = RT_REQUEST_NONE;
 
-  rt_fiber_set_current(t);
-
   for (;;) {
     rt_switch(&s->context, &t->ctx);
 
@@ -72,8 +70,6 @@ void rt_scheduler_resume(struct rt_scheduler *s, struct rt_fiber *t) {
 
     t->request.kind = RT_REQUEST_NONE;
   }
-
-  rt_fiber_set_current(nullptr);
 }
 
 static void rt_scheduler_dispatch(struct rt_scheduler *s, struct rt_fiber *t) {
