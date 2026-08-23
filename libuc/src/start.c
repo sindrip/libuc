@@ -2,13 +2,18 @@
 
 #include <stdint.h>
 
-/* The .init_array boundaries are defined by libuc.ld. The names are ours —
- * chosen unreserved, so they need no diagnostic suppression. */
-extern void (*const libuc_init_array_start[])(void);
-extern void (*const libuc_init_array_end[])(void);
-
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wreserved-identifier"
+
+/* The .init_array boundaries defined by libuc.ld. Implementation-namespace
+ * names, because PROVIDE_HIDDEN yields to any definition from an input
+ * object — an application symbol spelled the same way would silently
+ * replace the boundaries, and the reserved namespace is the one place no
+ * application identifier can legally live. Hidden visibility on the
+ * declarations so the fixed executable addresses them directly instead of
+ * through a GOT page. */
+[[gnu::visibility("hidden")]] extern void (*const __libuc_init_array_start[])(void);
+[[gnu::visibility("hidden")]] extern void (*const __libuc_init_array_end[])(void);
 
 extern int main(int argc, char **argv, char **envp);
 
@@ -29,8 +34,8 @@ int __libuc_start(void *initial_stack) {
 
   char **envp = &argv[argument_count + 1];
 
-  for (void (*const *init)(void) = libuc_init_array_start;
-       init != libuc_init_array_end; init++) {
+  for (void (*const *init)(void) = __libuc_init_array_start;
+       init != __libuc_init_array_end; init++) {
     (*init)();
   }
 
