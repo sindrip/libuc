@@ -41,6 +41,16 @@ target "uapi" {
   output = ["type=local,dest=out/uapi"]
 }
 
+target "uapi-x86_64" {
+  dockerfile = "build/kernel.Dockerfile"
+  target     = "uapi-x86_64"
+  args = {
+    KERNEL_VERSION = KERNEL_VERSION
+    KERNEL_SHA256  = KERNEL_SHA256
+  }
+  output = ["type=local,dest=out/uapi-x86_64"]
+}
+
 group "default" {
   targets = ["kernel"]
 }

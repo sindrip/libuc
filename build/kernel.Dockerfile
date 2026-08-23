@@ -28,6 +28,9 @@ RUN make ARCH=arm64 -j"$(nproc)" Image && cp arch/arm64/boot/Image /vmlinuz
 FROM kernel-tree AS uapi-build
 RUN make ARCH=arm64 headers
 
+FROM kernel-tree AS uapi-x86_64-build
+RUN make ARCH=x86_64 headers
+
 FROM base AS runtime-toolchain
 RUN apk add --no-cache clang lld clang-extra-tools make cpio gzip
 COPY --from=uapi-build /linux/usr/include /uapi/include
@@ -53,6 +56,9 @@ COPY --from=linux-tarball /linux-*/ /
 
 FROM scratch AS uapi
 COPY --from=uapi-build /linux/usr/include /include
+
+FROM scratch AS uapi-x86_64
+COPY --from=uapi-x86_64-build /linux/usr/include /include
 
 FROM scratch AS config
 COPY --from=kconfig /linux/.config /kernel.config
