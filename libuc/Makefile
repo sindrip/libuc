@@ -11,7 +11,7 @@ UBSAN_WANT := -fsanitize=undefined,local-bounds -fsanitize-minimal-runtime -fno-
 UBSAN := $(shell $(CLANG) --target=$(TRIPLE) $(UBSAN_WANT) -x c -c /dev/null -o /dev/null 2>&1 \
                  | grep -q . || echo '$(UBSAN_WANT)')
 
-CPPFLAGS := -nostdlibinc -isystem $(UAPI)
+CPPFLAGS := -nostdlibinc -isystem $(UAPI) -Iinclude
 WARN := -Weverything -Wno-pre-c23-compat -Wno-pre-c11-compat \
         -Wno-declaration-after-statement -Wno-c++98-compat \
         -Wno-c++98-compat-pedantic -Wno-c++-compat \
@@ -24,6 +24,14 @@ WARN := -Weverything -Wno-pre-c23-compat -Wno-pre-c11-compat \
 # and ubsan.c's head is comments and one #define.
 IMPL_WARN  := -Wno-reserved-identifier
 UBSAN_WARN := $(IMPL_WARN) -Wno-empty-translation-unit
+
+# Vendored code compiles with its upstream's expectations, not -Weverything;
+# the contract is enforced where it is defined — at the link.
+VENDOR_CFLAGS := --target=$(TRIPLE) -std=c17 -ffreestanding \
+                 -fno-stack-protector -fno-omit-frame-pointer -g -O1 -Wall \
+                 $(UBSAN) -isystem include -DLZ4_FREESTANDING=1 \
+                 -DLZ4_memcpy=__builtin_memcpy -DLZ4_memset=__builtin_memset \
+                 -DLZ4_memmove=__builtin_memmove
 CFLAGS := --target=$(TRIPLE) -std=c23 -ffreestanding -fno-stack-protector \
           -fno-omit-frame-pointer -g -O1 $(WARN) -Werror $(UBSAN)
 ASFLAGS := --target=$(TRIPLE) -ffreestanding -g
@@ -34,23 +42,30 @@ ASFLAGS := --target=$(TRIPLE) -ffreestanding -g
 LDFLAGS := --target=$(TRIPLE) -nostdlib -nostartfiles -static -fuse-ld=lld \
            -Wl,-T,libuc.ld -Wl,-z,norelro
 
-OBJECTS := $(OUT)/arch/aarch64/start.o $(OUT)/start.o $(OUT)/ubsan.o \
-           $(OUT)/main.o
+CORE := $(OUT)/arch/aarch64/start.o $(OUT)/start.o $(OUT)/ubsan.o \
+        $(OUT)/string.o
+
+OBJECTS     := $(CORE) $(OUT)/main.o
+LZ4_OBJECTS := $(CORE) $(OUT)/vendor/lz4.o $(OUT)/lz4test.o
 
 .PHONY: all check verify clean
 
-all: $(OUT)/start.elf
+all: $(OUT)/start.elf $(OUT)/lz4.elf
 
 # clangd picks the nearest compile_commands.json walking up from each
 # file, so libuc/ carries its own and the root one keeps src/.
-check: compile_commands.json $(OBJECTS)
+check: compile_commands.json $(OBJECTS) $(LZ4_OBJECTS)
 
 # Runs the probe, so it needs the aarch64 container; 23 is the pass status.
 verify: all
 	$(OUT)/start.elf; test $$? -eq 23
+	$(OUT)/lz4.elf; test $$? -eq 23
 
 $(OUT)/start.elf: $(OBJECTS) libuc.ld
 	$(CLANG) $(LDFLAGS) -o $@ $(OBJECTS)
+
+$(OUT)/lz4.elf: $(LZ4_OBJECTS) libuc.ld
+	$(CLANG) $(LDFLAGS) -o $@ $(LZ4_OBJECTS)
 
 $(OUT)/arch/aarch64/start.o: src/arch/aarch64/start.S Makefile
 	@mkdir -p $(@D)
@@ -64,6 +79,19 @@ $(OUT)/ubsan.o: src/ubsan.c Makefile
 	@mkdir -p $(@D)
 	$(CLANG) $(CFLAGS) $(UBSAN_WARN) $(CPPFLAGS) -c $< -o $@
 
+# -fno-builtin: otherwise the loops idiom-match into calls to themselves.
+$(OUT)/string.o: src/string.c Makefile
+	@mkdir -p $(@D)
+	$(CLANG) $(CFLAGS) -fno-builtin $(CPPFLAGS) -c $< -o $@
+
+$(OUT)/vendor/lz4.o: vendor/lz4/lz4.c Makefile
+	@mkdir -p $(@D)
+	$(CLANG) $(VENDOR_CFLAGS) $(CPPFLAGS) -c $< -o $@
+
+$(OUT)/lz4test.o: test/lz4.c Makefile
+	@mkdir -p $(@D)
+	$(CLANG) $(CFLAGS) -isystem vendor/lz4 $(CPPFLAGS) -c $< -o $@
+
 $(OUT)/main.o: test/main.c Makefile
 	@mkdir -p $(@D)
 	$(CLANG) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
@@ -72,9 +100,11 @@ compile_commands.json: Makefile $(wildcard src/*.c test/*.c)
 	@printf '[' > $@
 	@sep=""; for f in $(wildcard src/*.c test/*.c); do \
 	  case $$f in \
-	    src/ubsan.c) extra="$(UBSAN_WARN)";; \
-	    src/*)       extra="$(IMPL_WARN)";; \
-	    *)           extra="";; \
+	    src/ubsan.c)  extra="$(UBSAN_WARN)";; \
+	    src/string.c) extra="-fno-builtin";; \
+	    src/*)        extra="$(IMPL_WARN)";; \
+	    test/lz4.c)   extra="-isystem vendor/lz4";; \
+	    *)            extra="";; \
 	  esac; \
 	  printf '%s\n  {"directory": "%s", "file": "%s", "command": "%s"}' \
 	    "$$sep" "$(CURDIR)" "$(CURDIR)/$$f" \
