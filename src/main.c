@@ -1,4 +1,5 @@
 #include <stddef.h>
+#include <stdint.h>
 
 #include <asm/byteorder.h>
 #include <linux/in.h>
@@ -173,142 +174,115 @@ static constexpr int RT_AF_INET = 2;
 static constexpr int RT_SOCK_STREAM = 1;
 static constexpr int RT_IPPROTO_TCP = 6;
 
-static void echo_once(void) {
-  auto fd = rt_socket(RT_AF_INET, RT_SOCK_STREAM, RT_IPPROTO_TCP);
+static constexpr unsigned RT_ECHO_PORT = 8080;
+static constexpr int RT_ECHO_BACKLOG = 64;
 
+static volatile bool echo_connected;
+static unsigned echo_conn_id;
+
+static void put_res(const char *what, int res) {
+  put_str(what);
+  if (res < 0) {
+    put('-');
+    put_dec((unsigned long)-(long)res);
+  } else {
+    put_dec((unsigned long)res);
+  }
+  put('\n');
+}
+
+static void echo_close(int fd) {
+  auto res = rt_close(fd);
+  if (res != 0) {
+    put_res("echo: close ", res);
+  }
+}
+
+static void conn_fiber(void *arg) {
+  const int fd = (int)(intptr_t)arg;
+  const unsigned id = ++echo_conn_id;
+
+  put_str("echo: open ");
+  put_dec(id);
+  put('\n');
+
+  char buf[512];
+  bool open = true;
+
+  while (open) {
+    auto n = rt_recv(fd, buf, (unsigned)sizeof buf);
+    if (n <= 0) {
+      if (n < 0) {
+        put_res("echo: recv ", n);
+      }
+      break;
+    }
+
+    unsigned sent = 0;
+    while (sent < (unsigned)n) {
+      auto w = rt_send(fd, buf + sent, (unsigned)n - sent);
+      if (w <= 0) {
+        put_res("echo: send ", w);
+        open = false;
+        break;
+      }
+      sent += (unsigned)w;
+    }
+  }
+
+  echo_close(fd);
+
+  put_str("echo: done ");
+  put_dec(id);
+  put('\n');
+}
+
+static void accept_fiber([[maybe_unused]] void *arg) {
+  auto fd = rt_socket(RT_AF_INET, RT_SOCK_STREAM, RT_IPPROTO_TCP);
   if (fd < 0) {
-    put_str("socket: create failed: ");
-    put_dec((unsigned long)-fd);
-    put('\n');
+    put_res("echo: socket ", fd);
     return;
   }
 
   struct sockaddr_in addr = {
       .sin_family = RT_AF_INET,
-      .sin_port = __constant_htons(8080),
+      .sin_port = __constant_htons(RT_ECHO_PORT),
       .sin_addr = {.s_addr = INADDR_ANY},
   };
 
-  auto bind_res = rt_bind(fd, &addr, (unsigned)sizeof addr);
-  if (bind_res != 0) {
-    put_str("socket: bind returned ");
-    if (bind_res < 0) {
-      put_str("-");
-      put_dec((unsigned long)-(long)bind_res);
-    } else {
-      put_dec((unsigned long)bind_res);
-    }
-    put('\n');
+  auto res = rt_bind(fd, &addr, (unsigned)sizeof addr);
+  if (res != 0) {
+    put_res("echo: bind ", res);
+    echo_close(fd);
+    return;
   }
 
-  auto listen_res = 0;
-  if (bind_res == 0) {
-    listen_res = rt_listen(fd, 8);
-    if (listen_res != 0) {
-      put_str("socket: listen returned ");
-      if (listen_res < 0) {
-        put_str("-");
-        put_dec((unsigned long)-(long)listen_res);
-      } else {
-        put_dec((unsigned long)listen_res);
-      }
-      put('\n');
-    }
+  res = rt_listen(fd, RT_ECHO_BACKLOG);
+  if (res != 0) {
+    put_res("echo: listen ", res);
+    echo_close(fd);
+    return;
   }
 
-  auto client_fd = -1;
-  if (bind_res == 0 && listen_res == 0) {
-    client_fd = rt_accept(fd);
-    if (client_fd < 0) {
-      put_str("socket: accept failed: ");
-      put_dec((unsigned long)-(long)client_fd);
-      put('\n');
-    }
-  }
+  put_str("echo: listening\n");
 
-  char buf[256];
-  auto recv_res = 0;
-  if (client_fd >= 0) {
-    recv_res = rt_recv(client_fd, buf, (unsigned)sizeof buf);
-    if (recv_res <= 0) {
-      put_str("socket: recv returned ");
-      if (recv_res < 0) {
-        put_str("-");
-        put_dec((unsigned long)-(long)recv_res);
-      } else {
-        put_dec((unsigned long)recv_res);
-      }
-      put('\n');
-    }
-  }
-
-  unsigned sent = 0;
-  while (recv_res > 0 && sent < (unsigned)recv_res) {
-    auto send_res =
-        rt_send(client_fd, buf + sent, (unsigned)recv_res - sent);
-    if (send_res <= 0) {
-      put_str("socket: send returned ");
-      if (send_res < 0) {
-        put_str("-");
-        put_dec((unsigned long)-(long)send_res);
-      } else {
-        put_dec((unsigned long)send_res);
-      }
-      put('\n');
+  for (;;) {
+    auto client = rt_accept(fd);
+    if (client < 0) {
+      put_res("echo: accept ", client);
       break;
     }
-    sent += (unsigned)send_res;
-  }
 
-  auto client_close_res = 0;
-  if (client_fd >= 0) {
-    client_close_res = rt_close(client_fd);
-    if (client_close_res != 0) {
-      put_str("socket: client close returned ");
-      if (client_close_res < 0) {
-        put_str("-");
-        put_dec((unsigned long)-(long)client_close_res);
-      } else {
-        put_dec((unsigned long)client_close_res);
-      }
-      put('\n');
+    echo_connected = true;
+
+    auto spawned = rt_fiber_spawn(conn_fiber, (void *)(intptr_t)client);
+    if (spawned != 0) {
+      put_str("echo: no free fiber\n");
+      echo_close(client);
     }
   }
 
-  auto close_res = rt_close(fd);
-  if (close_res != 0) {
-    put_str("socket: close returned ");
-    if (close_res < 0) {
-      put_str("-");
-      put_dec((unsigned long)-(long)close_res);
-    } else {
-      put_dec((unsigned long)close_res);
-    }
-    put('\n');
-    return;
-  }
-
-  if (bind_res != 0 || listen_res != 0 || client_fd < 0 || recv_res <= 0 ||
-      sent != (unsigned)recv_res || client_close_res != 0) {
-    return;
-  }
-
-  static constexpr char success_msg[] = "echo ok\n";
-  static constexpr unsigned success_len = (unsigned)(sizeof success_msg - 1);
-
-  auto written = rt_write(1, success_msg, success_len);
-  if (written != (int)success_len) {
-    put_str("socket: write returned ");
-    if (written < 0) {
-      put_str("-");
-      put_dec((unsigned long)-(long)written);
-    } else {
-      put_dec((unsigned long)written);
-    }
-    put_str(", expected ");
-    put_dec(success_len);
-    put('\n');
-  }
+  echo_close(fd);
 }
 
 static struct rt_fiber_queue park_q;
@@ -328,44 +302,49 @@ static void waker_fiber([[maybe_unused]] void *arg) {
 }
 
 static void rt009_park(struct rt_scheduler *s) {
-  struct rt_fiber parker;
-  struct rt_fiber waker;
-
-  rt_scheduler_spawn(s, &parker, parker_fiber, nullptr);
-  rt_scheduler_spawn(s, &waker, waker_fiber, nullptr);
+  auto parker = rt_scheduler_spawn(s, parker_fiber, nullptr);
+  auto waker = rt_scheduler_spawn(s, waker_fiber, nullptr);
+  if (parker != 0 || waker != 0) {
+    put_str("park: spawn failed\n");
+    return;
+  }
   rt_scheduler_run(s);
 }
 
-static volatile bool echo_finished;
-
 static void yield_fiber([[maybe_unused]] void *arg) {
-  while (!echo_finished) {
+  while (!echo_connected) {
     rt_fiber_yield();
   }
-}
-
-static void socket_fiber([[maybe_unused]] void *arg) {
-  echo_once();
-  echo_finished = true;
 }
 
 static void rt006_demo(struct rt_scheduler *s) {
 
   static char msg_a[] = "hello a\n";
   static char msg_b[] = "hello b\n";
-  struct rt_fiber a;
-  struct rt_fiber b;
-  rt_scheduler_spawn(s, &a, hello_fiber, msg_a);
-  rt_scheduler_spawn(s, &b, hello_fiber, msg_b);
 
-  rt_scheduler_run(s);
+  auto a = rt_scheduler_spawn(s, hello_fiber, msg_a);
+  auto b = rt_scheduler_spawn(s, hello_fiber, msg_b);
+  if (a != 0 || b != 0) {
+    put_str("demo: spawn failed\n");
+    return;
+  }
 
-  struct rt_fiber socket;
-  struct rt_fiber yielder;
-  rt_scheduler_spawn(s, &socket, socket_fiber, nullptr);
-  rt_scheduler_spawn(s, &yielder, yield_fiber, nullptr);
   rt_scheduler_run(s);
 }
+
+static void rt010_echo_server(struct rt_scheduler *s) {
+  auto acceptor = rt_scheduler_spawn(s, accept_fiber, nullptr);
+  auto yielder = rt_scheduler_spawn(s, yield_fiber, nullptr);
+  if (acceptor != 0 || yielder != 0) {
+    put_str("echo: spawn failed\n");
+    return;
+  }
+
+  rt_scheduler_run(s);
+}
+
+static constexpr size_t RT_FIBER_SLOTS = 32;
+static struct rt_fiber fiber_slots[RT_FIBER_SLOTS];
 
 [[noreturn]] void rt_main(void *stack);
 
@@ -376,7 +355,7 @@ static void rt006_demo(struct rt_scheduler *s) {
   rt_auxv_init(stack);
 
   struct rt_scheduler sched;
-  auto init = rt_scheduler_init(&sched, 8);
+  auto init = rt_scheduler_init(&sched, 128);
   if (sys_failed(init)) {
     put_str("scheduler init failed: ");
     put_dec((unsigned long)-init);
@@ -385,6 +364,8 @@ static void rt006_demo(struct rt_scheduler *s) {
       __asm__ volatile("wfe");
     }
   }
+
+  rt_scheduler_provide(&sched, fiber_slots, RT_FIBER_SLOTS);
 
   static volatile bool verbose = false;
   if (verbose) {
@@ -397,6 +378,7 @@ static void rt006_demo(struct rt_scheduler *s) {
     rt009_park(&sched);
   }
   rt006_demo(&sched);
+  rt010_echo_server(&sched);
 
   for (;;) {
     __asm__ volatile("wfe");

@@ -245,13 +245,66 @@ possible.
 
 ## Later milestones
 
-2. **Single-core echo server** — `SOCKET`/`BIND`/`LISTEN`/`ACCEPT`/`RECV`/`SEND`
-   as opcodes. Needs virtio-net. Decide provided buffer rings
-   (`IORING_REGISTER_PBUF_RING`) + multishot recv here. This decision is
-   coupled to the buffer-lifetime reap rule (`.scratch/transport.md`):
-   provided buffer rings are *core-owned* receive buffers, which is what
-   keeps task teardown from waiting on in-flight reads — decide the two
-   together.
+2. **Single-core echo server** — landed as RT-009. `SOCKET`/`BIND`/`LISTEN`/
+   `ACCEPT`/`RECV`/`SEND` as opcodes, an accept loop, and a fiber per
+   connection. The provided-buffer-ring and multishot decision was the reason
+   this milestone was parked; it is answered below.
+
+### The pbuf / multishot decision
+
+Parked as one decision, it is **three**, and the coupling is not what the
+one-line version implied. Verified against the pinned tree:
+
+| | how it is asked for | what it changes |
+|---|---|---|
+| **A** multishot accept | `IORING_ACCEPT_MULTISHOT` in `sqe->ioprio` (`net.c:1628`, `net.c:1644`) | one SQE, many CQEs, each with `IORING_CQE_F_MORE` (`net.c:1699-1703`) |
+| **B** provided buffer ring | `IORING_REGISTER_PBUF_RING` (`io_uring.h:685`) + `IOSQE_BUFFER_SELECT`; bid arrives as `cqe->flags >> IORING_CQE_BUFFER_SHIFT` (`io_uring.h:546`) | who owns the receive buffer |
+| **C** multishot recv | `IORING_RECV_MULTISHOT` (`io_uring.h:438`) | one SQE, many CQEs |
+
+**C requires B** — `net.c:844-846` returns `-EINVAL` for `IORING_RECV_MULTISHOT`
+without `REQ_F_BUFFER_SELECT`. That is the only hard coupling between the three.
+
+**A and C break `user_data = fiber`; B alone does not.** A single-shot `RECV`
+with `IOSQE_BUFFER_SELECT` still produces exactly one CQE, so the completion key
+survives untouched — what B changes is buffer *ownership*, not completion
+identity. The two were parked together on the assumption that they were the same
+question. They are not.
+
+**Decision: ship single-shot, defer all three.** Reasons, in order of weight:
+
+- The milestone's functional goal — concurrent connections — needed none of
+  them. What it actually needed was a way for a fiber to spawn a fiber, and
+  somewhere for connection fibers to come from without an allocator.
+- A and C are not a flag, they are the operation-record rewrite. The reap loop
+  in `scheduler.c` ignores `cqe.flags` entirely and unconditionally does
+  `owner = nullptr; inflight_count--; push ready`. Under `F_MORE` the request is
+  still live after the fiber resumes, so neither of those is correct. That is
+  precisely "The completion key, later" in `.scratch/scheduler.md`, and it wants
+  doing once, deliberately — not as a side effect of wanting fewer SQEs.
+- B is the cheapest of the three and the one worth taking on its own merits, but
+  its payoff is decoupling buffer lifetime from fiber lifetime, and today every
+  receive buffer sits on a 64 KB fiber stack the pool already reuses. The win
+  arrives when connections outnumber stacks — an allocator, or a much larger
+  pool — and not before.
+
+What B costs when it is taken, so the estimate is on record: register and mmap
+the ring (`IOU_PBUF_RING_MMAP`, offset
+`IORING_OFF_PBUF_RING | (bgid << IORING_OFF_PBUF_SHIFT)`, `io_uring.h:881-895`);
+maintain the tail; hand bids back after the bytes are consumed; and absorb one
+new failure mode, `-ENOBUFS` when the pool is empty (`net.c:1081`,
+`net.c:1197`). It also creates a new fiber-held resource — a fiber holding a bid
+holds core-owned state, which is migration constraint 3 in
+`.scratch/scheduler.md`.
+
+The re-arm protocol for when A and C do land, read off `io_recv_finish`: the
+kernel posts an aux CQE with `IORING_CQE_F_MORE` and keeps going
+(`net.c:940-956`); the `finish:` path (`net.c:958-963`) sets the final result and
+completes. So the rule is **`F_MORE` set → more CQEs are coming for this
+`user_data`; `F_MORE` clear → the request is over, re-arm if you still want
+data.** `-ENOBUFS` is one of the ways it ends.
+
+This does not close `.scratch/transport.md`'s reap rule, which stands unchanged:
+cancel → drain → only then release memory.
 3. **Multi-core** — `clone()`, `sched_setaffinity`, N rings, one per pinned
    thread. No cross-core liveness machinery: a starving or wedged core is an
    accepted bug class, found by the debugger, not detected at runtime.
@@ -291,6 +344,7 @@ Used nowhere else. Documented as a carve-out, not discovered as a violation.
 | RT-006 | **Milestone 1** — join them | 004, 005 | Task suspends on NOP, scheduler resumes it, `hello` via `IORING_OP_WRITE`, no panic |
 | RT-007 | Crash handler — **do before RT-004** | 003 | Deliberate null deref dumps registers + FP chain to console |
 | RT-008 | io-wq tripwire | 005 | `IOWQ_MAX_WORKERS` registered low; no `iou-wrk-*` in `/proc/<pid>/task` |
+| RT-009 | **Milestone 2** — echo server | 006 | **done** — accept loop, fiber per connection; concurrent clients interleave, pool exhaustion is reported and recovers |
 
 **Execution order is 001, 002, 003, 007, 004, 005, 006, 008** — not the
 numbering. RT-001 and RT-002 are independent of the runtime: RT-001 decides

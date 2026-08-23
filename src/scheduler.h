@@ -14,6 +14,7 @@ struct rt_scheduler {
 
   struct rt_fiber_queue ready;
   struct rt_fiber_queue submit;
+  struct rt_fiber_queue idle;
 
   size_t live_count;
   size_t inflight_count;
@@ -23,8 +24,11 @@ struct rt_scheduler {
 [[nodiscard]] int rt_scheduler_init(struct rt_scheduler *s,
                                     unsigned ring_entries);
 
-void rt_scheduler_spawn(struct rt_scheduler *s, struct rt_fiber *t,
-                        void (*fn)(void *), void *arg);
+void rt_scheduler_provide(struct rt_scheduler *s, struct rt_fiber *fibers,
+                          size_t count);
+
+[[nodiscard]] int rt_scheduler_spawn(struct rt_scheduler *s,
+                                     void (*fn)(void *), void *arg);
 
 void rt_scheduler_run(struct rt_scheduler *s);
 

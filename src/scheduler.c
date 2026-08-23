@@ -21,11 +21,25 @@ int rt_scheduler_init(struct rt_scheduler *s, unsigned ring_entries) {
   return 0;
 }
 
-void rt_scheduler_spawn(struct rt_scheduler *s, struct rt_fiber *t,
-                        void (*fn)(void *), void *arg) {
-  rt_fiber_create(t, fn, arg);
+void rt_scheduler_provide(struct rt_scheduler *s, struct rt_fiber *fibers,
+                          size_t count) {
+  for (size_t i = 0; i < count; i++) {
+    rt_fiber_stack_alloc(&fibers[i]);
+    rt_fiber_queue_push(&s->idle, &fibers[i]);
+  }
+}
+
+int rt_scheduler_spawn(struct rt_scheduler *s, void (*fn)(void *), void *arg) {
+  struct rt_fiber *t = rt_fiber_queue_pop(&s->idle);
+  if (t == nullptr) {
+    return -EAGAIN;
+  }
+
+  rt_fiber_start(t, fn, arg);
   s->live_count++;
   rt_fiber_queue_push(&s->ready, t);
+
+  return 0;
 }
 
 void rt_scheduler_resume(struct rt_scheduler *s, struct rt_fiber *t) {
@@ -43,10 +57,15 @@ void rt_scheduler_resume(struct rt_scheduler *s, struct rt_fiber *t) {
   for (;;) {
     rt_switch(&s->context, &t->ctx);
 
-    if (t->request.kind != RT_REQUEST_WAKE) {
+    if (t->request.kind == RT_REQUEST_WAKE) {
+      rt_fiber_queue_push(&s->ready, t->request.value.wake);
+    } else if (t->request.kind == RT_REQUEST_SPAWN) {
+      t->result = rt_scheduler_spawn(s, t->request.value.spawn.fn,
+                                     t->request.value.spawn.arg);
+    } else {
       break;
     }
-    rt_fiber_queue_push(&s->ready, t->request.value.wake);
+
     t->request.kind = RT_REQUEST_NONE;
   }
 
@@ -73,8 +92,14 @@ static void rt_scheduler_dispatch(struct rt_scheduler *s, struct rt_fiber *t) {
       rt_panic("scheduler: wake reached dispatch",
                __builtin_return_address(0));
 
+    case RT_REQUEST_SPAWN:
+
+      rt_panic("scheduler: spawn reached dispatch",
+               __builtin_return_address(0));
+
     case RT_REQUEST_EXIT:
       s->live_count--;
+      rt_fiber_queue_push(&s->idle, t);
       break;
 
     case RT_REQUEST_NONE:

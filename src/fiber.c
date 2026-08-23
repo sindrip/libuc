@@ -11,7 +11,7 @@
 
 constexpr size_t RT_STACK_SIZE = 64 * 1024;
 
-void rt_fiber_create(struct rt_fiber *f, void (*fn)(void *), void *arg) {
+void rt_fiber_stack_alloc(struct rt_fiber *f) {
   const size_t guard = rt_page_size();
 
   if ((RT_STACK_SIZE & (guard - 1)) != 0) {
@@ -29,16 +29,35 @@ void rt_fiber_create(struct rt_fiber *f, void (*fn)(void *), void *arg) {
 
   f->stack_base = (void *)(uintptr_t)base;
   f->stack_len = guard + RT_STACK_SIZE;
-  f->fn = fn;
-  f->arg = arg;
 
   auto ret = sys_mprotect((char *)f->stack_base + guard, RT_STACK_SIZE,
                           PROT_READ | PROT_WRITE);
   if (sys_failed(ret)) {
     sys_exit_group(-ret);
   }
+}
+
+void rt_fiber_start(struct rt_fiber *f, void (*fn)(void *), void *arg) {
+  if (f->stack_base == nullptr) {
+    rt_panic("fiber: start without a stack", __builtin_return_address(0));
+  }
+
+  if (f->owner != nullptr) {
+    rt_panic("fiber: start of a fiber awaiting a completion",
+             __builtin_return_address(0));
+  }
+
+  f->result = 0;
+  f->ready_next = nullptr;
+  f->request = (struct rt_fiber_request){};
+  f->suspend_to = nullptr;
 
   rt_ctx_init(&f->ctx, (char *)f->stack_base + f->stack_len, fn, arg);
+}
+
+void rt_fiber_create(struct rt_fiber *f, void (*fn)(void *), void *arg) {
+  rt_fiber_stack_alloc(f);
+  rt_fiber_start(f, fn, arg);
 }
 
 void rt_fiber_queue_push(struct rt_fiber_queue *q, struct rt_fiber *t) {
@@ -113,6 +132,18 @@ int rt_fiber_await_io(struct io_uring_sqe sqe) {
       .value = {.io = sqe},
   };
 
+  rt_fiber_suspend(self);
+
+  return self->result;
+}
+
+int rt_fiber_spawn(void (*fn)(void *), void *arg) {
+  struct rt_fiber *self = rt_fiber_current();
+
+  self->request = (struct rt_fiber_request){
+      .kind = RT_REQUEST_SPAWN,
+      .value = {.spawn = {.fn = fn, .arg = arg}},
+  };
   rt_fiber_suspend(self);
 
   return self->result;
