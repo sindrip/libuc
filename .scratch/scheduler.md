@@ -155,7 +155,8 @@ YIELD  still runnable
 IO     carries a struct io_uring_sqe the scheduler will stage
 EXIT   the fiber function returned
 PARK   carries a wait queue; only another fiber can undo it
-WAKE   carries a fiber to make runnable — serviced without suspending
+WAKE   carries a wait queue to take one fiber from — serviced without
+       suspending
 SPAWN  carries an entry point and argument — serviced without suspending
 ```
 
@@ -188,7 +189,7 @@ The current effect signature is:
 Yield : () -> ()
 Io    : Sqe -> i32
 Park  : WaitQueue -> ()
-Wake  : Fiber -> ()
+Wake  : WaitQueue -> Bool
 Spawn : (fn, arg) -> Result
 Exit  : () -> Never
 ```
@@ -197,7 +198,7 @@ Their handlers choose different resumption policies. YIELD places the
 continuation at the back of the ready queue. IO retains it until the CQE.
 PARK transfers it to a wait queue. WAKE and SPAWN mutate scheduler-owned state
 and immediately resume the performing continuation. EXIT never resumes it and
-returns its fiber slot to the idle pool.
+returns its fiber to the idle queue.
 
 IO is a nested effect boundary rather than a second implementation of kernel
 I/O:
@@ -293,9 +294,10 @@ conclusions.
 **Why a tagged union rather than a state value.** Encoding the request in a
 fiber state works only while every request corresponds to a distinct resulting
 state and needs no arguments. That stopped being true when IO needed an SQE;
-PARK, WAKE and SPAWN now carry three other payload shapes. An enum value can
-name the operation but cannot carry its arguments, which is exactly the
-effect-signature distinction between an operation and its invocation.
+PARK and WAKE share a wait-queue payload and SPAWN carries a third shape.
+An enum value can name the operation but cannot carry its arguments, which is
+exactly the effect-signature distinction between an operation and its
+invocation.
 
 **The dividend was single ownership of the fiber state, and then the state
 itself.** Before the split, the fiber wrote one state on its way out and the
