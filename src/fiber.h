@@ -127,9 +127,9 @@ struct rt_fiber_request {
 
 /* A zeroed rt_fiber is coherent, and rt_fiber_create starts from that zero
  * rather than assigning field by field: it owes no completion, sits on no
- * queue, carries no request, and its ctx.lr is 0 — so resuming one that was
- * never created faults at address zero, an unambiguous report rather than a
- * silent wrong branch. A field added later is then zero by default instead of
+ * queue, carries no request, and its context is all zeroes — so resuming one
+ * that was never created jumps to address zero, an unambiguous report rather
+ * than a silent wrong branch. A field added later is then zero by default instead of
  * uninitialized.
  *
  * There is deliberately no state field. What a fiber *is* was a five-valued

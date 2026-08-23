@@ -38,18 +38,39 @@
 
 #include "../../context.h"
 
-/* The layout, named once: consumed by the assert below and by the asm
- * operand lists. Never address-taken, so no storage is emitted. */
-static constexpr size_t ctx_gp = offsetof(struct rt_ctx, gp);
-static constexpr size_t ctx_fp = offsetof(struct rt_ctx, fp);
-static constexpr size_t ctx_sp = offsetof(struct rt_ctx, sp);
-static constexpr size_t ctx_d = offsetof(struct rt_ctx, d);
+/* The register layout, and the only place in the program that has it. It is
+ * deliberately in a .c file rather than a header: struct rt_ctx (context.h) is
+ * a sized, aligned blob, so no amount of including the wrong file gets a
+ * caller access to gp or lr.
+ *
+ * The two asserts are what keep the blob honest in both directions — a
+ * register added here without widening RT_CTX_SIZE fails the build, and so
+ * does a size changed for no reason. */
+struct rt_ctx_regs {
+  unsigned long gp[10]; /* x19-x28 */
+  unsigned long fp;     /* x29 */
+  unsigned long lr;     /* x30 */
+  unsigned long sp;
+  double d[8]; /* d8-d15 */
+};
+
+static_assert(sizeof(struct rt_ctx_regs) == RT_CTX_SIZE);
+static_assert(alignof(struct rt_ctx_regs) == RT_CTX_ALIGN);
+
+/* The layout, named once: consumed by the assert below and by the asm operand
+ * lists. The asm addresses the blob at these offsets directly — raw loads and
+ * stores are not C lvalue accesses, so there is no type to disagree about. */
+static constexpr size_t ctx_gp = offsetof(struct rt_ctx_regs, gp);
+static constexpr size_t ctx_fp = offsetof(struct rt_ctx_regs, fp);
+static constexpr size_t ctx_sp = offsetof(struct rt_ctx_regs, sp);
+static constexpr size_t ctx_d = offsetof(struct rt_ctx_regs, d);
 
 /* stp stores its pair contiguously. The gp and d pairs are stepped inside
  * arrays, contiguous by definition; x29/x30 is the one pair spanning two
  * distinct members, so its adjacency is the single layout fact the offsets
  * cannot express on their own. */
-static_assert(offsetof(struct rt_ctx, lr) == ctx_fp + sizeof(unsigned long));
+static_assert(offsetof(struct rt_ctx_regs, lr) ==
+              ctx_fp + sizeof(unsigned long));
 
 /* One line of asm text: stringize the tokens, own the separator. The quotes
  * and the \n stop being per-line clutter, so a body line reads as the
@@ -153,11 +174,22 @@ static_assert(offsetof(struct rt_ctx, lr) == ctx_fp + sizeof(unsigned long));
  * the top is where the mapping ends. */
 void rt_ctx_init(struct rt_ctx *ctx, void *stack_top, void (*fn)(void *),
                  void *arg) {
-  *ctx = (struct rt_ctx){};
+  /* Built in a local of the real layout and copied in, rather than written
+   * through a cast. A cast would be the reverse-direction aliasing case —
+   * reaching an object declared as unsigned char[] through a struct lvalue —
+   * which no sanitizer catches and every libc does anyway, but memcpy is
+   * defined in terms of unsigned char and simply has no such question. It
+   * costs nothing: 168 bytes at a known size inlines to stores. */
+  struct rt_ctx_regs regs = {};
 
-  ctx->fp = 0;
-  ctx->sp = (unsigned long)(uintptr_t)stack_top & ~(unsigned long)15;
-  ctx->lr = (unsigned long)(uintptr_t)rt_fiber_entry;
-  ctx->gp[0] = (unsigned long)(uintptr_t)fn;
-  ctx->gp[1] = (unsigned long)(uintptr_t)arg;
+  regs.fp = 0;
+  /* 16 here, not RT_CTX_ALIGN: AAPCS64 requires sp 16-byte aligned at every
+   * instruction that uses it (§6.2.3), which is unrelated to how the saved
+   * context itself is aligned. */
+  regs.sp = (unsigned long)(uintptr_t)stack_top & ~(unsigned long)15;
+  regs.lr = (unsigned long)(uintptr_t)rt_fiber_entry;
+  regs.gp[0] = (unsigned long)(uintptr_t)fn;
+  regs.gp[1] = (unsigned long)(uintptr_t)arg;
+
+  __builtin_memcpy(ctx, &regs, sizeof regs);
 }

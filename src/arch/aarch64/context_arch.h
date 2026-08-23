@@ -1,32 +1,34 @@
 /*
- * The aarch64 machine context: which registers must survive a switch.
+ * The size and alignment of an aarch64 machine context — and deliberately
+ * nothing else.
  *
- * Name and place follow syscall_arch.h, and for the same reason — architecture
- * is a path, not a suffix. What is here is AAPCS64's callee-saved set and
- * nothing more general: x86-64 would be six GPRs (rbx, rbp, r12-r15) plus rsp
- * and no floating-point registers at all, since SysV saves none.
+ * The layout itself is in switch.c, not in any header, so no translation unit
+ * can reach the register fields even by including the wrong file. What the
+ * rest of the runtime needs is exactly what it takes to embed one by value:
+ * how big, and how aligned. That is the same bargain glibc strikes for
+ * pthread_mutex_t and jmp_buf, and for the same reason — a caller that must
+ * reserve storage has to know the size, and needs to know nothing more.
  *
- * Not opaque. Both struct rt_fiber and struct rt_scheduler embed one by value,
- * so hiding it would mean a sized byte array plus a paired internal type — the
- * jmp_buf idiom, which exists because jmp_buf sits in a public ABI where its
- * size is a promise. Nothing outside arch/ writes these fields anyway;
- * rt_ctx_init (context.h) is the only writer, which is checkable by grep.
+ * These two numbers are checked against the real struct at compile time
+ * (switch.c). Changing the register set without changing them fails the
+ * build; changing them without cause fails it too.
+ *
+ * Name and place follow syscall_arch.h: architecture is a path, not a suffix.
+ * x86-64's numbers would be smaller — six callee-saved GPRs plus rsp, and no
+ * floating-point registers at all, since SysV preserves none.
  */
 #ifndef RT_CONTEXT_ARCH_H
 #define RT_CONTEXT_ARCH_H
 
-/* The single authority on the switch's layout: rt_switch
- * (arch/aarch64/switch.c) computes every store/load offset from these fields
- * via offsetof, so the struct is free to change shape and the asm follows —
- * there is no offset table to keep in sync. The one cross-member assumption
- * the offsets cannot express — fp and lr adjacent, for the x29/x30 stp pair —
- * is asserted in switch.c. */
-struct rt_ctx {
-  unsigned long gp[10]; /* x19-x28 */
-  unsigned long fp;     /* x29 */
-  unsigned long lr;     /* x30 */
-  unsigned long sp;
-  double d[8]; /* d8-d15 */
-};
+#include <stddef.h>
+
+/* x19-x28, x29, x30, sp: 13 doublewords. d8-d15: 8 more. */
+constexpr size_t RT_CTX_SIZE = 168;
+
+/* 8, not 16. The widest member is a doubleword, and stp/ldp of 64-bit
+ * registers needs no more than that. 16 is the alignment sp must satisfy —
+ * a different rule about a different object, and the reason this is easy to
+ * get wrong is that both numbers show up two lines apart in switch.c. */
+constexpr size_t RT_CTX_ALIGN = 8;
 
 #endif /* RT_CONTEXT_ARCH_H */

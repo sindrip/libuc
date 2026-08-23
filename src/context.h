@@ -18,6 +18,24 @@
 
 #include "arch/aarch64/context_arch.h"
 
+/* Opaque by construction, not by convention: there are no register fields to
+ * reach, so writing to one outside arch/ is a compile error rather than a
+ * review comment. Complete rather than incomplete because struct rt_fiber and
+ * struct rt_scheduler embed a context by value — an incomplete type cannot be
+ * a member, so the storage has to be declared even where the layout is not.
+ *
+ * Free at runtime, measured rather than assumed: rt_ctx_init compiles to the
+ * same 17 instructions as writing the fields directly would, with its local
+ * of the real layout eliminated outright — no stack traffic, and no memcpy
+ * libcall, which matters because this runtime links no memcpy. The two forms
+ * differ only in instruction scheduling.
+ *
+ * What it costs is paid in source, not cycles: one extra type name, and a
+ * register layout that now lives in a .c file where no include can reach it. */
+struct rt_ctx {
+  alignas(RT_CTX_ALIGN) unsigned char opaque[RT_CTX_SIZE];
+};
+
 /* Saves the callee-saved state into *from, restores *to, and returns as *to.
  *
  * Exactly two call sites exist in the runtime, one per side of the fiber
