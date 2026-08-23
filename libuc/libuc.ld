@@ -15,12 +15,18 @@
 
 ENTRY(_start)
 
+/* Sections group by permission — R, then RX, then RW — with every
+ * transition on a MAXPAGESIZE boundary: when two PT_LOAD segments share a
+ * page, the later mapping's permissions win for the whole page. */
 SECTIONS
 {
   . = 0x400000 + SIZEOF_HEADERS;
 
-  .text   : { *(.text .text.*) }
   .rodata : { *(.rodata .rodata.*) }
+
+  . = ALIGN(CONSTANT(MAXPAGESIZE));
+
+  .text : { *(.text .text.*) }
 
   . = ALIGN(CONSTANT(MAXPAGESIZE));
 
