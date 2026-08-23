@@ -26,27 +26,45 @@
  * linux/mman.h includes asm/mman.h itself, so this covers PROT_* too. */
 #include <linux/mman.h>
 
+#include "auxv.h"
+#include "crash.h"
 #include "syscall.h"
 
-/* Stack geometry. One guard page below the usable region. */
-constexpr size_t RT_PAGE_SIZE = 4096;
-constexpr size_t RT_GUARD_SIZE = RT_PAGE_SIZE;
+/* Stack geometry. One guard page below the usable region.
+ *
+ * The guard is exactly one page and the page size comes from the kernel
+ * (auxv.h), so the mprotect boundary is aligned by construction rather than
+ * by a constant that happens to match. Only the size is ours to choose, and
+ * choosing it is a .scratch/stacks.md question — 64 KiB is RT-004's guess,
+ * not a measurement, and it is the same number for every architecture because
+ * nothing about it is derived from one.
+ *
+ * sp alignment is deliberately absent here: how a context starts is
+ * rt_ctx_init's business (context.h), which is what keeps this file free of
+ * aarch64. */
 constexpr size_t RT_STACK_SIZE = 64 * 1024;
 
-/* Both properties are accidents of the numbers above, not guarantees, and
- * neither fails visibly. mmap promises page alignment and nothing more. */
-static_assert(RT_GUARD_SIZE % RT_PAGE_SIZE == 0,
-              "mprotect needs a page-aligned address, and it is given "
-              "stack_base + RT_GUARD_SIZE");
-static_assert((RT_GUARD_SIZE + RT_STACK_SIZE) % 16 == 0,
-              "the initial sp is stack_base + this sum, and aarch64 faults on "
-              "an unaligned sp at every instruction that uses it");
-
 void rt_fiber_create(struct rt_fiber *f, void (*fn)(void *), void *arg) {
+  const size_t guard = rt_page_size();
+
+  /* mprotect rounds a length up to a page but demands an aligned address, and
+   * a stack whose usable region is not a whole number of pages would put the
+   * two ends on different sides of that rule.
+   *
+   * A mask, not a modulo: rt_page_size has already established the power of
+   * two, and the division form makes UBSan emit a divrem-overflow check for a
+   * denominator that cannot be zero. Cannot fire on aarch64, where
+   * every supported page size divides 64 KiB — it exists so that changing
+   * RT_STACK_SIZE fails loudly rather than subtly. */
+  if ((RT_STACK_SIZE & (guard - 1)) != 0) {
+    rt_panic("fiber: stack size is not a multiple of the page size",
+             __builtin_return_address(0));
+  }
+
   /* One mapping, entirely PROT_NONE, then open only the usable part: the
    * bottom page is never made accessible at all, so an overflow faults at a
    * known address instead of quietly corrupting whatever lies below. */
-  auto base = sys_mmap(nullptr, RT_GUARD_SIZE + RT_STACK_SIZE, PROT_NONE,
+  auto base = sys_mmap(nullptr, guard + RT_STACK_SIZE, PROT_NONE,
                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (sys_failed(base)) {
     sys_exit_group((int)-base);
@@ -61,30 +79,20 @@ void rt_fiber_create(struct rt_fiber *f, void (*fn)(void *), void *arg) {
   *f = (struct rt_fiber){};
 
   f->stack_base = (void *)(uintptr_t)base;
-  f->stack_len = RT_GUARD_SIZE + RT_STACK_SIZE;
+  f->stack_len = guard + RT_STACK_SIZE;
   f->fn = fn;
   f->arg = arg;
 
-  auto ret = sys_mprotect((char *)f->stack_base + RT_GUARD_SIZE, RT_STACK_SIZE,
+  auto ret = sys_mprotect((char *)f->stack_base + guard, RT_STACK_SIZE,
                           PROT_READ | PROT_WRITE);
   if (sys_failed(ret)) {
     sys_exit_group(-ret);
   }
 
-  /* fp actively zero, not merely unset: the crash handler's frame walk
-   * terminates on a null fp, and a stale value would send it wandering into
-   * garbage. sp is the top of the usable region — stacks grow down — and is
-   * 16-byte aligned by the static_assert above. lr makes the first ret out
-   * of rt_switch land in the trampoline. */
-  f->ctx.fp = 0;
-  f->ctx.sp =
-      (unsigned long)(uintptr_t)f->stack_base + RT_GUARD_SIZE + RT_STACK_SIZE;
-  f->ctx.lr = (unsigned long)(uintptr_t)rt_fiber_entry;
-
-  /* gp[0] and gp[1] are x19 and x20 — the only channel into the trampoline,
-   * which does `blr x19` after `mov x0, x20`. */
-  f->ctx.gp[0] = (unsigned long)(uintptr_t)fn;
-  f->ctx.gp[1] = (unsigned long)(uintptr_t)arg;
+  /* Everything about how a context starts — which registers carry fn and
+   * arg, that control resumes through a link register, what sp must be
+   * aligned to — is arch/'s. This file supplies memory and a function. */
+  rt_ctx_init(&f->ctx, (char *)f->stack_base + f->stack_len, fn, arg);
 }
 
 /* FIFO. Push at the tail so a yielding fiber goes behind everything already

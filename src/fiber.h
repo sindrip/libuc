@@ -184,8 +184,8 @@ struct rt_fiber {
 };
 
 
-/* Allocate a guarded stack, prime the context so the first switch into this
- * fiber enters the trampoline.
+/* Allocate a guarded stack and build a context so the first switch into this
+ * fiber enters its function.
  *
  * No scheduler argument, because a fresh fiber belongs to none: owner is set
  * when a request is staged, and suspend_to when a scheduler enters it.

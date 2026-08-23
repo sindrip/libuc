@@ -34,6 +34,8 @@
 
 #include <stddef.h>
 
+#include <stdint.h>
+
 #include "../../context.h"
 
 /* The layout, named once: consumed by the assert below and by the asm
@@ -62,7 +64,7 @@ static_assert(offsetof(struct rt_ctx, lr) == ctx_fp + sizeof(unsigned long));
  *
  * The magic is the final `ret`: it jumps to the restored x30, which for a
  * resumed fiber is wherever *it* last called rt_switch — the fiber resumes as
- * if rt_switch had returned normally. For a brand-new fiber, x30 was primed
+ * if rt_switch had returned normally. For a brand-new fiber, x30 was set
  * to rt_fiber_entry (fiber.c), so `ret` enters the trampoline instead.
  */
 [[gnu::naked]] void rt_switch(struct rt_ctx *from, struct rt_ctx *to) {
@@ -110,13 +112,13 @@ static_assert(offsetof(struct rt_ctx, lr) == ctx_fp + sizeof(unsigned long));
 }
 
 /* First entry into a fresh fiber. It has never called rt_switch, so there is
- * no natural x30 to return into; rt_fiber_create primes the context instead:
+ * no natural x30 to return into; rt_ctx_init builds the context instead:
  *   x19 = the fiber's function pointer
  *   x20 = the fiber's argument
  *   x30 = rt_fiber_entry
  * so rt_switch's `ret` lands on the first instruction here.
  */
-[[gnu::naked]] void rt_fiber_entry(void) {
+[[gnu::naked]] static void rt_fiber_entry(void) {
   __asm__ volatile(
       /* Push a root frame record with both halves null: a null saved-fp
        * terminates the crash handler's walk, exactly as _start zeroes x29,
@@ -135,3 +137,27 @@ static_assert(offsetof(struct rt_ctx, lr) == ctx_fp + sizeof(unsigned long));
 }
 
 #undef I
+
+/* The only non-naked function here, and the reason the rest of the runtime
+ * can stay architecture-free: everything below is an aarch64 fact.
+ *
+ * gp[0] and gp[1] are x19 and x20 — the trampoline's only channel, since it
+ * does `mov x0, x20` then `blr x19`. lr is where rt_switch's final `ret`
+ * lands. fp is actively zero rather than merely unset: the crash handler's
+ * frame walk terminates on a null fp, and a stale value sends it wandering.
+ *
+ * sp is masked to 16 rather than asserted at a constant, because the caller
+ * hands over a region and the boundary is AAPCS64's business (§6.2.3: sp must
+ * be 16-byte aligned at every instruction that uses it, and aarch64 faults
+ * rather than tolerating it). Masking down cannot leave the usable region:
+ * the top is where the mapping ends. */
+void rt_ctx_init(struct rt_ctx *ctx, void *stack_top, void (*fn)(void *),
+                 void *arg) {
+  *ctx = (struct rt_ctx){};
+
+  ctx->fp = 0;
+  ctx->sp = (unsigned long)(uintptr_t)stack_top & ~(unsigned long)15;
+  ctx->lr = (unsigned long)(uintptr_t)rt_fiber_entry;
+  ctx->gp[0] = (unsigned long)(uintptr_t)fn;
+  ctx->gp[1] = (unsigned long)(uintptr_t)arg;
+}

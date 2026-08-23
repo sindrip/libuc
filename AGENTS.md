@@ -131,8 +131,9 @@ run.sh                    boot under QEMU (hvf; ACCEL/SMP overridable)
 debug.sh                  same boot, halted, gdbstub on :1234
 src.sh                    export the pinned kernel tree -> out/src/
 src/                      the runtime
-  context.h               struct rt_ctx + rt_switch; arch, implemented in arch/
-  fiber.{c,h}             a fiber, and the three ways it gives up the CPU
+  context.h               rt_switch + rt_ctx_init; layout in arch/<arch>/
+  auxv.h/.c               AT_PAGESZ and friends, parsed once at entry
+  fiber.{c,h}             a fiber, and the ways it gives up the CPU
   io.{c,h}                the operations it can ask for — descriptions only
   scheduler.{c,h}         queues, the loop, staging, reaping
   ring.{c,h}              the raw io_uring, no liburing

@@ -31,6 +31,7 @@
 #include <asm/byteorder.h>
 #include <linux/in.h>
 
+#include "auxv.h"
 #include "crash.h"
 #include "fiber.h"
 #include "io.h"
@@ -484,10 +485,14 @@ static void rt006_demo(struct rt_scheduler *s) {
  * two agree. */
 [[noreturn]] void rt_main(void *stack);
 
-[[noreturn]] void rt_main([[maybe_unused]] void *stack) {
+[[noreturn]] void rt_main(void *stack) {
   /* First, before anything that can fault: a handler installed after the
-   * crash reports nothing. */
+   * crash reports nothing. Its alternate stack is a static buffer, so it
+   * needs no page size and can genuinely go first. */
   rt_crash_install();
+
+  /* Then the machine's own parameters, before anything maps memory. */
+  rt_auxv_init(stack);
 
   /* The scheduler is not created, it is *become*: this thread fills in
    * scheduler 0's state and from here on it is the scheduler, running on the

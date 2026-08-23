@@ -34,7 +34,7 @@
 
 struct rt_scheduler {
   /* The scheduler's own register state: where a suspending fiber switches
-   * back to. Never primed like a fiber's — it is captured lazily by the first
+   * back to. Never initialized like a fiber's — it is captured lazily by the first
    * switch away from it, which is why a scheduler is not created the way a
    * fiber is. The boot thread simply becomes one. */
   struct rt_ctx context;
