@@ -7,7 +7,11 @@ UAPI   := ../out/uapi/include
 # Same probe as the root Makefile: Apple clang has no minimal runtime, the
 # container's clang does. The handlers the instrumentation calls are libuc's
 # own (src/ubsan.c).
-UBSAN_WANT := -fsanitize=undefined -fsanitize-minimal-runtime -fno-sanitize-recover=all
+# local-bounds is not in the undefined group, and its usual exclusion
+# reason — it produces no diagnostics, only a trap — costs nothing here,
+# where the handlers trap anyway. The pinned clang lowers it straight to
+# brk, so it needs no handler symbol at all.
+UBSAN_WANT := -fsanitize=undefined,local-bounds -fsanitize-minimal-runtime -fno-sanitize-recover=all
 UBSAN := $(shell $(CLANG) --target=$(TRIPLE) $(UBSAN_WANT) -x c -c /dev/null -o /dev/null 2>&1 \
                  | grep -q . || echo '$(UBSAN_WANT)')
 

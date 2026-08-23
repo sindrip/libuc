@@ -1,14 +1,5 @@
-/* The private bridge from the architecture entry point to the C program. */
-
 #include <stdint.h>
 
-/* The .init_array boundaries defined by libuc.ld. Implementation-namespace
- * names, because PROVIDE_HIDDEN yields to any definition from an input
- * object — an application symbol spelled the same way would silently
- * replace the boundaries, and the reserved namespace is the one place no
- * application identifier can legally live. Hidden visibility on the
- * declarations so the fixed executable addresses them directly instead of
- * through a GOT page. */
 [[gnu::visibility("hidden")]] extern void (*const __libuc_init_array_start[])(
     void);
 [[gnu::visibility("hidden")]] extern void (*const __libuc_init_array_end[])(
