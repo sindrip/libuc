@@ -78,7 +78,7 @@ struct rt_scheduler {
    * counted: at the wait point nothing is running, so blocked is
    * live_count - ready.count and would be a second thing to keep in sync.
    *
-   *   ready > 0                       run, and publish without waiting
+   *   ready > 0                       run; still enter, without waiting
    *   ready == 0, inflight > 0        submit and wait for one completion
    *   ready == 0, inflight == 0, live > 0   nothing can ever run again
    *   live == 0                       every fiber is dead; return
@@ -144,7 +144,7 @@ void rt_scheduler_run(struct rt_scheduler *s);
 /* Enter one ready fiber and regain control when it yields, blocks or exits.
  *
  * Writes the two things a fiber needs before it can suspend: rt_current, and
- * the fiber's resume_to. Rewriting resume_to on every entry rather than once at
+ * the fiber's suspend_to. Rewriting suspend_to on every entry rather than once at
  * spawn is what keeps it honest — a fiber entered by a different scheduler
  * switches back to that one, with nothing to correct.
  *

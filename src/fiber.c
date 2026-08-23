@@ -92,25 +92,26 @@ static struct rt_fiber *current;
 struct rt_fiber *rt_fiber_current(void) { return current; }
 void rt_fiber_set_current(struct rt_fiber *f) { current = f; }
 
-/* The whole boundary, in two lines. The request was set by the caller and is
- * the message to the scheduler; suspend_to is where control goes. The return
- * runs arbitrarily later, with the CQE's res already delivered into result,
- * and the caller cannot tell it was ever gone.
+/* The whole boundary, in one line. The request was set by the caller and is
+ * the message to the scheduler; suspend_to is where control goes. Control
+ * returns arbitrarily later and the caller cannot tell it was ever gone.
  *
- * Nothing here writes state. What a fiber *is* while suspended is the
- * scheduler's to decide from what the fiber *asked for*, and a field with one
- * writer cannot disagree with itself. */
-static int rt_fiber_suspend(struct rt_fiber *self) {
+ * void, not int. Only an awaited operation has a result, so only that path
+ * reads self->result — a yield returning "the answer to whatever this fiber
+ * last asked for" is a value with no meaning, and one its caller would have
+ * to remember to discard.
+ *
+ * Nothing here writes state either. What a fiber *is* while suspended is the
+ * scheduler's to decide from what the fiber *asked for*. */
+static void rt_fiber_suspend(struct rt_fiber *self) {
   rt_switch(&self->ctx, self->suspend_to);
-
-  return self->result;
 }
 
 void rt_fiber_yield(void) {
   struct rt_fiber *self = rt_fiber_current();
 
   self->request = (struct rt_fiber_request){.kind = RT_REQUEST_YIELD};
-  (void)rt_fiber_suspend(self);
+  rt_fiber_suspend(self);
 }
 
 /* The request and everything it references must remain valid until this
@@ -125,7 +126,9 @@ int rt_fiber_await_io(struct io_uring_sqe sqe) {
       .value = {.io = sqe},
   };
 
-  return rt_fiber_suspend(self);
+  rt_fiber_suspend(self);
+
+  return self->result;
 }
 
 /* Non-return rests on scheduler discipline — the loop stops resuming at
@@ -138,7 +141,7 @@ int rt_fiber_await_io(struct io_uring_sqe sqe) {
   struct rt_fiber *self = rt_fiber_current();
 
   self->request = (struct rt_fiber_request){.kind = RT_REQUEST_EXIT};
-  (void)rt_fiber_suspend(self);
+  rt_fiber_suspend(self);
 
   __builtin_trap();
 }

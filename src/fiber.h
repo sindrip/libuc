@@ -117,9 +117,11 @@ struct rt_fiber {
    * issued it, so between those two moments the fiber is bound to that ring
    * and nothing else.
    *
-   * Which makes the migration rule the field rather than a convention: a fiber
-   * with a null owner can move, one with a non-null owner cannot. Nothing to
-   * remember and nothing to enforce elsewhere. */
+   * This field is CQ debt and nothing else. It is *necessary* for migration
+   * eligibility and not sufficient: a fiber with a null owner may still be
+   * linked into a scheduler's ready or submit queue, and one parked on a wait
+   * queue is waiting for a condition that scheduler's fibers signal. Moving
+   * one is a dequeue and a handoff at an explicit point, not a field test. */
   struct rt_scheduler *owner;
 
   /* Intrusive queue link, owned by the scheduler, meaningful only while this

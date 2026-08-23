@@ -292,14 +292,18 @@ that owes this fiber a completion, or null.** Set when the scheduler stages the
 fiber's request into an SQE, cleared when the CQE is reaped, read only by the
 scheduler.
 
-So the migration rule is the field rather than a convention: **a fiber with a
-null owner can move; one with a non-null owner cannot.** Nothing to remember,
-and nothing to enforce anywhere else.
+`owner == nullptr` is therefore **necessary for migration eligibility and not
+sufficient** — a correction to the first statement of this, which claimed the
+field was the whole rule. A fiber that owes no completion may still be linked
+into a scheduler's ready or submit queue, and one parked on a wait queue is
+waiting on a condition that scheduler's own fibers signal. Migration is a
+dequeue and a handoff at an explicit point; the field tells you only that the
+kernel is not holding a pointer into the fiber.
 
 That is a property of the descriptor design, not a promise bolted onto it. A
 fiber describes an operation into its own `req` and suspends; it never touches
 a ring and never names a scheduler, so a *ready* fiber is not bound to anything
-in the first place. `resume_to` is rewritten on every entry, so a fiber resumed
+in the first place. `suspend_to` is rewritten on every entry, so a fiber resumed
 by a different scheduler switches back to that one with nothing to correct.
 
 What actually gates migration, none of it in this struct:

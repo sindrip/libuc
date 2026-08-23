@@ -56,9 +56,15 @@ These are the design. Code that breaks one is wrong even if it works.
    `DEFER_TASKRUN`, `COOP_TASKRUN`, and `TASKRUN_FLAG`
    (`out/src/io_uring/io_uring.c:2815-2821`). Rings are
    `SINGLE_ISSUER | DEFER_TASKRUN | NO_SQARRAY`.
-3. **Shared-nothing, no migration.** A task is born on a core and dies there.
+3. **Shared-nothing, no migration.** A fiber is born on a core and dies there.
    No work stealing. No cross-core allocation or free. Per-core state is reached
    without atomics; the only shared state is explicitly designated as such.
+
+   This is the invariant, and it holds. `.scratch/scheduler.md` records what
+   migration *would* cost rather than permitting it — the design deliberately
+   avoids foreclosing it, which is not the same as allowing it. Anything that
+   actually moves a fiber between schedulers violates this line and needs the
+   discussion the heading asks for.
 4. **No libc, ever.** `-ffreestanding -nostdlib`. Two header sources are
    permitted, and nothing else:
    - What the *compiler* ships: `<stdint.h>`, `<stddef.h>`, `<stdarg.h>`,

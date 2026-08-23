@@ -254,7 +254,7 @@ static constexpr int RT_IPPROTO_TCP = 6;
 /* Milestone 2's first checkpoint: prove SOCKET -> BIND -> LISTEN -> ACCEPT ->
  * RECV -> SEND -> CLOSE through the scheduler's ring. After SOCKET succeeds,
  * every path reaches CLOSE before the fiber returns. */
-static void socket_fiber([[maybe_unused]] void *arg) {
+static void echo_once(void) {
   auto fd = rt_socket(RT_AF_INET, RT_SOCK_STREAM, RT_IPPROTO_TCP);
 
   if (fd < 0) {
@@ -392,6 +392,30 @@ static void socket_fiber([[maybe_unused]] void *arg) {
   }
 }
 
+/* Liveness, checked by the absence of a hang rather than by a line of its own.
+ *
+ * Under DEFER_TASKRUN a completion reaches the shared CQ only inside
+ * io_uring_enter — io_cqring_wait runs the deferred work (wait.c:189-198) — so
+ * a loop that skips the enter because some fiber is runnable never reaps. This
+ * fiber keeps the ready queue non-empty for exactly as long as echo_once is
+ * blocked on ACCEPT, which is that condition. It prints nothing: the check is
+ * that "echo ok" appears at all. */
+static volatile bool echo_finished;
+
+static void yield_fiber([[maybe_unused]] void *arg) {
+  while (!echo_finished) {
+    rt_fiber_yield();
+  }
+}
+
+/* The flag is set here rather than at the end of echo_once, so that every one
+ * of its early returns releases the yielding fiber too — a failure should
+ * report and exit, not wedge the VM. */
+static void socket_fiber([[maybe_unused]] void *arg) {
+  echo_once();
+  echo_finished = true;
+}
+
 static void rt006_demo(struct rt_scheduler *s) {
   /* Two fibers with distinct messages: one fiber cannot distinguish "resumes
    * the right fiber" from "resumes the only fiber", and identical lines would
@@ -415,7 +439,9 @@ static void rt006_demo(struct rt_scheduler *s) {
    * scheduler whose queue is empty and whose in-flight count is zero. The
    * destination loop does not return (.scratch/scheduler.md). */
   struct rt_fiber socket;
+  struct rt_fiber yielder;
   rt_scheduler_spawn(s, &socket, socket_fiber, nullptr);
+  rt_scheduler_spawn(s, &yielder, yield_fiber, nullptr);
   rt_scheduler_run(s);
 }
 

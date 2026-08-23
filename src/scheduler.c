@@ -180,7 +180,20 @@ void rt_scheduler_run(struct rt_scheduler *s) {
                __builtin_return_address(0));
     }
 
-    if (staged > 0 || wait) {
+    /* Enter whenever anything is outstanding, waiting or not. Not an
+     * optimization and not only about submitting: under DEFER_TASKRUN a
+     * completion is deferred work that reaches the shared CQ *only* inside
+     * io_uring_enter, where io_cqring_wait runs it (wait.c:189-198). A loop
+     * that entered only when it had SQEs to publish or intended to block would
+     * never reap while some other fiber stayed runnable — one fiber looping on
+     * rt_fiber_yield would starve another's completed RECV forever, with the
+     * CQ permanently empty because nothing ever asked the kernel to fill it.
+     *
+     * inflight_count alone is the right test because it subsumes the other two
+     * reasons to enter: staging increments it, so staged > 0 implies it is
+     * nonzero, and the deadlock check above has already ruled out waiting with
+     * nothing in flight. */
+    if (s->inflight_count > 0) {
       /* Success means the whole batch, not merely a nonnegative return. The
        * kernel may stop after a request-allocation failure or a bad SQE and
        * return a positive short count (io_uring.c:2046-2068); io_uring_enter
