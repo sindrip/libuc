@@ -1,93 +1,30 @@
-/*
- * Stackful context switch. Every fiber suspension and resumption passes
- * through rt_switch, and a single wrong line here corrupts state that
- * surfaces far away, often only under optimisation or floating-point load.
- * Register reference: .scratch/aarch64.md.
- *
- * Naked functions, not a .S file: the bodies are pure asm — Clang emits no
- * prologue, epilogue, or instrumentation around them — and the layout comes
- * from struct rt_ctx via offsetof rather than a hand-kept offset table. The
- * struct is the single authority: fields can move and the asm follows.
- *
- * One offset, one name, three stages: offsetof extracts it, constexpr names
- * it in C (where the adjacency assert below also spends it), and an "i"
- * operand carries it across into the instruction text. Immediate operands
- * are what make extended asm sound in a naked function — they need no setup
- * code, so the absent prologue has nothing to omit. Every crossing is
- * spelled %c[...] at the point of use rather than aliased to an assembler
- * symbol: the sigil is where the C/asm boundary actually is, and hiding it
- * would read as if the asm dereferenced the C object.
- *
- * The model is the kernel's own cpu_switch_to (entry.S:821), with two
- * deliberate differences:
- *   1. d8–d15 are saved. The kernel does not, because kernel code never
- *      uses FP/SIMD and it saves that state separately via
- *      fpsimd_thread_switch. A userspace coroutine switch *must* save them,
- *      or floating-point values silently corrupt across yields — the kind
- *      of bug that appears months later and cannot be bisected.
- *   2. The kernel reaches cpu_context through a generated offset
- *      (asm-offsets.c:44, consumed at entry.S:823) and walks it with
- *      implicit post-index addressing; here the compiler computes every
- *      offset directly from the struct — the same single-authority idea,
- *      without the generation step.
- */
-
 #include <stddef.h>
 
 #include <stdint.h>
 
 #include "../../context.h"
 
-/* The register layout, and the only place in the program that has it. It is
- * deliberately in a .c file rather than a header: struct rt_ctx (context.h) is
- * a sized, aligned blob, so no amount of including the wrong file gets a
- * caller access to gp or lr.
- *
- * The two asserts are what keep the blob honest in both directions — a
- * register added here without widening RT_CTX_SIZE fails the build, and so
- * does a size changed for no reason. */
 struct rt_ctx_regs {
-  unsigned long gp[10]; /* x19-x28 */
-  unsigned long fp;     /* x29 */
-  unsigned long lr;     /* x30 */
+  unsigned long gp[10];
+  unsigned long fp;
+  unsigned long lr;
   unsigned long sp;
-  double d[8]; /* d8-d15 */
+  double d[8];
 };
 
 static_assert(sizeof(struct rt_ctx_regs) == RT_CTX_SIZE);
 static_assert(alignof(struct rt_ctx_regs) == RT_CTX_ALIGN);
 
-/* The layout, named once: consumed by the assert below and by the asm operand
- * lists. The asm addresses the blob at these offsets directly — raw loads and
- * stores are not C lvalue accesses, so there is no type to disagree about. */
 static constexpr size_t ctx_gp = offsetof(struct rt_ctx_regs, gp);
 static constexpr size_t ctx_fp = offsetof(struct rt_ctx_regs, fp);
 static constexpr size_t ctx_sp = offsetof(struct rt_ctx_regs, sp);
 static constexpr size_t ctx_d = offsetof(struct rt_ctx_regs, d);
 
-/* stp stores its pair contiguously. The gp and d pairs are stepped inside
- * arrays, contiguous by definition; x29/x30 is the one pair spanning two
- * distinct members, so its adjacency is the single layout fact the offsets
- * cannot express on their own. */
 static_assert(offsetof(struct rt_ctx_regs, lr) ==
               ctx_fp + sizeof(unsigned long));
 
-/* One line of asm text: stringize the tokens, own the separator. The quotes
- * and the \n stop being per-line clutter, so a body line reads as the
- * instruction it is. Variadic because the operands contain commas. */
 #define I(...) " " #__VA_ARGS__ "\n"
 
-/* From C's perspective an ordinary call, so the caller has already
- * preserved everything caller-saved (x0-x18, d0-d7, d16-d31); only the
- * callee-saved set crosses the switch. The parameters are never referenced
- * by name — a naked body may contain only asm — but the ABI has already
- * placed them in x0 and x1, which is what the body assumes.
- *
- * The magic is the final `ret`: it jumps to the restored x30, which for a
- * resumed fiber is wherever *it* last called rt_switch — the fiber resumes as
- * if rt_switch had returned normally. For a brand-new fiber, x30 was set
- * to rt_fiber_entry (fiber.c), so `ret` enters the trampoline instead.
- */
 [[gnu::naked]] void rt_switch(struct rt_ctx *from, struct rt_ctx *to) {
   __asm__ volatile(
       I(stp x19, x20, [x0, #%c[ctx_gp]])
@@ -97,21 +34,13 @@ static_assert(offsetof(struct rt_ctx_regs, lr) ==
       I(stp x27, x28, [x0, #(%c[ctx_gp] + 64)])
       I(stp x29, x30, [x0, #%c[ctx_fp]])
 
-      /* sp cannot appear as an stp/str operand, so it goes through a
-       * scratch — the kernel does the same. x2 is caller-saved and not an
-       * argument (x0/x1 are still live). */
       I(mov x2, sp)
       I(str x2, [x0, #%c[ctx_sp]])
 
-      /* Only the low 64 bits of v8-v15 are callee-saved (AAPCS64 §6.1.2),
-       * so `d` registers, not `q`. Saving q would be wrong-but-harmless;
-       * saving nothing is wrong-and-silent. */
       I(stp d8,  d9,  [x0, #%c[ctx_d]])
       I(stp d10, d11, [x0, #(%c[ctx_d] + 16)])
       I(stp d12, d13, [x0, #(%c[ctx_d] + 32)])
       I(stp d14, d15, [x0, #(%c[ctx_d] + 48)])
-
-      /* ---- the boundary: everything above wrote *from, below reads *to ---- */
 
       I(ldp x19, x20, [x1, #%c[ctx_gp]])
       I(ldp x21, x22, [x1, #(%c[ctx_gp] + 16)])
@@ -132,60 +61,27 @@ static_assert(offsetof(struct rt_ctx_regs, lr) ==
         [ctx_d] "i"(ctx_d));
 }
 
-/* First entry into a fresh fiber. It has never called rt_switch, so there is
- * no natural x30 to return into; rt_ctx_init builds the context instead:
- *   x19 = the fiber's function pointer
- *   x20 = the fiber's argument
- *   x30 = rt_fiber_entry
- * so rt_switch's `ret` lands on the first instruction here.
- */
 [[gnu::naked]] static void rt_fiber_entry(void) {
   __asm__ volatile(
-      /* Push a root frame record with both halves null: a null saved-fp
-       * terminates the crash handler's walk, exactly as _start zeroes x29,
-       * and there is no real return address to record. stp with pre-index
-       * `[sp, #-16]!` is the canonical push. */
+
       I(stp xzr, xzr, [sp, #-16]!)
       I(mov x29, sp)
 
       I(mov x0, x20)
       I(blr x19)
 
-      /* The fiber function returned. No `ret` — there is no valid return
-       * address below — so a plain branch, never coming back: rt_fiber_exit
-       * marks the fiber dead and switches away for good. */
       I(b rt_fiber_exit));
 }
 
 #undef I
 
-/* The only non-naked function here, and the reason the rest of the runtime
- * can stay architecture-free: everything below is an aarch64 fact.
- *
- * gp[0] and gp[1] are x19 and x20 — the trampoline's only channel, since it
- * does `mov x0, x20` then `blr x19`. lr is where rt_switch's final `ret`
- * lands. fp is actively zero rather than merely unset: the crash handler's
- * frame walk terminates on a null fp, and a stale value sends it wandering.
- *
- * sp is masked to 16 rather than asserted at a constant, because the caller
- * hands over a region and the boundary is AAPCS64's business (§6.2.3: sp must
- * be 16-byte aligned at every instruction that uses it, and aarch64 faults
- * rather than tolerating it). Masking down cannot leave the usable region:
- * the top is where the mapping ends. */
 void rt_ctx_init(struct rt_ctx *ctx, void *stack_top, void (*fn)(void *),
                  void *arg) {
-  /* Built in a local of the real layout and copied in, rather than written
-   * through a cast. A cast would be the reverse-direction aliasing case —
-   * reaching an object declared as unsigned char[] through a struct lvalue —
-   * which no sanitizer catches and every libc does anyway, but memcpy is
-   * defined in terms of unsigned char and simply has no such question. It
-   * costs nothing: 168 bytes at a known size inlines to stores. */
+
   struct rt_ctx_regs regs = {};
 
   regs.fp = 0;
-  /* 16 here, not RT_CTX_ALIGN: AAPCS64 requires sp 16-byte aligned at every
-   * instruction that uses it (§6.2.3), which is unrelated to how the saved
-   * context itself is aligned. */
+
   regs.sp = (unsigned long)(uintptr_t)stack_top & ~(unsigned long)15;
   regs.lr = (unsigned long)(uintptr_t)rt_fiber_entry;
   regs.gp[0] = (unsigned long)(uintptr_t)fn;
