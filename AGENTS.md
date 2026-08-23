@@ -131,12 +131,33 @@ run.sh                    boot under QEMU (hvf; ACCEL/SMP overridable)
 debug.sh                  same boot, halted, gdbstub on :1234
 src.sh                    export the pinned kernel tree -> out/src/
 src/                      the runtime
-  context.h               rt_switch + rt_ctx_init; layout in arch/<arch>/
+  context.h               rt_switch + rt_ctx_init; rt_ctx as an opaque blob
+  syscall.h               svc wrappers; -errno in -1..-4095
   auxv.h/.c               AT_PAGESZ and friends, parsed once at entry
   fiber.{c,h}             a fiber, and the ways it gives up the CPU
   io.{c,h}                the operations it can ask for — descriptions only
   scheduler.{c,h}         queues, the loop, staging, reaping
   ring.{c,h}              the raw io_uring, no liburing
+  arch/<arch>/            everything that knows the instruction set
+    context.c             the register layout, the naked switch, rt_ctx_init
+    context_arch.h        RT_CTX_SIZE / RT_CTX_ALIGN — the blob's contract
+    syscall_arch.h        the svc sequence and register assignment
+    start.S               _start: sp points at argc; align, call, exit_group
+```
+
+**The architecture is chosen by the include path, never by generic code.**
+`-Isrc -Isrc/arch/$(ARCH)` is in `CPPFLAGS`, so `context.h` says
+`#include "context_arch.h"` and the build decides which one that is. Generic
+headers naming `arch/aarch64/...` directly is the failure this prevents: it
+puts one architecture inside the code that is supposed to be portable, and the
+second architecture then arrives as an `#ifdef` ladder. Adding one should be a
+directory plus `ARCH=`, touching no generic file.
+
+The paired header keeps the `_arch` suffix on purpose. Naming it `context.h`
+inside `arch/<arch>/` would make `src/context.h`'s own include resolve to
+itself, since a quoted include searches the including file's directory first.
+
+```
 out/                      GENERATED — gitignored, never edit
 out/vmlinuz               the kernel
 out/kernel.config         what Kconfig actually resolved — read this, not the fragment
@@ -285,7 +306,7 @@ harness.
 The cost, stated plainly: **there is no regression net.** Nothing catches a
 change that breaks an earlier ticket. The discipline that makes this survivable:
 
-- When touching shared code (`switch.c`, `ring.c`, `fiber.c`, `scheduler.c`),
+- When touching shared code (`arch/<arch>/context.c`, `ring.c`, `fiber.c`, `scheduler.c`),
   re-run the acceptance checks of every ticket that depends on it, not just
   the current one.
 - Keep acceptance criteria mechanically checkable — an exact expected console

@@ -1,7 +1,7 @@
 #ifndef RT_SYSCALL_H
 #define RT_SYSCALL_H
 
-#include "arch/aarch64/syscall_arch.h"
+#include "syscall_arch.h"
 
 #include <stddef.h>
 #include <stdint.h>

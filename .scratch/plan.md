@@ -62,7 +62,7 @@ addition rather than discovery.
 
 ```
 src/start.S      _start: sp points at argc; align, call main, exit_group
-src/arch/aarch64/switch.c  naked asm context switch: x19-x28, x29, x30, sp, d8-d15
+src/arch/aarch64/context.c naked asm context switch: x19-x28, x29, x30, sp, d8-d15
 src/syscall.h    svc #0 wrappers; x8=nr, x0-x5=args; ret is -errno in -1..-4095
 src/string.c     memcpy, memset, memmove, memcmp  <- when a link first needs them
 src/ring.c/.h    io_uring_setup + mmap; submit/reap; no liburing

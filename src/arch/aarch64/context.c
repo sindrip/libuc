@@ -1,8 +1,7 @@
 #include <stddef.h>
-
 #include <stdint.h>
 
-#include "../../context.h"
+#include "context.h"
 
 struct rt_ctx_regs {
   unsigned long gp[10];

@@ -55,7 +55,7 @@ Saving `q8`–`q15` (full 128-bit) instead would be wrong-but-harmless; saving
 only `x19`–`x30` and skipping `d8`–`d15` is wrong-and-silent — it corrupts
 floating point across switches in a way that surfaces much later. Save them.
 
-### `src/arch/aarch64/switch.c`
+### `src/arch/aarch64/switch.c` (since renamed to `context.c`)
 
 ```c
 // void rt_switch(struct rt_ctx *from, struct rt_ctx *to);

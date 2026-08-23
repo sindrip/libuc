@@ -160,63 +160,89 @@ WAKE   carries a wait queue to take one fiber from — serviced without
 SPAWN  carries an entry point and argument — serviced without suspending
 ```
 
-### The request protocol is an algebraic-effect handler
+### The request protocol as a fixed effect handler
 
-This is not merely an analogy to effects; it is the operational shape of one.
-The runtime does not expose effect syntax, typed effect rows or programmable
-handlers, but all of the machine parts are present:
+Effect handling is a useful operational model for this protocol, with an
+important boundary. A request separates an operation from the scheduler policy
+that serves it, and a suspended fiber supplies its continuation. But this is
+not a general algebraic-effects facility: there is exactly one fixed handler,
+the performer is not abstract over which handler serves it, and handlers cannot
+compose or nest. The vocabulary below describes the runtime's control flow; it
+is not a promise that user-defined or nested handlers will appear later.
 
 | effect term | runtime representation |
 |---|---|
-| effect signature | `enum rt_fiber_request_kind` |
+| operation set | `enum rt_fiber_request_kind` |
 | operation arguments | `request.value` |
 | perform | write the request, then `rt_fiber_suspend` |
 | continuation | the fiber's saved context and stack |
-| handler | `rt_scheduler_resume` plus dispatch |
+| fixed handler | scheduler resume, dispatch and CQE reap paths |
 | resumption policy | the ready, submit and wait queues |
-| operation result | `fiber->result` |
+| result channel | `fiber->result` |
 
 The continuation is concrete rather than compiler-manufactured: it is the rest
 of the fiber's computation, delimited by the fiber entry/exit boundary and
 preserved on its stack. It is one-shot. The scheduler may retain it, move it
 between queues, resume it, or discard it at EXIT, but it cannot clone it and a
-fiber cannot resume itself. Queue membership is therefore ownership of a
-continuation, not merely bookkeeping about one.
+fiber cannot resume itself. When a continuation is retained, queue membership
+is therefore ownership of it, not merely bookkeeping about it.
 
-The current effect signature is:
+The current operations have these semantic signatures:
 
 ```text
 Yield : () -> ()
 Io    : Sqe -> i32
 Park  : WaitQueue -> ()
 Wake  : WaitQueue -> Bool
-Spawn : (fn, arg) -> Result
+Spawn : (FiberFn, void*) -> i32
 Exit  : () -> Never
 ```
 
-Their handlers choose different resumption policies. YIELD places the
-continuation at the back of the ready queue. IO retains it until the CQE.
-PARK transfers it to a wait queue. WAKE and SPAWN mutate scheduler-owned state
-and immediately resume the performing continuation. EXIT never resumes it and
-returns its fiber to the idle queue.
+That notation describes the fiber-facing interfaces, not types enforced by the
+request protocol. Arguments are distinguished by the tagged union, but IO,
+WAKE and SPAWN all return through one untyped `int result`. Each performer
+interprets that slot immediately after resumption and consumes it once, which
+is why the erasure works.
 
-IO is a nested effect boundary rather than a second implementation of kernel
-I/O:
+The handler chooses a different resumption policy for each operation. YIELD
+places the continuation at the back of the ready queue. IO and PARK defer it,
+respectively until a CQE arrives or another fiber wakes the wait queue. EXIT is
+abortive: it never resumes the continuation and returns its fiber to the idle
+queue.
+
+WAKE and SPAWN are **tail-resumptive**. The handler performs bounded work and
+immediately returns a value to the same continuation. That is exactly the class
+of effect operation that can compile to a direct call without capturing a
+continuation. This runtime deliberately still pays a switch round trip so that
+the ready queue, live count and idle pool are mutated only in `scheduler.c`.
+The measured roughly 12 ns is an encapsulation cost of this implementation,
+not an inherent cost of the request protocol or the effects model.
+
+IO is the **deferred-resumption** case, not a nested effect boundary:
 
 ```text
 fiber performs IO { SQE }
-    -> scheduler retains the continuation and stages the SQE
-    -> kernel completes with a CQE
-    -> scheduler writes fiber->result and resumes the continuation
+    -> handler declines to resume it and returns to the scheduler loop
+    -> scheduler queues and stages the SQE
+    -> a CQE later enters another path through the same fixed handler
+    -> scheduler writes fiber->result and makes the continuation runnable
+    -> a later scheduler turn resumes it
 ```
 
 That is what lets ordinary blocking C remain direct style. `write(fd, buf,
 len)` looks like a call, while underneath it performs IO and the scheduler
 handles it. The buffer loan travels with the retained continuation: the handler
-may not resume or discard that continuation as though the operation were over
-until the kernel has released every referenced address. The cancellation rule
-below is the resource consequence of the effects model, not an io_uring
-special case.
+may not discard the continuation while its loan is outstanding, and this API
+may not resume it past the call because returning makes the buffer accessible
+again.
+
+The effects model supplies that resource constraint; it does not say when the
+loan ends. io_uring supplies that fact. In particular, cancellation queues the
+original request to complete with `-ECANCELED`
+(`out/src/io_uring/cancel.c:476`); completion of the cancel request is not
+release of the original request's addresses. The continuation rule and the
+kernel completion rule are both needed to derive **cancel -> reap the original
+CQE -> reclaim**.
 
 The admission rule for future request kinds is therefore:
 
@@ -224,10 +250,8 @@ The admission rule for future request kinds is therefore:
 > requires authority over scheduler-owned state. Otherwise it remains an
 > ordinary call.
 
-This keeps the request union an effect signature rather than a miscellaneous
-command bucket. It admits YIELD, IO, PARK, WAKE, SPAWN and EXIT. It does not by
-itself admit `malloc`; that depends on who ultimately owns allocation state,
-which is the open question below.
+This keeps the request union an operation set rather than a miscellaneous
+command bucket. It admits YIELD, IO, PARK, WAKE, SPAWN and EXIT.
 
 **WAKE is a request, not a call, and that is the point.** A fiber could
 enqueue onto the scheduler's ready queue directly; it would work, because the
@@ -268,23 +292,20 @@ ready queue owns the fiber**, with no representable state in between. Waking a
 a generation-bearing handle rather than a raw pointer, which is the same answer
 the id encoding above already reaches for.
 
-So `rt_scheduler_resume` loops: it services a WAKE and switches straight back,
-returning only on a request that genuinely suspends. The waker keeps the CPU
-and is never re-queued. It costs a switch round trip, roughly 12 ns, and buys
-the property that every mutation of scheduler state happens in `scheduler.c`
-with the scheduler actually running.
+`rt_scheduler_resume` is the concrete tail-resumption loop: it services WAKE or
+SPAWN and switches straight back, returning only for a deferred or abortive
+operation. The performing fiber keeps the CPU and is never re-queued. WAKE and
+SPAWN are therefore called **serviced** requests and must never reach dispatch;
+either arriving there means the resume loop let one through, and it panics.
 
-That splits requests into two categories worth naming: **suspending** (YIELD,
-IO, PARK, EXIT), which dispatch files onto a queue, and **serviced**
-(WAKE, SPAWN), which never reach dispatch — either arriving there means the
-resume loop let one through, and it panics.
-
-The one case that does not fit this shape is `malloc`. A switch round trip
-roughly doubles an allocation, and `libuc.md` says the per-scheduler arena is
-what forces the whole design. That is a signal about the arena being
-questionable — two schedulers can share a CPU, so per-scheduler allocation was
-never obviously right — rather than a reason to let fibers touch scheduler
-state. Unanswered until there is an allocator.
+`malloc` exposes the boundary of that choice. Allocation is tail-resumptive
+too, so switching to the scheduler adds no continuation semantics. Unlike WAKE
+and SPAWN, it also has no necessary scheduler transition to encapsulate; if it
+switches merely to touch a per-scheduler arena, the round trip is pure overhead.
+That is evidence that the arena's ownership is at the wrong layer — two
+schedulers can share a CPU, so per-scheduler allocation was never obviously
+right — rather than evidence that allocation belongs in the request protocol.
+Unanswered until there is an allocator.
 
 This is the only thing a fiber writes for the scheduler to read. There is no
 companion state field: what a fiber *is* follows from what the scheduler did
@@ -393,9 +414,11 @@ call, not just the kernel's part of it.
 
 Two things break the argument, and neither announces itself:
 
-- **Cancellation.** `IORING_OP_ASYNC_CANCEL` does not withdraw a request; it
-  makes it complete with `-ECANCELED` (`cancel.c:476` queues the original to
-  fail). So the sequence is always **cancel → reap the original CQE →
+- **Cancellation.** The continuation model says an outstanding loan prevents
+  reclamation; io_uring says when that loan ends. `IORING_OP_ASYNC_CANCEL` does
+  not make completion of the cancel request release the original request's
+  addresses: `out/src/io_uring/cancel.c:476` queues the original to fail with
+  `-ECANCELED`. So the sequence is always **cancel → reap the original CQE →
   reclaim**, never cancel and free. Freeing on the cancel *request* is a
   use-after-free with the kernel holding the pointer.
 - **An allocator.** Today every address is on the suspending fiber's own stack

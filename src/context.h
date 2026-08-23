@@ -1,7 +1,7 @@
 #ifndef RT_CONTEXT_H
 #define RT_CONTEXT_H
 
-#include "arch/aarch64/context_arch.h"
+#include "context_arch.h"
 
 struct rt_ctx {
   alignas(RT_CTX_ALIGN) unsigned char opaque[RT_CTX_SIZE];

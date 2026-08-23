@@ -2,7 +2,8 @@ BAKE   := build/kernel.Dockerfile docker-bake.hcl
 UAPI   := out/uapi/include
 
 CLANG  ?= clang
-TRIPLE := aarch64-unknown-linux-gnu
+ARCH   ?= aarch64
+TRIPLE := $(ARCH)-unknown-linux-gnu
 
 UBSAN_WANT := -fsanitize=undefined -fsanitize-minimal-runtime -fno-sanitize-recover=all
 # Apple clang has no minimal runtime; Alpine's clang 22 does. Probe rather than
@@ -21,7 +22,15 @@ UBSAN := $(shell $(CLANG) $(UBSAN_WANT) -x c -c /dev/null -o /dev/null 2>&1 \
 # on __DECLARE_FLEX_ARRAY. Warnings are suppressed inside -isystem paths, which
 # keeps -pedantic pointed at our code where it belongs. Relaxing the flag
 # instead would silence those checks everywhere.
-CPPFLAGS := -nostdlibinc -isystem $(UAPI)
+#
+# -Isrc and -Isrc/arch/$(ARCH) are what select the architecture. Without them a
+# quoted include resolves only against the including file's own directory, so
+# context.c had to reach back with ../../context.h and context.h had to name
+# arch/aarch64 itself — a generic header hardcoding one architecture, which is
+# the thing the arch/ directory exists to avoid. With the paths, generic code
+# says "context_arch.h" and the build decides which one that is. Adding an
+# architecture is then a directory plus ARCH=, and no edit to generic code.
+CPPFLAGS := -nostdlibinc -isystem $(UAPI) -Isrc -Isrc/arch/$(ARCH)
 # -Werror matches the container. Without it `make check` is green on code the
 # real build rejects, and the diagnostic arrives from a docker log after a
 # kernel rebuild instead of from the compiler in half a second.
@@ -66,8 +75,8 @@ CFLAGS   := -std=c23 -ffreestanding -fno-stack-protector -fno-omit-frame-pointer
 # and clang errors under -Werror that the flag went unused.
 LDFLAGS  := -nostdlib -nostartfiles -static -fuse-ld=lld
 
-OBJ := $(patsubst src/%.c,out/obj/%.o,$(wildcard src/*.c src/arch/*/*.c)) \
-       $(patsubst src/%.S,out/obj/%.o,$(wildcard src/*.S src/arch/*/*.S))
+OBJ := $(patsubst src/%.c,out/obj/%.o,$(wildcard src/*.c src/arch/$(ARCH)/*.c)) \
+       $(patsubst src/%.S,out/obj/%.o,$(wildcard src/*.S src/arch/$(ARCH)/*.S))
 
 .PHONY: help kernel config uapi src run debug check tidy clean distclean
 
@@ -110,7 +119,7 @@ check: compile_commands.json $(OBJ)
 # Checks and WarningsAsErrors live in .clang-tidy; flags come from
 # compile_commands.json, so there is no second copy to drift.
 tidy: compile_commands.json
-	clang-tidy --quiet $(wildcard src/*.c src/arch/*/*.c)
+	clang-tidy --quiet $(wildcard src/*.c src/arch/$(ARCH)/*.c)
 
 # -MMD -MP emits a .d per object listing the headers it read; -include feeds
 # those back so editing syscall.h rebuilds everything that includes it.
@@ -130,9 +139,9 @@ out/obj/%.o: src/%.S Makefile | $(UAPI)
 # The source list is a prerequisite, not just the Makefile: a new src/*.c is
 # newer than the database that omits it, which is the only thing that makes
 # adding a file regenerate rather than leaving clangd to infer its flags.
-compile_commands.json: Makefile $(wildcard src/*.c src/arch/*/*.c)
+compile_commands.json: Makefile $(wildcard src/*.c src/arch/$(ARCH)/*.c)
 	@printf '[' > $@
-	@sep=""; for f in $(wildcard src/*.c src/arch/*/*.c); do \
+	@sep=""; for f in $(wildcard src/*.c src/arch/$(ARCH)/*.c); do \
 	  printf '%s\n  {"directory": "%s", "file": "%s", "command": "%s"}' \
 	    "$$sep" "$(CURDIR)" "$(CURDIR)/$$f" \
 	    "$(CLANG) --target=$(TRIPLE) $(CPPFLAGS) $(CFLAGS) -c $$f" >> $@; \
