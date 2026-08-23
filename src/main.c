@@ -343,8 +343,8 @@ static void rt010_echo_server(struct rt_scheduler *s) {
   rt_scheduler_run(s);
 }
 
-static constexpr size_t RT_FIBER_SLOTS = 32;
-static struct rt_fiber fiber_slots[RT_FIBER_SLOTS];
+static constexpr size_t RT_FIBER_MAX = 32;
+static struct rt_fiber fibers[RT_FIBER_MAX];
 
 [[noreturn]] void rt_main(void *stack);
 
@@ -365,7 +365,7 @@ static struct rt_fiber fiber_slots[RT_FIBER_SLOTS];
     }
   }
 
-  rt_scheduler_provide(&sched, fiber_slots, RT_FIBER_SLOTS);
+  rt_scheduler_provide(&sched, fibers, RT_FIBER_MAX);
 
   static volatile bool verbose = false;
   if (verbose) {

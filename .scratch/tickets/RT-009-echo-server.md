@@ -26,17 +26,17 @@ request, and dispatch panics if one reaches it.
 handled it.
 
 **Connection fibers must come from somewhere, and there is no allocator.** The
-program hands the scheduler a fixed array of slots (`rt_scheduler_provide`) and
-the scheduler cycles them: pop from `idle` on spawn, push back on EXIT. Stacks
-are `mmap`ed once per slot and reused across lives, so a connection costs no
-syscall for memory.
+program hands the scheduler a fixed array of fibers (`rt_scheduler_provide`)
+and the scheduler cycles them: pop from `idle` on spawn, push back on EXIT.
+Each one's stack is `mmap`ed once and reused across lives, so a connection
+costs no syscall for memory.
 
 This changed `rt_scheduler_spawn`'s signature — it no longer takes the fiber to
 start, it takes the work — and gave it a return value: `-EAGAIN` when the pool
 is dry. That is the server's backpressure, and the acceptor must close the
 connection it cannot serve.
 
-Reclaiming a slot at EXIT is safe today without any new rule: a fiber cannot be
+Reclaiming a fiber at EXIT is safe today without any new rule: a fiber cannot be
 running while it owes a completion, so `owner == nullptr` holds at EXIT by
 construction, which is exactly the lifetime rule `.scratch/scheduler.md` states.
 
@@ -55,12 +55,12 @@ src/fiber.h        RT_REQUEST_SPAWN, struct rt_fiber_spawn, the split create
 src/fiber.c        rt_fiber_stack_alloc / rt_fiber_start / rt_fiber_spawn
 src/scheduler.h    the idle queue; spawn takes work and returns int
 src/scheduler.c    provide, pool-backed spawn, SPAWN serviced in resume
-src/main.c         accept_fiber, conn_fiber, the slot array
+src/main.c         accept_fiber, conn_fiber, the fiber array
 ```
 
 ## Acceptance
 
-Boot, then drive it from the host through the forwarded port. 32 slots, one
+Boot, then drive it from the host through the forwarded port. 32 fibers, one
 held by the acceptor, so 31 connections can be served at once.
 
 1. **Concurrency.** Two clients, the first holding its connection open across
@@ -77,7 +77,7 @@ held by the acceptor, so 31 connections can be served at once.
    `done 2` strictly inside `open 1 .. done 1` is the check. Sequential
    handling would print `done 1` before `open 2`.
 
-2. **Slots recycle.** 100 sequential connections, all echoed, `open`/`done`
+2. **Fibers recycle.** 100 sequential connections, all echoed, `open`/`done`
    counts equal, no growth in anything.
 
 3. **Exhaustion is reported, not fatal.** 40 connections held open at once:
@@ -115,6 +115,14 @@ fixed in `93881af` — under the old condition the accept CQE was never reaped.
 It is the only regression check for that fix.
 
 **What the server does not do.** No timeouts, no graceful shutdown, no limit on
-how long a connection may hold a slot. A slow client holds a fiber indefinitely,
+how long a connection may hold a fiber. A slow client holds one indefinitely,
 which is a denial of service against the pool and needs cancellation — which
 needs the operation records — to fix.
+
+That is a gap in the runtime, not in the fixed array. An allocator would move
+the limit from 32 to a memory bound and turn a clean `-EAGAIN` into an OOM,
+which for PID 1 is the worse failure; what is actually missing either way is a
+way to stop a fiber blocked in `rt_recv`. The array's size and the fact that
+the *program* supplies it are the temporary parts — sizing belongs to the
+runtime, from a workload statement, as `.scratch/scheduler.md` argues for
+`ring_entries`.

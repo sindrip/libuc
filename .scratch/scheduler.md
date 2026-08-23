@@ -226,9 +226,26 @@ whenever `owner` was null.
 **No `default` in the dispatch switch.** With one, a kind added later would
 fall silently into the "fiber suspended without a request" panic. Without one,
 `-Wswitch -Werror` makes adding a kind a build failure until every dispatch
-site handles it. Verified: adding `RT_REQUEST_PARK` fails at `scheduler.c:101`.
+site handles it. Verified twice: adding `RT_REQUEST_PARK`, and later
+`RT_REQUEST_SPAWN`, each failed the build at the dispatch switch until handled.
 Under a policy with no regression net, a compile error is worth more than a
 runtime one.
+
+**The local check forces this choice rather than expressing it.** `make check`
+runs `-Weverything`, which contains both `-Wswitch-default` (demands a default
+label) and `-Wcovered-switch-default` (rejects a default that covers every
+enumeration value). A fully-covered enum switch satisfies neither together, so
+one has to be suppressed, and which one is the whole decision. The Makefile
+suppresses `switch-default` and keeps `covered-switch-default`, which is the
+check that actively enforces the style above.
+
+Worth knowing if the flags are ever revisited: a `default` label does **not**
+have to cost exhaustiveness, because `-Weverything` also carries
+`-Wswitch-enum`, which fires on a missing enumerator even when a default is
+present. Measured, not assumed. That path was rejected anyway — the container
+build runs `-Wall -Wextra`, which has `-Wswitch` but not `-Wswitch-enum`, so a
+default would hold the guarantee locally and quietly drop it in the build that
+ships. Keeping no default holds it in both under flags they already have.
 
 **Dispatch is not part of resume.** Entering a fiber and filing it afterwards
 are separable; queue policy belongs to the loop, and `main.c`'s RT-004 driver

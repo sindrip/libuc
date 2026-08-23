@@ -74,38 +74,36 @@ void rt_scheduler_resume(struct rt_scheduler *s, struct rt_fiber *t) {
 
 static void rt_scheduler_dispatch(struct rt_scheduler *s, struct rt_fiber *t) {
   switch (t->request.kind) {
-    case RT_REQUEST_YIELD:
-      rt_fiber_queue_push(&s->ready, t);
-      break;
+  case RT_REQUEST_YIELD:
+    rt_fiber_queue_push(&s->ready, t);
+    break;
 
-    case RT_REQUEST_IO:
-      rt_fiber_queue_push(&s->submit, t);
-      break;
+  case RT_REQUEST_IO:
+    rt_fiber_queue_push(&s->submit, t);
+    break;
 
-    case RT_REQUEST_PARK:
+  case RT_REQUEST_PARK:
 
-      rt_fiber_queue_push(t->request.value.wait_queue, t);
-      break;
+    rt_fiber_queue_push(t->request.value.wait_queue, t);
+    break;
 
-    case RT_REQUEST_WAKE:
+  case RT_REQUEST_WAKE:
 
-      rt_panic("scheduler: wake reached dispatch",
-               __builtin_return_address(0));
+    rt_panic("scheduler: wake reached dispatch", __builtin_return_address(0));
 
-    case RT_REQUEST_SPAWN:
+  case RT_REQUEST_SPAWN:
 
-      rt_panic("scheduler: spawn reached dispatch",
-               __builtin_return_address(0));
+    rt_panic("scheduler: spawn reached dispatch", __builtin_return_address(0));
 
-    case RT_REQUEST_EXIT:
-      s->live_count--;
-      rt_fiber_queue_push(&s->idle, t);
-      break;
+  case RT_REQUEST_EXIT:
+    s->live_count--;
+    rt_fiber_queue_push(&s->idle, t);
+    break;
 
-    case RT_REQUEST_NONE:
+  case RT_REQUEST_NONE:
 
-      rt_panic("scheduler: fiber suspended without a request",
-               __builtin_return_address(0));
+    rt_panic("scheduler: fiber suspended without a request",
+             __builtin_return_address(0));
   }
 }
 

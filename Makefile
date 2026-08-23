@@ -43,10 +43,23 @@ CPPFLAGS := -nostdlibinc -isystem $(UAPI)
 #                             which is unused when cross-compiling and fatal
 #                             under -Werror. Local only — the container has no
 #                             wrapper, so it keeps the check
+#   switch-default            contradicts -Wcovered-switch-default, which is
+#                             also in -Weverything: one demands a default label
+#                             on every switch, the other rejects a default that
+#                             covers all enumeration values. A fully-covered
+#                             enum switch cannot satisfy both, so -Weverything
+#                             forces a choice rather than expressing one. This
+#                             codebase already made it: the dispatch switch has
+#                             no default so that -Wswitch turns a new request
+#                             kind into a build failure instead of a silent
+#                             fall-through (.scratch/scheduler.md). Suppressing
+#                             switch-default keeps covered-switch-default, which
+#                             is the check that enforces that style.
 WARN := -Weverything -Wno-pre-c23-compat -Wno-pre-c11-compat \
         -Wno-declaration-after-statement -Wno-padded -Wno-missing-noreturn \
         -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-c++-compat \
-        -Wno-unsafe-buffer-usage -Wno-unused-command-line-argument
+        -Wno-unsafe-buffer-usage -Wno-unused-command-line-argument \
+        -Wno-switch-default
 CFLAGS   := -std=c23 -ffreestanding -fno-stack-protector -fno-omit-frame-pointer \
             $(WARN) -Werror -g -O1 $(UBSAN)
 # No -no-pie: -static already implies it (verified, ELF Type=EXEC either way),
