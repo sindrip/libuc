@@ -70,6 +70,41 @@ The Go/Loom alternative — copyable stacks with pointer maps, pinned while C
 frames are live — remains available much later, buys stack *shrinking* on top,
 and is not a prerequisite for millions.
 
+## Is 64 KiB enough for vendored C? Measured: yes, ~4x over
+
+Transparent FFI puts C frames on the fiber's own stack, so `RT_STACK_SIZE` has
+to cover whatever vendored C uses. Measured by painting a thread stack and
+scanning for the high-water mark, 4 MiB input, aarch64:
+
+| workload | stack used |
+|---|---|
+| empty thread | 272 B |
+| xz preset 6 / 9 | 2.3 KiB |
+| zstd level 1 / 9 / 19 | 6.5 / 7.0 / 7.2 KiB |
+| zstd compress + decompress | 7.1 KiB |
+| sqlite: 5k inserts, index, group-by | 9.9 KiB |
+| sqlite: nested expr depth 100 / 500 / 900 | 14.8 / 15.6 / 15.2 KiB |
+
+Worst case 15.6 KiB against 64 KiB. The numbers are small and flat because all
+three libraries heap-allocate their working state, and because sqlite bounds
+its own recursion: the depth 500 and 900 cases returned `parser stack overflow`
+from its heap-allocated parser stack rather than descending further on the C
+stack. Depth 900 therefore costs no more than depth 100.
+
+The fiber stack needs no reserve for the crash handler, which runs on a
+`sigaltstack` (`crash.c:104-110`, `SA_ONSTACK`) — verified by a deliberate
+overflow that faulted on the guard and still produced a full report.
+
+Caveats. Homebrew macOS builds, not the freestanding build; same ISA and
+AAPCS64 so frame sizes are comparable, but libc and inlining differ. One-shot
+APIs only — streaming and callback-heavy paths unmeasured. And the depth test
+measured sqlite's own guard, so there is no number here for a library that does
+not bound itself.
+
+This does not move the density ceiling, which is VMA count rather than stack
+size: two VMAs per fiber against a default `max_map_count` of 65530 is about
+32k fibers.
+
 ## One stack size, because identity is derived from the address
 
 `rt_fiber_current()` finds the running fiber by masking the frame address down
