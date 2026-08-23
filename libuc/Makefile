@@ -15,8 +15,14 @@ ASFLAGS := --target=$(TRIPLE) -ffreestanding -g
 # The entry point comes from libuc.ld's ENTRY, and the script is also the
 # enforcement of the link contract: legacy .init/.fini/.ctors/.dtors input
 # fails the link there rather than being silently accepted.
+#
+# -z norelro because PT_GNU_RELRO is dead metadata in a binary with no
+# interpreter — only a dynamic loader ever acts on it. Worse than dead:
+# grouping RELRO sections splits the RW image into two PT_LOAD segments that
+# share a page, and the kernel's zeroing of the second (BSS-only) segment
+# wipes .init_array and .got in the first. One RW segment, no overlap.
 LDFLAGS := --target=$(TRIPLE) -nostdlib -nostartfiles -static -fuse-ld=lld \
-           -Wl,-T,libuc.ld
+           -Wl,-T,libuc.ld -Wl,-z,norelro
 
 OBJECTS := $(OUT)/arch/aarch64/start.o $(OUT)/start.o $(OUT)/main.o
 

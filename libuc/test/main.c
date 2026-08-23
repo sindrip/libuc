@@ -4,7 +4,7 @@
  * first (101 before 202; 1..100 are reserved by the toolchain), then the
  * unprioritized one after every numbered slot. Each stage refuses to
  * advance unless the previous one already happened. */
-static int stage;
+static volatile int stage;
 
 /* -Wglobal-constructors exists to flag initialization hiding before main;
  * proving that initialization runs is this file's entire purpose. */
