@@ -1,8 +1,11 @@
 CLANG ?= clang
 
-TRIPLE := aarch64-unknown-linux-gnu
-OUT    := ../out/libuc
-UAPI   := ../out/uapi/include
+ARCH   ?= aarch64
+TRIPLE := $(ARCH)-unknown-linux-gnu
+OUT    := ../out/libuc/$(ARCH)
+# arm64's uapi export predates the second architecture and keeps its name;
+# x86_64's comes from `docker buildx bake uapi-x86_64`.
+UAPI   := $(if $(filter x86_64,$(ARCH)),../out/uapi-x86_64/include,../out/uapi/include)
 
 # Probed because Apple clang has no minimal runtime; the handlers the
 # instrumentation calls are src/ubsan.c. local-bounds is extra to the
@@ -42,7 +45,7 @@ ASFLAGS := --target=$(TRIPLE) -ffreestanding -g
 LDFLAGS := --target=$(TRIPLE) -nostdlib -nostartfiles -static -fuse-ld=lld \
            -Wl,-T,libuc.ld -Wl,-z,norelro
 
-CORE := $(OUT)/arch/aarch64/start.o $(OUT)/start.o $(OUT)/ubsan.o \
+CORE := $(OUT)/arch/$(ARCH)/start.o $(OUT)/start.o $(OUT)/ubsan.o \
         $(OUT)/string.o
 
 OBJECTS     := $(CORE) $(OUT)/main.o
@@ -67,7 +70,7 @@ $(OUT)/start.elf: $(OBJECTS) libuc.ld
 $(OUT)/lz4.elf: $(LZ4_OBJECTS) libuc.ld
 	$(CLANG) $(LDFLAGS) -o $@ $(LZ4_OBJECTS)
 
-$(OUT)/arch/aarch64/start.o: src/arch/aarch64/start.S Makefile
+$(OUT)/arch/$(ARCH)/start.o: src/arch/$(ARCH)/start.S Makefile
 	@mkdir -p $(@D)
 	$(CLANG) $(ASFLAGS) $(CPPFLAGS) -c $< -o $@
 
