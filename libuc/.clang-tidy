@@ -1,0 +1,3 @@
+# Same configuration as the repo root. The file exists because Meson only
+# generates its clang-tidy target when it finds one at its own source root.
+InheritParentConfig: true
