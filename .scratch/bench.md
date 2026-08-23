@@ -34,6 +34,7 @@ same shape as `verbose`.
 | yield round trip — switch, dispatch, queue, switch | 19.45 | **23.27** | 23.82 |
 | spawn + exit + yield | 58.49 | **61.19** | 62.93 |
 | bare syscall (`sigaltstack(NULL, &old)`) | 71.58 | **77.29** | 77.97 |
+| empty `io_uring_enter` (0 submit, 0 complete) | — | **89.17** | — |
 | ring NOP, one op in flight | 238.76 | **256.65** | 260.72 |
 
 ns per operation.
@@ -65,6 +66,33 @@ costs 2.8x the syscall it replaces.
 
 The curve is still descending at 30, so the crossover is a ceiling rather than
 an asymptote — 30 is simply the largest that fits, since `RT_FIBER_MAX` is 32.
+
+### Where the 220 ns actually goes
+
+Measured, not apportioned by arithmetic:
+
+| part | ns | share |
+|---|---|---|
+| our switch pair, queues, staging | ~14 | 7% |
+| the syscall itself — empty `io_uring_enter` | 89 | 40% |
+| io_uring's submit, execute, complete | ~117 | 53% |
+
+**The runtime's own machinery is about 7% of a ring operation.** Making our
+code infinitely fast would take 220 ns to 205. Anyone optimising the ring path
+should start with the number of enters, not with `scheduler.c`.
+
+`io_uring_enter` is also not an expensive syscall — 89 ns against a 74 ns
+floor, 20% over the cheapest syscall that exists. So the per-op cost at low
+concurrency is not io_uring being heavy. It is that **one op in flight means
+one syscall per op**, which is exactly what a syscall-based design does. The
+ring cannot win on that count, and loses by the SQ/CQ bookkeeping each op
+carries on top. The whole advantage is amortising one enter across many ops,
+which the curve above shows working.
+
+The lever this points at is fewer enters. `io_uring/loop.c` and `bpf-ops.c`
+run the event loop in-kernel as a BPF struct_ops callback, removing the enter
+from the per-op path entirely; plan.md keeps that reachable and this is the
+first measurement arguing for it.
 
 Two things this does not say. It uses `IORING_OP_NOP`, which isolates the cost
 of the mechanism by doing no work; a real `recv` has kernel work that dominates

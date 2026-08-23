@@ -206,6 +206,8 @@ static unsigned long bench_clock_ticks;
 static unsigned long bench_spawn_ticks;
 static unsigned long bench_wake_ticks;
 static unsigned long bench_syscall_ticks;
+static unsigned long bench_enter_ticks;
+static struct rt_ring *bench_ring;
 static struct rt_fiber_queue bench_empty_q;
 static unsigned long bench_sink;
 static unsigned long bench_spawned;
@@ -272,6 +274,16 @@ static void bench_fiber([[maybe_unused]] void *arg) {
 
   t0 = rt_ticks();
   for (unsigned long i = 0; i < BENCH_NOP; i++) {
+    auto r = sys_io_uring_enter(bench_ring->fd, 0, 0, 0, nullptr, 0);
+    if (sys_failed(r)) {
+      put_str("bench: empty enter failed\n");
+      return;
+    }
+  }
+  bench_enter_ticks = rt_ticks() - t0;
+
+  t0 = rt_ticks();
+  for (unsigned long i = 0; i < BENCH_NOP; i++) {
     struct sigaltstack old;
     auto r = sys_sigaltstack(nullptr, &old);
     if (r != 0) {
@@ -306,6 +318,7 @@ static void rt_bench(struct rt_scheduler *s) {
   put_dec(rt_tick_hz());
   put_str(" Hz\n");
 
+  bench_ring = &s->ring;
   if (rt_scheduler_spawn(s, bench_fiber, nullptr) != 0) {
     put_str("bench: spawn failed\n");
     return;
@@ -319,6 +332,7 @@ static void rt_bench(struct rt_scheduler *s) {
   bench_report("bench: rt_ticks itself    ", bench_clock_ticks, BENCH_CURRENT);
   bench_report("bench: wake (switch pair) ", bench_wake_ticks, BENCH_YIELD);
   bench_report("bench: bare syscall       ", bench_syscall_ticks, BENCH_NOP);
+  bench_report("bench: empty io_uring_ente", bench_enter_ticks, BENCH_NOP);
   bench_report("bench: spawn+exit+yield   ", bench_spawn_ticks, BENCH_SPAWN);
 
   if (bench_spawned != BENCH_SPAWN) {
