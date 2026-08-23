@@ -15,6 +15,12 @@
       forAllSystems = nixpkgs.lib.genAttrs systems;
     in
     {
+      packages.aarch64-darwin.llvm23-rc3 =
+        let
+          pkgs = import nixpkgs { system = "aarch64-darwin"; };
+        in
+        import ./llvm23-rc3.nix { inherit pkgs; };
+
       devShells = forAllSystems (
         system:
         let
