@@ -31,7 +31,7 @@ Two consequences, both cutting against normal instincts:
 | question | what would answer it | status |
 |---|---|---|
 | Does the ring cover the ABI? | every op libuc needs has an opcode | largely answered — plan.md's verified list, extended here |
-| Does io-wq stay out of it? | the tripwire | RT-008 |
+| Does io-wq stay out of it? | cap the pool and watch `/proc/self/task` once file I/O can punt | **open** — sockets cannot punt, so nothing to check yet |
 | Is blocking-as-suspension actually cheap? | switch + ring round trip vs a syscall | **open** — not measured yet |
 | Does per-fiber TLS work? | a guest `_Thread_local` resolving through `tpidr_el0` across a switch | **no ticket** — cheap, and the answer shapes the TCB |
 | Can cooperative scheduling host foreign C at all? | vendor a static library and run it on a fiber | **answered — spiked, see below.** zstd/xz/sqlite run unmodified on a 20-symbol pthread shim |

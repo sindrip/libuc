@@ -87,8 +87,8 @@ Correctness does not need it. `SINGLE_ISSUER` stores `get_task_struct(current)`
 (`io_uring.c:3067`) and every enforcement site compares against `current`
 (`tctx.c:202-204`, `register.c:764`, `rsrc.c:1433-1434`, `tw.c:313`,
 `tw.h:108`). The only `set_cpus_allowed_ptr` calls in io_uring are
-`sqpoll.c:307-311` and `io-wq.c:791` — the two mechanisms this design forbids
-and tripwires. A scheduler thread that migrates carries its ring, arena and
+`sqpoll.c:307-311` and `io-wq.c:791` — the two mechanisms this design forbids.
+A scheduler thread that migrates carries its ring, arena and
 stacks with it; nothing is unmapped and no pointer changes.
 
 What pinning buys is the wakeup path. The loop passes `min_complete = 1` when

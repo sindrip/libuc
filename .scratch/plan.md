@@ -27,7 +27,7 @@ the target is an Apple Silicon VM running the guest under QEMU.
 | Language | C23 (`-std=c23`) |
 | Toolchain | Clang for the runtime, GCC for the kernel |
 | Userspace | Runtime is PID 1 |
-| io-wq | Designed never to trigger; low `IOWQ_MAX_WORKERS` as a tripwire |
+| io-wq | Designed never to trigger; cap the pool when file I/O first makes a punt reachable |
 | Preemption | None. Cooperative + `rt_yield()` |
 | BPF loop | Not now, but stay reachable |
 
@@ -241,7 +241,7 @@ Two things were tried and rejected:
   `rcu_preempt` kthread — which is unrequested behaviour today in exchange for a
   measurement capability that is out of scope until bare metal.
 - `PREEMPT_RT`, on architectural grounds: it threads IRQ handlers and softirqs
-  onto our cores, the same interference class RT-008 exists to detect. Also note
+  onto our cores, the same interference class as an io-wq punt. Also note
   `rt` here means *runtime*, not realtime; nothing in this design is about hard
   latency bounds.
 
@@ -371,10 +371,9 @@ Used nowhere else. Documented as a carve-out, not discovered as a violation.
 | RT-005 | Raw ring setup + NOP | 003 | `io_uring_setup` succeeds; NOP SQE submitted, CQE reaped, `res == 0` |
 | RT-006 | **Milestone 1** — join them | 004, 005 | Task suspends on NOP, scheduler resumes it, `hello` via `IORING_OP_WRITE`, no panic |
 | RT-007 | Crash handler — **do before RT-004** | 003 | Deliberate null deref dumps registers + FP chain to console |
-| RT-008 | io-wq tripwire | 005 | `IOWQ_MAX_WORKERS` registered low; no `iou-wrk-*` in `/proc/<pid>/task` |
 | RT-009 | **Milestone 2** — echo server | 006 | **done** — accept loop, fiber per connection; concurrent clients interleave, pool exhaustion is reported and recovers |
 
-**Execution order is 001, 002, 003, 007, 004, 005, 006, 008** — not the
+**Execution order is 001, 002, 003, 007, 004, 005, 006** — not the
 numbering. RT-001 and RT-002 are independent of the runtime: RT-001 decides
 which language dialect actually compiles, and RT-002 must exist before RT-004
 because debugging hand-rolled aarch64 context-switch asm without a debugger is
@@ -431,9 +430,7 @@ RT-003 lands.
 
 Then confirm the architecture's central claim holds. There is no shell, so the
 runtime reports on itself: read `/proc/self/task` **through ring opcodes** and
-`raw_write` the count — 1 at milestone 1, N at milestone 3. The absence of
-`iou-wrk-*` entries is the check that the io-wq tripwire is holding and that no
-accidental punt path has crept in. `./debug.sh` is the independent second
-opinion.
+`raw_write` the count — 1 at milestone 1, N at milestone 3. `./debug.sh` is the
+independent second opinion.
 
 Debug with `./debug.sh` + `lldb` → `gdb-remote localhost:1234`.

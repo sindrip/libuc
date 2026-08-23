@@ -82,7 +82,7 @@ As PID 1 the runtime owns the machine, so it can install a BPF scheduler whose
 whole policy is: worker threads own their cores; every kthread, softirq, and
 io-wq stray is shepherded to core 0. Replaces `isolcpus` boot-arg folklore with
 policy-as-code the runtime installs about itself. This is the answer to the
-threat RT-008 detects, not just a better tripwire.
+io-wq threat itself, not just a better tripwire.
 
 Verified: `CONFIG_SCHED_CLASS_EXT is not set` in `out/kernel.config` — as
 predicted, this direction costs a fragment addition and a kernel rebuild
@@ -92,11 +92,11 @@ before anything can be tried. Still to verify: minimal scheduler size.
 needs no config work — and `CONFIG_IO_URING_ZCRX=y` (zero-copy receive) is
 on, adjacent to direction 3's steering ideas.)
 
-### 5. RT-008 becomes precise: fentry on the io-wq enqueue path
+### 5. The io-wq tripwire, made precise: fentry on the enqueue path
 
-Today's tripwire is polling `/proc/self/task` for `iou-wrk-*`. A fentry program
-on the io-wq enqueue function fires at the moment of the first punt, carrying
-the opcode that caused it. The tripwire becomes an alarm with a culprit.
+Polling `/proc/self/task` for `iou-wrk-*` observes a punt only after the fact.
+A fentry program on the io-wq enqueue function fires at the moment of the first
+punt, carrying the opcode that caused it — an alarm with a culprit.
 
 Verify: the enqueue symbol in `out/src/io_uring/io-wq.c`; fentry availability
 under this config.

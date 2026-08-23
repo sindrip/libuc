@@ -49,8 +49,8 @@ reach than ownership transfer because it needs no exception to invariant 3.
     RESTRICTIONS sealing sequence in bpf.md).
   - the pure-data path to a `DEFER_TASKRUN` target never punts to io-wq — the
     trylock/`-EAGAIN` punt (`msg_ring.c:40-55`) is only for non-remote/IOPOLL
-    targets and fd-passing. Use `IORING_MSG_DATA` only; RT-008's tripwire
-    stays quiet.
+    targets and fd-passing. Use `IORING_MSG_DATA` only and io-wq stays
+    out of it.
   - `IORING_MSG_RING_CQE_SKIP` suppresses the sender-side CQE — doorbells can
     be fire-and-forget. And `io_uring_sync_msg_ring` (`msg_ring.c:335`, via
     `IORING_REGISTER_SEND_MSG_RING`) can send data *without a source ring* —
