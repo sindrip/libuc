@@ -44,6 +44,12 @@ SECTIONS
   .libuc.reject.finiarr : { KEEP(*(.fini_array .fini_array.*)) }
 }
 
+/* ENTRY alone is advisory: a link missing the startup object gets only a
+ * "cannot find entry symbol" warning and an entry address of garbage. Make
+ * it fatal. */
+ASSERT(DEFINED(_start),
+       "libuc: the startup object (arch/<arch>/start.o) is missing from the link")
+
 /* Permanent: these formats died with the sandwich linking scheme. */
 ASSERT(SIZEOF(.libuc.reject.init) == 0,
        "libuc: legacy .init code fragments are unsupported (crti/crtn-era object?)")
