@@ -108,11 +108,13 @@ Named so the interface above is not read as complete.
   exists the id carries no generation, and `struct rt_scheduler` carries no
   id field at all — a field written once and read by nothing reads as state
   the runtime maintains.
-- **A woken fiber is not checked for being already queued.** WAKE's target
-  must have just been popped from a wait queue; waking one already on a queue
-  links it into two lists through the single `ready_next` field. Detecting it
-  needs a fiber to record which queue holds it, which is a field whose only
-  reader would be a panic — deferred on the same grounds as the state enum.
+- **Nothing prevents a fiber from being on two queues.** `ready_next` is a
+  single field, so a fiber linked into two lists corrupts both. `wake_one`
+  removed the only sanctioned way to do it, but `rt_fiber_queue_push` is still
+  reachable from fiber context for program-owned queues, and nothing checks.
+  Detecting it needs a fiber to record which queue holds it, which is a field
+  whose only reader would be a panic — deferred on the same grounds as the
+  state enum.
 - **The deadlock report says nothing about who.** The condition is exact —
   ready empty, nothing staged, nothing in flight, fibers alive — and verified
   reachable. But `libuc.md`'s spike found the entire value was in naming the
@@ -154,7 +156,77 @@ IO     carries a struct io_uring_sqe the scheduler will stage
 EXIT   the fiber function returned
 PARK   carries a wait queue; only another fiber can undo it
 WAKE   carries a fiber to make runnable — serviced without suspending
+SPAWN  carries an entry point and argument — serviced without suspending
 ```
+
+### The request protocol is an algebraic-effect handler
+
+This is not merely an analogy to effects; it is the operational shape of one.
+The runtime does not expose effect syntax, typed effect rows or programmable
+handlers, but all of the machine parts are present:
+
+| effect term | runtime representation |
+|---|---|
+| effect signature | `enum rt_fiber_request_kind` |
+| operation arguments | `request.value` |
+| perform | write the request, then `rt_fiber_suspend` |
+| continuation | the fiber's saved context and stack |
+| handler | `rt_scheduler_resume` plus dispatch |
+| resumption policy | the ready, submit and wait queues |
+| operation result | `fiber->result` |
+
+The continuation is concrete rather than compiler-manufactured: it is the rest
+of the fiber's computation, delimited by the fiber entry/exit boundary and
+preserved on its stack. It is one-shot. The scheduler may retain it, move it
+between queues, resume it, or discard it at EXIT, but it cannot clone it and a
+fiber cannot resume itself. Queue membership is therefore ownership of a
+continuation, not merely bookkeeping about one.
+
+The current effect signature is:
+
+```text
+Yield : () -> ()
+Io    : Sqe -> i32
+Park  : WaitQueue -> ()
+Wake  : Fiber -> ()
+Spawn : (fn, arg) -> Result
+Exit  : () -> Never
+```
+
+Their handlers choose different resumption policies. YIELD places the
+continuation at the back of the ready queue. IO retains it until the CQE.
+PARK transfers it to a wait queue. WAKE and SPAWN mutate scheduler-owned state
+and immediately resume the performing continuation. EXIT never resumes it and
+returns its fiber slot to the idle pool.
+
+IO is a nested effect boundary rather than a second implementation of kernel
+I/O:
+
+```text
+fiber performs IO { SQE }
+    -> scheduler retains the continuation and stages the SQE
+    -> kernel completes with a CQE
+    -> scheduler writes fiber->result and resumes the continuation
+```
+
+That is what lets ordinary blocking C remain direct style. `write(fd, buf,
+len)` looks like a call, while underneath it performs IO and the scheduler
+handles it. The buffer loan travels with the retained continuation: the handler
+may not resume or discard that continuation as though the operation were over
+until the kernel has released every referenced address. The cancellation rule
+below is the resource consequence of the effects model, not an io_uring
+special case.
+
+The admission rule for future request kinds is therefore:
+
+> Put an operation in this protocol when it must transfer the continuation or
+> requires authority over scheduler-owned state. Otherwise it remains an
+> ordinary call.
+
+This keeps the request union an effect signature rather than a miscellaneous
+command bucket. It admits YIELD, IO, PARK, WAKE, SPAWN and EXIT. It does not by
+itself admit `malloc`; that depends on who ultimately owns allocation state,
+which is the open question below.
 
 **WAKE is a request, not a call, and that is the point.** A fiber could
 enqueue onto the scheduler's ready queue directly; it would work, because the
@@ -164,6 +236,37 @@ mutated from fiber context under three unchecked conditions, and the first
 `rt_fiber_queue_pop` from fiber context — waking a fiber that is already
 queued, say — would corrupt `ready_next` by linking it into two lists.
 
+**WAKE names the wait queue, never a fiber.** It first took a
+`struct rt_fiber *`, which meant the caller wrote
+`rt_fiber_queue_pop(&q)` and then `rt_fiber_wake(f)` — two steps with the
+fiber on no queue at all in between, owned by nothing but a local variable.
+Every failure mode lived in that window: skip the second step and the fiber is
+unreachable while still counted live, so the scheduler eventually reports a
+deadlock it cannot attribute; repeat it and the same fiber is pushed twice,
+which is the `ready_next` corruption above arriving by the sanctioned route
+rather than the forbidden one.
+
+The fiber pool made a third one possible that had not existed before. While
+fibers were never recycled a retained `struct rt_fiber *` stayed valid
+forever; once `rt_fiber_start` re-initialises a fiber taken from `idle`, a
+stale pointer names a later incarnation, and waking it is an ABA that corrupts
+whichever queue the new occupant is on.
+
+`rt_fiber_wake_one(struct rt_fiber_queue *)` closes all three by construction,
+because there is no window and no pointer: the scheduler pops from the wait
+queue and pushes onto ready inside one serviced request, and returns whether
+it found anyone. The pair is symmetric — `rt_fiber_park` and
+`rt_fiber_wake_one` both name only the queue, and neither side of a handoff
+can hold a fiber across it.
+
+That is the transferable part of the Rust operation model. C cannot prove the
+transfer, but it can refuse to hand out the pointer that makes getting it
+wrong expressible: **wait queue owns the fiber → the scheduler moves it →
+ready queue owns the fiber**, with no representable state in between. Waking a
+*specific* fiber is deliberately not offered; when something needs it, it wants
+a generation-bearing handle rather than a raw pointer, which is the same answer
+the id encoding above already reaches for.
+
 So `rt_scheduler_resume` loops: it services a WAKE and switches straight back,
 returning only on a request that genuinely suspends. The waker keeps the CPU
 and is never re-queued. It costs a switch round trip, roughly 12 ns, and buys
@@ -172,8 +275,8 @@ with the scheduler actually running.
 
 That splits requests into two categories worth naming: **suspending** (YIELD,
 IO, PARK, EXIT), which dispatch files onto a queue, and **serviced**
-(WAKE), which never reaches dispatch — a WAKE arriving there means the resume
-loop let one through, and it panics.
+(WAKE, SPAWN), which never reach dispatch — either arriving there means the
+resume loop let one through, and it panics.
 
 The one case that does not fit this shape is `malloc`. A switch round trip
 roughly doubles an allocation, and `libuc.md` says the per-scheduler arena is
@@ -187,13 +290,12 @@ companion state field: what a fiber *is* follows from what the scheduler did
 with the request, and the scheduler does not need to write down its own
 conclusions.
 
-**Why a tagged union rather than a state value.** Encoding the request in
-a fiber state works only while every request corresponds to a distinct
-resulting state. That holds for the three kinds above and stops holding at the
-first request carrying a payload, because no enum value can hold a pointer.
-`PARK`, waiting on a queue another fiber will signal, is that first request —
-so the union is justified by the case that is not built yet, not by the ones
-that are.
+**Why a tagged union rather than a state value.** Encoding the request in a
+fiber state works only while every request corresponds to a distinct resulting
+state and needs no arguments. That stopped being true when IO needed an SQE;
+PARK, WAKE and SPAWN now carry three other payload shapes. An enum value can
+name the operation but cannot carry its arguments, which is exactly the
+effect-signature distinction between an operation and its invocation.
 
 **The dividend was single ownership of the fiber state, and then the state
 itself.** Before the split, the fiber wrote one state on its way out and the
@@ -261,6 +363,21 @@ returns. C cannot type that, and the guarantee does not come from the pointer
 — it comes from the protocol: **the fiber cannot run again until the reap loop
 has seen its CQE**, so it cannot return past the frame holding the buffer, and
 cannot reuse or overwrite it.
+
+**Validity is necessary and not sufficient; the requirement is exclusive
+access.** For the whole window the memory must not be read or written by
+anyone — not just not freed. The kernel may write a receive buffer at any
+point until the CQE, so its contents are indeterminate throughout, and a read
+of even the untouched tail is a read of an in-flight destination.
+
+The protocol argument covers the suspending fiber and **stops there**, which
+is the hole worth naming: it says nothing about any *other* fiber, and those
+are running. It holds today only because of where addresses come from —
+a fiber's own stack, which no other fiber can name, or static storage that
+happens not to be shared. The second half of that is a convention, not a
+mechanism: two fibers sharing one static buffer is ordinary C, compiles
+silently, and breaks this immediately. It is the same aliasing gap that makes
+the Rust model untranslatable, arriving from the other direction.
 
 Stated at `rt_fiber_await_io` in `fiber.c`, which is the only place a
 pointer-bearing request is published, and the reason all nine operations route

@@ -39,8 +39,6 @@ struct rt_fiber_request {
 
     struct rt_fiber_queue *wait_queue;
 
-    struct rt_fiber *wake;
-
     struct rt_fiber_spawn spawn;
   } value;
 };
@@ -72,7 +70,7 @@ void rt_fiber_yield(void);
 
 void rt_fiber_park(struct rt_fiber_queue *q);
 
-void rt_fiber_wake(struct rt_fiber *f);
+[[nodiscard]] bool rt_fiber_wake_one(struct rt_fiber_queue *q);
 
 [[nodiscard]] int rt_fiber_spawn(void (*fn)(void *), void *arg);
 

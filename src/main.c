@@ -293,12 +293,9 @@ static void parker_fiber([[maybe_unused]] void *arg) {
 }
 
 static void waker_fiber([[maybe_unused]] void *arg) {
-  struct rt_fiber *f = rt_fiber_queue_pop(&park_q);
-  if (f == nullptr) {
+  if (!rt_fiber_wake_one(&park_q)) {
     put_str("park: nobody parked\n");
-    return;
   }
-  rt_fiber_wake(f);
 }
 
 static void rt009_park(struct rt_scheduler *s) {

@@ -114,14 +114,16 @@ void rt_fiber_park(struct rt_fiber_queue *q) {
   rt_fiber_suspend(self);
 }
 
-void rt_fiber_wake(struct rt_fiber *f) {
+bool rt_fiber_wake_one(struct rt_fiber_queue *q) {
   struct rt_fiber *self = rt_fiber_current();
 
   self->request = (struct rt_fiber_request){
       .kind = RT_REQUEST_WAKE,
-      .value = {.wake = f},
+      .value = {.wait_queue = q},
   };
   rt_fiber_suspend(self);
+
+  return self->result != 0;
 }
 
 int rt_fiber_await_io(struct io_uring_sqe sqe) {

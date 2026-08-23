@@ -58,7 +58,11 @@ void rt_scheduler_resume(struct rt_scheduler *s, struct rt_fiber *t) {
     rt_switch(&s->context, &t->ctx);
 
     if (t->request.kind == RT_REQUEST_WAKE) {
-      rt_fiber_queue_push(&s->ready, t->request.value.wake);
+      struct rt_fiber *woken = rt_fiber_queue_pop(t->request.value.wait_queue);
+      if (woken != nullptr) {
+        rt_fiber_queue_push(&s->ready, woken);
+      }
+      t->result = (woken != nullptr) ? 1 : 0;
     } else if (t->request.kind == RT_REQUEST_SPAWN) {
       t->result = rt_scheduler_spawn(s, t->request.value.spawn.fn,
                                      t->request.value.spawn.arg);
