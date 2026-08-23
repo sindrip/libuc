@@ -215,6 +215,36 @@ static unsigned long bench_spawned;
 static void bench_child([[maybe_unused]] void *arg) { bench_spawned++; }
 
 static constexpr unsigned long BENCH_BATCH_OPS = 5000;
+static constexpr unsigned long BENCH_WRITE_OPS = 5000;
+
+static char bench_wbuf[8];
+static unsigned long bench_rawwrite_ticks;
+
+static void bench_write_fiber([[maybe_unused]] void *arg) {
+  for (unsigned long i = 0; i < BENCH_WRITE_OPS; i++) {
+    if (rt_write(1, bench_wbuf, 0) != 0) {
+      put_str("bench: ring write failed\n");
+      return;
+    }
+  }
+}
+
+static void bench_write(struct rt_scheduler *s, unsigned long k) {
+  auto t0 = rt_ticks();
+  for (unsigned long i = 0; i < k; i++) {
+    if (rt_scheduler_spawn(s, bench_write_fiber, nullptr) != 0) {
+      put_str("bench: write spawn failed\n");
+      return;
+    }
+  }
+  rt_scheduler_run(s);
+  auto ticks = rt_ticks() - t0;
+
+  put_str("bench: write via ring, ");
+  put_dec(k);
+  put_str(k < 10 ? " fiber  " : " fibers ");
+  bench_report("", ticks, k * BENCH_WRITE_OPS);
+}
 
 static void bench_batch_fiber([[maybe_unused]] void *arg) {
   for (unsigned long i = 0; i < BENCH_BATCH_OPS; i++) {
@@ -338,6 +368,20 @@ static void rt_bench(struct rt_scheduler *s) {
   if (bench_spawned != BENCH_SPAWN) {
     put_str("bench: spawn count mismatch\n");
   }
+
+  auto w0 = rt_ticks();
+  for (unsigned long i = 0; i < BENCH_WRITE_OPS; i++) {
+    if (raw_write(1, bench_wbuf, 0) != 0) {
+      put_str("bench: raw write failed\n");
+      return;
+    }
+  }
+  bench_rawwrite_ticks = rt_ticks() - w0;
+  bench_report("bench: write via syscall  ", bench_rawwrite_ticks,
+               BENCH_WRITE_OPS);
+  bench_write(s, 1);
+  bench_write(s, 4);
+  bench_write(s, 30);
 
   bench_batch(s, 1);
   bench_batch(s, 4);

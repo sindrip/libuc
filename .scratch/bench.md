@@ -106,6 +106,44 @@ blocking-as-suspension is cheap in the sense libuc means — that a blocked
 fiber costs nothing while others run — is a different measurement that needs
 a workload where threads would actually block.
 
+## Same operation, syscall against ring: the syscall wins
+
+The question the NOP figures do not answer: for identical work on one thread,
+is the ring faster in wall clock? Measured with `write(1, buf, 0)` — the same
+call, in the same binary, once through `raw_write` and once through
+`rt_write`, so both take the same VFS path and neither touches the device.
+
+| | median ns/op |
+|---|---|
+| via raw syscall | **160.13** |
+| via ring, 1 fiber | 362.29 |
+| via ring, 4 fibers | 235.23 |
+| via ring, 30 fibers | 201.97 |
+
+**The ring loses at every concurrency this machine can reach** — 2.3x at one
+op in flight, still 1.26x at thirty. Batching amortises `io_uring_enter` down
+to about 3 ns/op and no further, because the rest is per-operation: writing a
+64-byte SQE, reading the CQE, two queue operations, `owner` and counter
+bookkeeping, and the 14 ns switch pair. Call it ~40 ns per op that a syscall
+does not pay.
+
+Being fixed, that overhead matters in proportion to how cheap the operation
+is. A zero-length write is near the syscall floor at 160 ns, so 40 ns is 26%.
+Against a socket `recv` costing microseconds of kernel work it is noise.
+
+**And the syscall loop cannot do the job.** It is a straight line of writes in
+one fiber: no multiplexing, nothing else can run. The ring version is
+interleaving thirty independent fibers and paying for that. The comparison
+that would actually decide a server design is epoll plus non-blocking syscalls
+against fibers plus ring — where epoll pays `epoll_wait` and per-fd
+bookkeeping, and cannot use blocking calls at all. **That has not been
+measured, and it is the one that matters.**
+
+So the defensible claim is narrow: for a fixed sequence of operations on one
+thread, raw syscalls are faster, always. The ring buys operations outstanding
+while the thread does other work, and a benchmark with nothing else to do
+gives it no way to show that.
+
 ## Echo server, end to end
 
 Measured from the host through QEMU's user-mode networking with the port
