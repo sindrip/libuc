@@ -1,0 +1,100 @@
+# Measurements
+
+Status: measured 2026-08-23 on the development machine — Apple Silicon,
+QEMU 11.1.0 + hvf, 1 vCPU, guest Linux 7.2. Numbers are for this substrate.
+They are reproducible here, which is what makes them useful for comparing
+changes against each other.
+
+## Method
+
+`rt_ticks()` reads `CNTVCT_EL0`, preceded by `isb` so the read is not
+speculated past. `CNTFRQ_EL0` reports **24 MHz**, so one tick is 41.67 ns —
+far too coarse for a single operation, which is why every figure below is a
+loop of 20k–1M iterations divided by the count. `rt_ticks()` itself costs
+~10.6 ns, dominated by the `isb`; bracketing a 200k-iteration loop with two of
+them is a rounding error.
+
+The counter read is an instruction, not a syscall, so it raises no question
+under invariant 1.
+
+**Every figure is min/median/max over five cold boots.** Single runs are
+misleading here: the ring figure alone swings 38% between boots, which is
+wider than several of the effects being measured. `libuc.md` records a
+performance claim that was made on one run of each and did not survive.
+
+The bench code lives in `main.c` behind a `bench` flag, off by default, in the
+same shape as `verbose`.
+
+## Runtime primitives
+
+| | min | median | max |
+|---|---|---|---|
+| `rt_fiber_current()` | 1.02 | **1.16** | 1.16 |
+| wake — bare switch pair | 13.81 | **14.46** | 14.97 |
+| yield round trip — switch, dispatch, queue, switch | 19.45 | **23.27** | 23.82 |
+| spawn + exit + yield | 58.49 | **61.19** | 62.93 |
+| bare syscall (`sigaltstack(NULL, &old)`) | 71.58 | **77.29** | 77.97 |
+| ring NOP, one op in flight | 238.76 | **256.65** | 260.72 |
+
+ns per operation.
+
+`rt_fiber_current()` at ~1.2 ns is the masking implementation: frame address,
+mask, load, magic compare, load. It is a throughput figure over a million
+independent calls, not a latency one.
+
+`scheduler.md` claimed a WAKE round trip costs "roughly 12 ns". Measured at
+14.5, so the claim was approximately right and is now grounded.
+
+## Is blocking-as-suspension cheap? Not below ~30 concurrent operations
+
+`libuc.md` asks this as an open question: switch plus ring round trip against
+a plain syscall. The comparison depends entirely on how many operations are in
+flight, because one `io_uring_enter` submits all of them.
+
+| fibers with an op in flight | ns/op (median) |
+|---|---|
+| 1 | 218.57 |
+| 4 | 106.28 |
+| 16 | 88.29 |
+| 30 | 76.11 |
+| — bare syscall, for comparison | **77.29** |
+
+**The ring breaks even against a plain syscall at roughly 30 concurrent
+operations, and loses badly below about 8.** At one operation in flight it
+costs 2.8x the syscall it replaces.
+
+The curve is still descending at 30, so the crossover is a ceiling rather than
+an asymptote — 30 is simply the largest that fits, since `RT_FIBER_MAX` is 32.
+
+Two things this does not say. It uses `IORING_OP_NOP`, which isolates the cost
+of the mechanism by doing no work; a real `recv` has kernel work that dominates
+the difference. And it is one thread — the design's actual argument for the
+ring is that a suspension does not block the thread, which a syscall does, and
+that difference does not appear in a single-threaded microbenchmark at all.
+
+So the honest reading is narrower than the question: the ring's *mechanism* is
+not cheaper than a syscall until concurrency pays for the enter. Whether
+blocking-as-suspension is cheap in the sense libuc means — that a blocked
+fiber costs nothing while others run — is a different measurement that needs
+a workload where threads would actually block.
+
+## Echo server, end to end
+
+Measured from the host through QEMU's user-mode networking with the port
+forward, 64-byte payloads, median of three runs:
+
+| | |
+|---|---|
+| round trips, one connection | 18,070 /s — 55.3 us each |
+| connect + echo + close | 3,284 /s |
+| round trips, 16 concurrent connections | 29,062 /s |
+
+**These measure the harness, not the runtime.** A 55 us round trip against a
+250 ns ring round trip means the runtime is well under 1% of it; the rest is
+virtio-net, slirp in QEMU's main loop, and a Python client. 16 concurrent
+connections reach only 1.6x the single-connection rate, which is the shape of
+a single-threaded bottleneck in QEMU rather than anything in the scheduler.
+
+Useful as a regression check — a change that halves this broke something — and
+useless as a performance figure. A real network number needs vhost/tap or bare
+metal.
