@@ -2,9 +2,6 @@
 
 #include <stdint.h>
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wreserved-identifier"
-
 /* The .init_array boundaries defined by libuc.ld. Implementation-namespace
  * names, because PROVIDE_HIDDEN yields to any definition from an input
  * object — an application symbol spelled the same way would silently
@@ -41,5 +38,3 @@ int __libuc_start(void *initial_stack) {
 
   return main((int)argument_count, argv, envp);
 }
-
-#pragma clang diagnostic pop

@@ -12,10 +12,24 @@ UBSAN := $(shell $(CLANG) --target=$(TRIPLE) $(UBSAN_WANT) -x c -c /dev/null -o 
                  | grep -q . || echo '$(UBSAN_WANT)')
 
 CPPFLAGS := -nostdlibinc -isystem $(UAPI)
+# Two suppressions beyond the root set, both libuc-specific:
+#   reserved-identifier      libuc is the implementation, so __libuc_* and
+#                            __ubsan_* are exactly the names the reserved
+#                            namespace exists to protect for this code.
+#                            Per-file pragmas satisfied the compiler but
+#                            not clangd: a diagnostic push that precedes
+#                            the first declaration lands in the preamble,
+#                            is lost on preamble replay, and the pop then
+#                            errors in the editor on code the build accepts.
+#   empty-translation-unit   fires on clangd's preamble for a file whose
+#                            head is only comments and preprocessor lines
+#                            (ubsan.c: a #define and its invocations) —
+#                            the whole file is never empty.
 WARN := -Weverything -Wno-pre-c23-compat -Wno-pre-c11-compat \
         -Wno-declaration-after-statement -Wno-c++98-compat \
         -Wno-c++98-compat-pedantic -Wno-c++-compat \
-        -Wno-unsafe-buffer-usage -Wno-unused-command-line-argument
+        -Wno-unsafe-buffer-usage -Wno-unused-command-line-argument \
+        -Wno-reserved-identifier -Wno-empty-translation-unit
 CFLAGS := --target=$(TRIPLE) -std=c23 -ffreestanding -fno-stack-protector \
           -fno-omit-frame-pointer -g -O1 $(WARN) -Werror $(UBSAN)
 ASFLAGS := --target=$(TRIPLE) -ffreestanding -g
@@ -38,7 +52,12 @@ OBJECTS := $(OUT)/arch/aarch64/start.o $(OUT)/start.o $(OUT)/ubsan.o \
 
 all: $(OUT)/start.elf
 
-check: $(OBJECTS)
+# Same contract as the root Makefile: the editor reads the flags the build
+# uses, or clangd guesses — and a guess without -std=c23 reports bogus
+# errors ([[noreturn]] mid-macro, unbalanced diagnostic push/pop) in code
+# that compiles. clangd picks the nearest compile_commands.json walking up
+# from each file, so this one covers libuc/ and the root one keeps src/.
+check: compile_commands.json $(OBJECTS)
 
 # check compiles; only this proves the link contract end to end, so it can
 # only run where the ELF can execute (the aarch64 container). 23 is the
@@ -65,5 +84,14 @@ $(OUT)/main.o: test/main.c Makefile
 	@mkdir -p $(@D)
 	$(CLANG) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
 
+compile_commands.json: Makefile $(wildcard src/*.c test/*.c)
+	@printf '[' > $@
+	@sep=""; for f in $(wildcard src/*.c test/*.c); do \
+	  printf '%s\n  {"directory": "%s", "file": "%s", "command": "%s"}' \
+	    "$$sep" "$(CURDIR)" "$(CURDIR)/$$f" \
+	    "$(CLANG) $(CFLAGS) $(CPPFLAGS) -c $$f" >> $@; \
+	  sep=","; done
+	@printf '\n]\n' >> $@
+
 clean:
-	rm -rf $(OUT)
+	rm -rf $(OUT) compile_commands.json

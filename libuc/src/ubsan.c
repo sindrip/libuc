@@ -8,9 +8,6 @@
  * success.
  */
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wreserved-identifier"
-
 #define LIBUC_UBSAN_HANDLER(name)                                              \
   [[noreturn]] void __ubsan_handle_##name##_minimal_abort(void);               \
   [[noreturn]] void __ubsan_handle_##name##_minimal_abort(void) {              \
@@ -39,5 +36,3 @@ LIBUC_UBSAN_HANDLER(shift_out_of_bounds)
 LIBUC_UBSAN_HANDLER(sub_overflow)
 LIBUC_UBSAN_HANDLER(type_mismatch)
 LIBUC_UBSAN_HANDLER(vla_bound_not_positive)
-
-#pragma clang diagnostic pop
