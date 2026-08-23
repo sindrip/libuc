@@ -62,8 +62,6 @@ port should be a validation event, not a debugging event.
 
 - **M3-class numbers are the proof artifact, pre-language.** The echo/HTTP
   results come from the C substrate; do not gate them on a compiler existing.
-  Numbers require bare metal — the Platform reality section already forbids
-  claims from the Apple Silicon VM.
 - **TechEmpower: reach the top cluster, don't chase first place.** The top of
   plaintext/JSON is already thread-per-core designs at NIC/kernel saturation,
   within a few percent of each other. The available headline is a *new

@@ -11,9 +11,8 @@ answered later by what the runtime actually needs.
 
 The repo already contains a working kernel/VM pipeline (`build/kernel.Dockerfile`,
 `docker-bake.hcl`, `run.sh`). This plan adds the runtime itself, plus two small
-fixes to the existing pipeline. Performance is explicitly out of scope for now —
-bare metal comes later; today's target is an Apple Silicon VM where core pinning
-is architecturally meaningful but not measurable.
+fixes to the existing pipeline. Performance is explicitly out of scope for now;
+the target is an Apple Silicon VM running the guest under QEMU.
 
 ## Decisions already settled
 

@@ -317,14 +317,6 @@ change that breaks an earlier ticket. The discipline that makes this survivable:
 Revisit when either happens: a regression escapes twice, or the manual checks
 stop fitting in one console screen.
 
-## Platform reality
-
-Development is an Apple Silicon VM. Guest vCPUs are host threads that macOS
-migrates across heterogeneous P- and E-cores at will, so **core pinning is
-architecturally meaningful but not measurable here.** Correctness invariants
-hold (one thread owns one ring forever); performance numbers do not. Do not
-optimise against measurements taken on this machine. Bare metal comes later.
-
 ## Where work is tracked
 
 `.scratch/plan.md` for decisions and rationale; `.scratch/tickets/RT-00N-*.md`

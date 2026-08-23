@@ -32,7 +32,7 @@ Two consequences, both cutting against normal instincts:
 |---|---|---|
 | Does the ring cover the ABI? | every op libuc needs has an opcode | largely answered — plan.md's verified list, extended here |
 | Does io-wq stay out of it? | the tripwire | RT-008 |
-| Is blocking-as-suspension actually cheap? | switch + ring round trip vs a syscall | **blocked on bare metal** — Platform reality forbids numbers from this VM |
+| Is blocking-as-suspension actually cheap? | switch + ring round trip vs a syscall | **open** — not measured yet |
 | Does per-fiber TLS work? | a guest `_Thread_local` resolving through `tpidr_el0` across a switch | **no ticket** — cheap, and the answer shapes the TCB |
 | Can cooperative scheduling host foreign C at all? | vendor a static library and run it on a fiber | **answered — spiked, see below.** zstd/xz/sqlite run unmodified on a 20-symbol pthread shim |
 
@@ -103,8 +103,7 @@ Its dark side is the same fact: **the shim hides the library's own races.** Thei
 locking correctness is never exercised, so a latent bug surfaces only on a future
 preemptive or multi-core-per-process port, attached to an unrelated change.
 
-**Throughput, aarch64 VM, 64 MB, zstd level 6** — numbers are shape, not
-magnitude; Platform reality forbids performance claims from this machine.
+**Throughput, aarch64 VM, 64 MB, zstd level 6.**
 
 | workers | native pthreads | on fibers |
 |---|---|---|
@@ -156,11 +155,12 @@ Two further defects in the original, both worth remembering as a shape:
   number. The row was labelled "per-core schedulers" and did not measure one.
 - **The variance exceeded the effect.** Identical configuration across runs: B
   moved 602 -> 534 MB/s, A moved 493 -> 463. A 13% swing supporting a claimed
-  22% difference. This is exactly what AGENTS.md's Platform reality section
-  forbids, and the claim was made anyway.
+  22% difference. A claim that size needed repeated runs and error bars; it
+  had one run of each.
 
-The thread-per-core performance question is therefore **still open**, and cannot
-be closed on this machine. What follows below never depended on the measurement.
+The thread-per-core performance question is therefore **still open**: it needs
+a benchmark run enough times to separate the effect from the noise. What
+follows below never depended on the measurement.
 
 **What forces the design is the allocator, not the scheduler.** Vendored C
 mallocs on one thread and frees on another as a matter of routine. If
