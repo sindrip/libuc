@@ -212,9 +212,9 @@ There is also a **`Makefile`, and it is the check that matters while editing.**
 `make check` compiles every source file under `-Weverything -Werror` — a
 strictly stronger warning set than the container build's `-Wall -Wextra
 -pedantic -Wsign-conversion`, and it takes about a second against a Docker
-build's minutes. `make tidy` runs clang-tidy from the same
-`compile_commands.json`, which the Makefile generates so the editor and the
-build cannot drift. **A green `docker buildx bake kernel` does not mean the
+build's minutes. `make tidy` runs clang-tidy over libuc, from
+libuc's own `compile_commands.json`; the Makefile still generates the Make
+tree's so the editor and the build cannot drift. **A green `docker buildx bake kernel` does not mean the
 tree is clean** — the container's flags are the weaker of the two, so run
 `make check` before claiming a build passes.
 

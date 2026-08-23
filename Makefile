@@ -116,10 +116,12 @@ debug: out/vmlinuz
 # reports nullptr/constexpr as undeclared in code that compiles.
 check: compile_commands.json $(OBJ)
 
-# Checks and WarningsAsErrors live in .clang-tidy; flags come from
-# compile_commands.json, so there is no second copy to drift.
-tidy: compile_commands.json
-	clang-tidy --quiet $(wildcard src/*.c src/arch/$(ARCH)/*.c)
+# Checks and WarningsAsErrors live in libuc/.clang-tidy; flags come from
+# libuc's compile_commands.json, so there is no second copy to drift. The Make
+# tree carries no tidy config on purpose: libuc is the deliverable the checks
+# apply to.
+tidy:
+	clang-tidy --quiet -p libuc $(wildcard libuc/src/*.c libuc/src/string/*.c libuc/test/*.c)
 
 # -MMD -MP emits a .d per object listing the headers it read; -include feeds
 # those back so editing syscall.h rebuilds everything that includes it.

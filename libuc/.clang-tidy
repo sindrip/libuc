@@ -1,3 +1,8 @@
-# Same configuration as the repo root. The file exists because Meson only
-# generates its clang-tidy target when it finds one at its own source root.
-InheritParentConfig: true
+Checks: >
+  -*,
+  readability-braces-around-statements
+WarningsAsErrors: '*'
+# Everything not ours — the uapi export, clang's own headers — arrives through
+# -isystem and is excluded before this regex is consulted, so '.*' means
+# "libuc's headers, however the compile command spells the path".
+HeaderFilterRegex: '.*'
