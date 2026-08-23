@@ -121,6 +121,24 @@ freestanding is required to provide:
   the embedded ELF is a runtime check, not a `static_assert`, unless that one
   suppression is added when the milestone arrives.
 
+  That trap is narrower than it reads, and where the boundary falls decides
+  whether `#embed` can import computed constants at all. Measured: a
+  **single-byte** embed used directly as a scalar initializer *is* a constant
+  expression, because `#embed` expands to literal tokens before parsing, so
+  `constexpr unsigned long X =` / `#embed "f.bin"` / `;` folds and
+  `static_assert`s against `sizeof`. Two bytes expands to `168, 0` and is a
+  syntax error in that position. So the usable form caps at 0..255, which is
+  what rules `#embed` out for offsets and sizes — a generated `#define` has no
+  width limit and is plain text rather than a blob. `#embed` earns its place
+  for the BPF object, which is binary that is not valid C source; it is the
+  wrong tool for numbers, which are.
+
+  Nothing here needs an `asm-offsets` step in the first place: `rt_switch` is a
+  `.c` file with inline asm, so `offsetof` reaches the assembler through
+  `%c[]` operands in the same translation unit, and `start.S` needs no struct
+  layout — only `__NR_exit_group`, which reaches it through the C preprocessor
+  because the file is capital-`.S`.
+
 `<stdatomic.h>` remains available, so the ring's acquire/release barriers work
 on day one. (Atomics are technically optional — check `__STDC_NO_ATOMICS__` —
 but GCC and clang both provide them.)
