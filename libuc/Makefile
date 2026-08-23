@@ -12,24 +12,25 @@ UBSAN := $(shell $(CLANG) --target=$(TRIPLE) $(UBSAN_WANT) -x c -c /dev/null -o 
                  | grep -q . || echo '$(UBSAN_WANT)')
 
 CPPFLAGS := -nostdlibinc -isystem $(UAPI)
-# Two suppressions beyond the root set, both libuc-specific:
-#   reserved-identifier      libuc is the implementation, so __libuc_* and
-#                            __ubsan_* are exactly the names the reserved
-#                            namespace exists to protect for this code.
-#                            Per-file pragmas satisfied the compiler but
-#                            not clangd: a diagnostic push that precedes
-#                            the first declaration lands in the preamble,
-#                            is lost on preamble replay, and the pop then
-#                            errors in the editor on code the build accepts.
-#   empty-translation-unit   fires on clangd's preamble for a file whose
-#                            head is only comments and preprocessor lines
-#                            (ubsan.c: a #define and its invocations) —
-#                            the whole file is never empty.
 WARN := -Weverything -Wno-pre-c23-compat -Wno-pre-c11-compat \
         -Wno-declaration-after-statement -Wno-c++98-compat \
         -Wno-c++98-compat-pedantic -Wno-c++-compat \
-        -Wno-unsafe-buffer-usage -Wno-unused-command-line-argument \
-        -Wno-reserved-identifier -Wno-empty-translation-unit
+        -Wno-unsafe-buffer-usage -Wno-unused-command-line-argument
+
+# Two suppressions scoped to the files whose nature earns them; test/main.c
+# stands for application code and keeps the full set.
+#   reserved-identifier      implementation TUs only: __libuc_* and
+#                            __ubsan_* are exactly the names the reserved
+#                            namespace exists to protect for a libc's own
+#                            internals. (Per-file pragmas satisfied the
+#                            compiler but not clangd, whose preamble replay
+#                            loses a diagnostic push that precedes the
+#                            first declaration and then errors on the pop.)
+#   empty-translation-unit   ubsan.c only: clangd's preamble for a file
+#                            whose head is comments and one #define is
+#                            declaration-less; the whole file never is.
+IMPL_WARN  := -Wno-reserved-identifier
+UBSAN_WARN := $(IMPL_WARN) -Wno-empty-translation-unit
 CFLAGS := --target=$(TRIPLE) -std=c23 -ffreestanding -fno-stack-protector \
           -fno-omit-frame-pointer -g -O1 $(WARN) -Werror $(UBSAN)
 ASFLAGS := --target=$(TRIPLE) -ffreestanding -g
@@ -74,11 +75,11 @@ $(OUT)/arch/aarch64/start.o: src/arch/aarch64/start.S Makefile
 
 $(OUT)/start.o: src/start.c Makefile
 	@mkdir -p $(@D)
-	$(CLANG) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
+	$(CLANG) $(CFLAGS) $(IMPL_WARN) $(CPPFLAGS) -c $< -o $@
 
 $(OUT)/ubsan.o: src/ubsan.c Makefile
 	@mkdir -p $(@D)
-	$(CLANG) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
+	$(CLANG) $(CFLAGS) $(UBSAN_WARN) $(CPPFLAGS) -c $< -o $@
 
 $(OUT)/main.o: test/main.c Makefile
 	@mkdir -p $(@D)
@@ -87,9 +88,14 @@ $(OUT)/main.o: test/main.c Makefile
 compile_commands.json: Makefile $(wildcard src/*.c test/*.c)
 	@printf '[' > $@
 	@sep=""; for f in $(wildcard src/*.c test/*.c); do \
+	  case $$f in \
+	    src/ubsan.c) extra="$(UBSAN_WARN)";; \
+	    src/*)       extra="$(IMPL_WARN)";; \
+	    *)           extra="";; \
+	  esac; \
 	  printf '%s\n  {"directory": "%s", "file": "%s", "command": "%s"}' \
 	    "$$sep" "$(CURDIR)" "$(CURDIR)/$$f" \
-	    "$(CLANG) $(CFLAGS) $(CPPFLAGS) -c $$f" >> $@; \
+	    "$(CLANG) $(CFLAGS) $$extra $(CPPFLAGS) -c $$f" >> $@; \
 	  sep=","; done
 	@printf '\n]\n' >> $@
 
