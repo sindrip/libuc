@@ -70,6 +70,42 @@ The Go/Loom alternative — copyable stacks with pointer maps, pinned while C
 frames are live — remains available much later, buys stack *shrinking* on top,
 and is not a prerequisite for millions.
 
+## One stack size, because identity is derived from the address
+
+`rt_fiber_current()` finds the running fiber by masking the frame address down
+to a `RT_STACK_SIZE`-aligned block and reading a head parked at the top of it.
+That removed the process-global the scheduler used to write before every
+switch, and it is shared-nothing by construction: two threads running two
+fibers read two different stacks, with no per-thread state to get wrong.
+
+It also promotes `RT_STACK_SIZE` from a sizing choice into a load-bearing
+constant. Three things ride on it now:
+
+- **power of two** — `static_assert`ed in `fiber.c`;
+- **every stack aligned to it** — enforced by the carve, which maps `2 *
+  RT_STACK_SIZE` `PROT_NONE`, takes the aligned block inside, and unmaps both
+  tails so the VMA count per fiber stays at two;
+- **every stack exactly that size** — not enforceable by an assert, because it
+  is a claim about every future allocation rather than about one constant.
+
+**That third one contradicts the dial above.** Fat and dense stacks coexisting
+under one scheduler means two sizes live at once, and a single compile-time
+mask cannot serve both. So the dial is not reachable while fiber identity comes
+from masking.
+
+The way out is already named above, for a different reason: the dense-mode
+overflow check needs its limit "from the task's TLS/struct, or 2 with a
+dedicated register, which is Go's `g` answer." That register answers both
+questions. Pin the current fiber into it and identity stops depending on the
+address, stack-limit checks get their base for free, and sizes are free to
+vary per task.
+
+So the sequencing is: masking now, because it costs nothing and needs no TCB;
+the register when a second stack class arrives, which is the same milestone
+that forces it anyway. The move is small and local — `rt_fiber_current()` is
+one function with six callers, all in `fiber.c` — and the magic word in the
+head is what makes a mistake during that transition loud rather than silent.
+
 ## Task stack roots and the crash handler
 
 Every task stack starts a new FP chain: prime `x29` to zero in the new
