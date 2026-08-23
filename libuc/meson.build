@@ -13,7 +13,7 @@ project(
     'debug=true',
     'default_library=static',
     'libdir=lib',
-    'optimization=1',
+    'optimization=2',
     'prefix=/usr',
     'warning_level=0',
     'werror=false',

@@ -1,47 +1,50 @@
-#include <stdint.h>
-
 #include <string.h>
+
+typedef unsigned _BitInt(128) block128 [[gnu::aligned(1), gnu::may_alias]];
+
+constexpr size_t block_width = sizeof(block128);
+static_assert(block_width == 16);
+static_assert(alignof(block128) == 1);
+static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__);
+
+[[gnu::always_inline]]
+static inline int compare_block(const unsigned char *a,
+                                const unsigned char *b) {
+  const block128 differences = *(const block128 *)a ^ *(const block128 *)b;
+
+  if (differences == 0) {
+    return 0;
+  }
+
+  const size_t byte = (size_t)__builtin_ctzg(differences) / 8;
+  return a[byte] < b[byte] ? -1 : 1;
+}
 
 int memcmp(const void *lhs, const void *rhs, size_t n) {
   const unsigned char *a = lhs;
   const unsigned char *b = rhs;
 
-  typedef uint64_t word_vector
-      __attribute__((vector_size(16), aligned(1), may_alias));
-  constexpr size_t vector_width = sizeof(word_vector);
-  static_assert(sizeof(uint64_t) * 2 == vector_width);
-  static_assert(alignof(word_vector) == 1);
+  if (n < block_width) {
+    for (size_t i = 0; i < n; i++) {
+      if (a[i] != b[i]) {
+        return a[i] < b[i] ? -1 : 1;
+      }
+    }
+    return 0;
+  }
 
   size_t i = 0;
-  while (n - i >= vector_width) {
-    const word_vector left = *(const word_vector *)(a + i);
-    const word_vector right = *(const word_vector *)(b + i);
-    const word_vector differences = left ^ right;
-    const uint64_t low_difference = differences[0];
-    const uint64_t high_difference = differences[1];
-    if ((low_difference | high_difference) != 0) {
-      uint64_t difference = low_difference;
-      size_t byte = 0;
-      if (low_difference == 0) {
-        byte = sizeof(uint64_t);
-        difference = high_difference;
-      }
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-      byte += (size_t)__builtin_ctzll((unsigned long long)difference) / 8;
-#elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-      byte += (size_t)__builtin_clzll((unsigned long long)difference) / 8;
-#else
-#error "unsupported byte order"
-#endif
-      return a[i + byte] < b[i + byte] ? -1 : 1;
+  while (n - i >= block_width) {
+    const int result = compare_block(a + i, b + i);
+    if (result != 0) {
+      return result;
     }
-    i += vector_width;
+    i += block_width;
   }
 
-  for (; i < n; i++) {
-    if (a[i] != b[i]) {
-      return a[i] < b[i] ? -1 : 1;
-    }
+  if (i == n) {
+    return 0;
   }
-  return 0;
+
+  return compare_block(a + n - block_width, b + n - block_width);
 }
