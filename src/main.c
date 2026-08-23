@@ -392,6 +392,39 @@ static void echo_once(void) {
   }
 }
 
+/* PARK/WAKE acceptance. Expected line: "park/wake ok".
+ *
+ * The ordering is the proof, not just the arrival: parker runs first (spawn
+ * order is queue order), finds nothing to do and parks, at which point it is
+ * on a queue the scheduler does not own and no kernel event exists that could
+ * move it. waker then pops it and asks the scheduler to make it runnable. If
+ * WAKE did not work the scheduler would panic with the deadlock report rather
+ * than hang — ready empty, nothing in flight, one fiber still alive. */
+static struct rt_fiber_queue park_q;
+
+static void parker_fiber([[maybe_unused]] void *arg) {
+  rt_fiber_park(&park_q);
+  put_str("park/wake ok\n");
+}
+
+static void waker_fiber([[maybe_unused]] void *arg) {
+  struct rt_fiber *f = rt_fiber_queue_pop(&park_q);
+  if (f == nullptr) {
+    put_str("park: nobody parked\n");
+    return;
+  }
+  rt_fiber_wake(f);
+}
+
+static void rt009_park(struct rt_scheduler *s) {
+  struct rt_fiber parker;
+  struct rt_fiber waker;
+
+  rt_scheduler_spawn(s, &parker, parker_fiber, nullptr);
+  rt_scheduler_spawn(s, &waker, waker_fiber, nullptr);
+  rt_scheduler_run(s);
+}
+
 /* Liveness, checked by the absence of a hang rather than by a line of its own.
  *
  * Under DEFER_TASKRUN a completion reaches the shared CQ only inside
@@ -484,6 +517,7 @@ static void rt006_demo(struct rt_scheduler *s) {
     rt005_probe();
     rt005_setup_failure();
     rt005_nop();
+    rt009_park(&sched);
   }
   rt006_demo(&sched);
 

@@ -32,28 +32,6 @@
 #include "ring.h"
 #include "fiber.h"
 
-/* FIFO, singly linked through rt_fiber.ready_next. Singly is sufficient
- * because nothing removes from the middle: a fiber leaves the queue by being
- * popped and resumed, and it blocks from inside its own body, by which point
- * it is already off the queue. Anything that later cancels a *ready* fiber
- * forces this doubly linked, which is a layout change to rt_fiber. */
-struct rt_fiber_queue {
-  struct rt_fiber *head;
-  struct rt_fiber *tail;
-  size_t count;
-};
-
-/* No identity field and no cpu field. Both were drafted and dropped: nothing
- * resolves an identity to a scheduler, because there is no registry, and
- * nothing pins a thread, because there is one thread. A field that is written
- * once and read by nothing is worse than an absent one — it reads as state
- * the runtime maintains.
- *
- * Where each returns is known. Identity arrives with the registry that gives
- * it a consumer (.scratch/scheduler.md). Placement arrives as a parameter to
- * init, which is its natural home under the become model: the thread pins
- * itself at the moment it becomes a scheduler, rather than being placed by
- * something else. */
 struct rt_scheduler {
   /* The scheduler's own register state: where a suspending fiber switches
    * back to. Never primed like a fiber's — it is captured lazily by the first

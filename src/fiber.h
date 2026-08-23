@@ -31,6 +31,29 @@
 
 #include "context.h"
 
+/* FIFO, singly linked through rt_fiber.ready_next. Singly is sufficient
+ * because nothing removes from the middle: a fiber leaves the queue by being
+ * popped and resumed, and it blocks from inside its own body, by which point
+ * it is already off the queue. Anything that later cancels a *ready* fiber
+ * forces this doubly linked, which is a layout change to rt_fiber. */
+struct rt_fiber_queue {
+  struct rt_fiber *head;
+  struct rt_fiber *tail;
+  size_t count;
+};
+
+/* No identity field and no cpu field. Both were drafted and dropped: nothing
+ * resolves an identity to a scheduler, because there is no registry, and
+ * nothing pins a thread, because there is one thread. A field that is written
+ * once and read by nothing is worse than an absent one — it reads as state
+ * the runtime maintains.
+ *
+ * Where each returns is known. Identity arrives with the registry that gives
+ * it a consumer (.scratch/scheduler.md). Placement arrives as a parameter to
+ * init, which is its natural home under the become model: the thread pins
+ * itself at the moment it becomes a scheduler, rather than being placed by
+ * something else. */
+
 /* Reached only as a pointer from here, so the definition is not needed and
  * including scheduler.h would be a cycle: it needs struct rt_fiber by value
  * for its queues. */
@@ -59,7 +82,9 @@ enum rt_fiber_request_kind : unsigned {
   RT_REQUEST_NONE = 0,
   RT_REQUEST_YIELD = 1,
   RT_REQUEST_IO = 2,
-  RT_REQUEST_EXIT = 3
+  RT_REQUEST_EXIT = 3,
+  RT_REQUEST_PARK = 4,
+  RT_REQUEST_WAKE = 5
 };
 
 struct rt_fiber_request {
@@ -84,6 +109,19 @@ struct rt_fiber_request {
      * today's one-shot model. Multishot or several concurrent operations per
      * fiber need scheduler-owned operation records instead, not a bigger fiber. */
     struct io_uring_sqe io;
+
+    /* PARK: the queue to be placed on. The scheduler does the push, not the
+     * fiber — a fiber that enqueued itself and then suspended would be
+     * performing scheduler bookkeeping, and the whole reason requests exist
+     * is that it does not have to. */
+    struct rt_fiber_queue *wait_queue;
+
+    /* WAKE: the fiber to make runnable. It must have just been popped from a
+     * wait queue; waking one that is already queued corrupts ready_next by
+     * linking it into two lists. Not checkable today — a fiber does not
+     * record which queue holds it, and adding that field to detect a caller
+     * bug is not yet worth its cost. */
+    struct rt_fiber *wake;
   } value;
 };
 
@@ -218,6 +256,36 @@ void rt_fiber_set_current(struct rt_fiber *f);
  */
 void rt_fiber_yield(void);
 [[nodiscard]] int rt_fiber_await_io(struct io_uring_sqe sqe);
+
+/* Suspend onto a wait queue. Nothing is asked of the kernel, so nothing but
+ * another fiber can make this one runnable again — which is the whole point,
+ * and the reason parking is not a yield loop: while a fiber is parked the
+ * ready queue can reach empty, and only then can the scheduler pass
+ * min_complete=1 and actually sleep in io_uring_enter. A pool of workers
+ * polling with rt_fiber_yield keeps the ready queue non-empty forever and
+ * idles the core at 100%.
+ *
+ * Parking is also the first way this runtime can deadlock: a fiber waiting on
+ * a condition no runnable fiber will signal is wedged, and unlike a fiber
+ * blocked on RECV there is no kernel event that could ever arrive. The
+ * scheduler detects exactly that — ready empty, nothing in flight, fibers
+ * still alive. */
+void rt_fiber_park(struct rt_fiber_queue *q);
+
+/* Make a parked fiber runnable, and keep running.
+ *
+ * A request like any other, rather than a call that enqueues directly. The
+ * scheduler services it and returns immediately, so the waker is not
+ * descheduled — it costs a switch round trip and buys the property that every
+ * mutation of scheduler state happens in scheduler.c while the scheduler is
+ * actually running. A fiber that pushed onto the ready queue itself would be
+ * mutating that queue from inside rt_switch, with the scheduler parked. */
+void rt_fiber_wake(struct rt_fiber *f);
+
+/* Queue operations on fiber-owned queues — a mutex's waiter list, a channel's
+ * receivers. The scheduler uses the same ones for its own queues. */
+void rt_fiber_queue_push(struct rt_fiber_queue *q, struct rt_fiber *f);
+[[nodiscard]] struct rt_fiber *rt_fiber_queue_pop(struct rt_fiber_queue *q);
 
 /* The trampoline branches here when a fiber function returns (switch.c).
  * Requests EXIT and suspends for the last time. */

@@ -108,6 +108,16 @@ Named so the interface above is not read as complete.
   exists the id carries no generation, and `struct rt_scheduler` carries no
   id field at all — a field written once and read by nothing reads as state
   the runtime maintains.
+- **A woken fiber is not checked for being already queued.** WAKE's target
+  must have just been popped from a wait queue; waking one already on a queue
+  links it into two lists through the single `ready_next` field. Detecting it
+  needs a fiber to record which queue holds it, which is a field whose only
+  reader would be a panic — deferred on the same grounds as the state enum.
+- **The deadlock report says nothing about who.** The condition is exact —
+  ready empty, nothing staged, nothing in flight, fibers alive — and verified
+  reachable. But `libuc.md`'s spike found the entire value was in naming the
+  fiber and what it blocked on, and that needs a registry of live fibers,
+  which does not exist. Today it is a correct panic, not a diagnosis.
 - **No shutdown or join.** `rt_scheduler_run` returns today when its last fiber
   dies, which is a probe convenience — `main.c` runs two phases on one
   scheduler. The destination is a loop that does not return merely because
@@ -142,7 +152,35 @@ NONE   cleared by the scheduler before every entry; seeing it on return
 YIELD  still runnable
 IO     carries a struct io_uring_sqe the scheduler will stage
 EXIT   the fiber function returned
+PARK   carries a wait queue; only another fiber can undo it
+WAKE   carries a fiber to make runnable — serviced without suspending
 ```
+
+**WAKE is a request, not a call, and that is the point.** A fiber could
+enqueue onto the scheduler's ready queue directly; it would work, because the
+runtime is cooperative and single-threaded and the push happens while the
+scheduler is parked inside `rt_switch`. It would also be scheduler state
+mutated from fiber context under three unchecked conditions, and the first
+`rt_fiber_queue_pop` from fiber context — waking a fiber that is already
+queued, say — would corrupt `ready_next` by linking it into two lists.
+
+So `rt_scheduler_resume` loops: it services a WAKE and switches straight back,
+returning only on a request that genuinely suspends. The waker keeps the CPU
+and is never re-queued. It costs a switch round trip, roughly 12 ns, and buys
+the property that every mutation of scheduler state happens in `scheduler.c`
+with the scheduler actually running.
+
+That splits requests into two categories worth naming: **suspending** (YIELD,
+IO, PARK, EXIT), which dispatch files onto a queue, and **serviced**
+(WAKE), which never reaches dispatch — a WAKE arriving there means the resume
+loop let one through, and it panics.
+
+The one case that does not fit this shape is `malloc`. A switch round trip
+roughly doubles an allocation, and `libuc.md` says the per-scheduler arena is
+what forces the whole design. That is a signal about the arena being
+questionable — two schedulers can share a CPU, so per-scheduler allocation was
+never obviously right — rather than a reason to let fibers touch scheduler
+state. Unanswered until there is an allocator.
 
 This is the only thing a fiber writes for the scheduler to read. There is no
 companion state field: what a fiber *is* follows from what the scheduler did

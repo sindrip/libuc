@@ -87,6 +87,44 @@ void rt_fiber_create(struct rt_fiber *f, void (*fn)(void *), void *arg) {
   f->ctx.gp[1] = (unsigned long)(uintptr_t)arg;
 }
 
+/* FIFO. Push at the tail so a yielding fiber goes behind everything already
+ * waiting — round-robin falls out, and a fiber that only yields cannot hold
+ * the CPU against its peers. */
+void rt_fiber_queue_push(struct rt_fiber_queue *q, struct rt_fiber *t) {
+  t->ready_next = nullptr;
+  if (q->tail == nullptr) {
+    q->head = t;
+  } else {
+    q->tail->ready_next = t;
+  }
+  q->tail = t;
+  q->count++;
+}
+
+/* nullptr on empty, which is an answer and not a failure: unlocking a mutex
+ * nobody is waiting on is the common case, and the scheduler's own callers
+ * pop against a snapshot of count and cannot see it.
+ *
+ * The unlink clears ready_next: a stale link out of a fiber that is no longer
+ * queued is exactly the kind of thing that makes a corrupted queue look
+ * plausible while walking it. */
+struct rt_fiber *rt_fiber_queue_pop(struct rt_fiber_queue *q) {
+  struct rt_fiber *t = q->head;
+
+  if (t == nullptr) {
+    return nullptr;
+  }
+
+  q->head = t->ready_next;
+  if (q->head == nullptr) {
+    q->tail = nullptr;
+  }
+  t->ready_next = nullptr;
+  q->count--;
+
+  return t;
+}
+
 static struct rt_fiber *current;
 
 struct rt_fiber *rt_fiber_current(void) { return current; }
@@ -111,6 +149,29 @@ void rt_fiber_yield(void) {
   struct rt_fiber *self = rt_fiber_current();
 
   self->request = (struct rt_fiber_request){.kind = RT_REQUEST_YIELD};
+  rt_fiber_suspend(self);
+}
+
+void rt_fiber_park(struct rt_fiber_queue *q) {
+  struct rt_fiber *self = rt_fiber_current();
+
+  self->request = (struct rt_fiber_request){
+      .kind = RT_REQUEST_PARK,
+      .value = {.wait_queue = q},
+  };
+  rt_fiber_suspend(self);
+}
+
+/* Suspends in the mechanical sense — it switches — but not in the scheduling
+ * sense: rt_scheduler_resume services this and switches straight back, so the
+ * caller keeps the CPU and never re-enters the ready queue. */
+void rt_fiber_wake(struct rt_fiber *f) {
+  struct rt_fiber *self = rt_fiber_current();
+
+  self->request = (struct rt_fiber_request){
+      .kind = RT_REQUEST_WAKE,
+      .value = {.wake = f},
+  };
   rt_fiber_suspend(self);
 }
 

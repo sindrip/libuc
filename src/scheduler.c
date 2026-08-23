@@ -14,38 +14,6 @@
 #include "fiber.h"
 #include "syscall.h"
 
-/* FIFO. Push at the tail so a yielding fiber goes behind everything already
- * waiting — round-robin falls out, and a fiber that only yields cannot hold
- * the CPU against its peers. */
-static void ready_push(struct rt_fiber_queue *q, struct rt_fiber *t) {
-  t->ready_next = nullptr;
-  if (q->tail == nullptr) {
-    q->head = t;
-  } else {
-    q->tail->ready_next = t;
-  }
-  q->tail = t;
-  q->count++;
-}
-
-/* Only ever called against a snapshot of count, so the queue is known
- * non-empty; an empty pop would be a bug in the loop rather than a case to
- * handle. The unlink clears ready_next: a stale link out of a fiber that is no
- * longer queued is exactly the kind of thing that makes a corrupted queue
- * look plausible while walking it. */
-static struct rt_fiber *ready_pop(struct rt_fiber_queue *q) {
-  struct rt_fiber *t = q->head;
-
-  q->head = t->ready_next;
-  if (q->head == nullptr) {
-    q->tail = nullptr;
-  }
-  t->ready_next = nullptr;
-  q->count--;
-
-  return t;
-}
-
 int rt_scheduler_init(struct rt_scheduler *s, unsigned ring_entries) {
   /* The caller's struct is an uninitialized local; the queue and the counters
    * are only correct from a known-zero start. */
@@ -63,7 +31,7 @@ void rt_scheduler_spawn(struct rt_scheduler *s, struct rt_fiber *t,
                         void (*fn)(void *), void *arg) {
   rt_fiber_create(t, fn, arg);
   s->live_count++;
-  ready_push(&s->ready, t);
+  rt_fiber_queue_push(&s->ready, t);
 }
 
 void rt_scheduler_resume(struct rt_scheduler *s, struct rt_fiber *t) {
@@ -80,7 +48,25 @@ void rt_scheduler_resume(struct rt_scheduler *s, struct rt_fiber *t) {
   t->request.kind = RT_REQUEST_NONE;
 
   rt_fiber_set_current(t);
-  rt_switch(&s->context, &t->ctx);
+
+  /* Runs the fiber until it makes a request that actually suspends it. WAKE
+   * does not: it is serviced here and control goes straight back, so a fiber
+   * that wakes a peer keeps the CPU. Doing it in this loop rather than in
+   * dispatch is what makes that true — dispatch runs only once the fiber has
+   * given up the CPU for real.
+   *
+   * The kind is cleared before each re-entry for the same reason it is cleared
+   * before the first: a fiber that suspends without saying why must not be
+   * filed under the request it made last time. */
+  for (;;) {
+    rt_switch(&s->context, &t->ctx);
+
+    if (t->request.kind != RT_REQUEST_WAKE) {
+      break;
+    }
+    rt_fiber_queue_push(&s->ready, t->request.value.wake);
+    t->request.kind = RT_REQUEST_NONE;
+  }
 
   /* Nulled the instant control is back: from here to the next resume there is
    * no current fiber, so an operation issued from scheduler context faults on
@@ -99,12 +85,25 @@ void rt_scheduler_resume(struct rt_scheduler *s, struct rt_fiber *t) {
 static void rt_scheduler_dispatch(struct rt_scheduler *s, struct rt_fiber *t) {
   switch (t->request.kind) {
     case RT_REQUEST_YIELD:
-      ready_push(&s->ready, t);
+      rt_fiber_queue_push(&s->ready, t);
       break;
 
     case RT_REQUEST_IO:
-      ready_push(&s->submit, t);
+      rt_fiber_queue_push(&s->submit, t);
       break;
+
+    case RT_REQUEST_PARK:
+      /* Onto a queue this scheduler does not own and never inspects. Only a
+       * WAKE naming this fiber will move it again — no kernel event exists
+       * that could. */
+      rt_fiber_queue_push(t->request.value.wait_queue, t);
+      break;
+
+    case RT_REQUEST_WAKE:
+      /* Serviced in rt_scheduler_resume, which returns only on a request that
+       * suspends. Reaching dispatch means that loop let one through. */
+      rt_panic("scheduler: wake reached dispatch",
+               __builtin_return_address(0));
 
     case RT_REQUEST_EXIT:
       s->live_count--;
@@ -126,7 +125,7 @@ void rt_scheduler_run(struct rt_scheduler *s) {
      * re-queued forever and the loop never reaches submission, so the
      * batch-once-per-turn contract would hold only for fibers that block. */
     for (size_t n = s->ready.count; n > 0; n--) {
-      struct rt_fiber *t = ready_pop(&s->ready);
+      struct rt_fiber *t = rt_fiber_queue_pop(&s->ready);
 
       rt_scheduler_resume(s, t);
       rt_scheduler_dispatch(s, t);
@@ -145,7 +144,7 @@ void rt_scheduler_run(struct rt_scheduler *s) {
         break;
       }
 
-      struct rt_fiber *t = ready_pop(&s->submit);
+      struct rt_fiber *t = rt_fiber_queue_pop(&s->submit);
       *sqe = t->request.value.io;
       sqe->user_data = (unsigned long)(uintptr_t)t;
 
@@ -169,14 +168,22 @@ void rt_scheduler_run(struct rt_scheduler *s) {
      * consumes this batch. */
     bool wait = s->ready.count == 0 && s->submit.count == 0;
 
-    /* Nothing runnable and nothing outstanding: no completion can arrive, so
-     * no fiber can ever become ready again. Today that is unreachable — every
-     * suspension stages an SQE — and it becomes a real diagnosis only once
-     * fibers can wait on each other. Until then it is a tripwire, not a
-     * deadlock report, and it cannot fire for an idle server: a fiber parked
-     * on RECV with no traffic is counted in inflight. */
+    /* Nothing runnable, nothing to stage, and nothing the kernel owes us: every
+     * live fiber is parked on a queue, and only a fiber could signal it. This
+     * is deadlock, and it is exact rather than heuristic — the scheduler holds
+     * the whole state, so "no fiber can ever run again" is a local fact.
+     *
+     * It cannot fire for an idle server. A fiber blocked on RECV with no
+     * traffic is counted in inflight, and inflight being nonzero is precisely
+     * the difference between waiting and being wedged.
+     *
+     * What it does not yet do is say *which* fibers, and on which queues.
+     * libuc.md's spike found the value was entirely in that: it named the
+     * fiber and what it blocked on, which is what turned a hang into a
+     * diagnosis. Naming them needs a registry of live fibers, which does not
+     * exist. */
     if (wait && s->inflight_count == 0) {
-      rt_panic("scheduler: no fiber runnable and nothing in flight",
+      rt_panic("scheduler: deadlock — every live fiber is parked",
                __builtin_return_address(0));
     }
 
@@ -244,7 +251,7 @@ void rt_scheduler_run(struct rt_scheduler *s) {
       t->result = cqe.res;
       t->owner = nullptr; /* the debt is paid; the fiber is unbound again */
       s->inflight_count--;
-      ready_push(&s->ready, t);
+      rt_fiber_queue_push(&s->ready, t);
     }
   }
 }
