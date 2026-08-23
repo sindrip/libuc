@@ -194,7 +194,7 @@ a deliberate design job, not a revival by default.
 
 If cross-scheduler pthreads are ever wanted anyway, `IORING_OP_FUTEX_WAIT`/`WAKE`
 (`io_uring.h:307-309`) makes them ring-native: a fiber blocks on a futex without
-blocking its core. Implementable and elegant — and it drags in atomics on the
+blocking its scheduler. Implementable and elegant — and it drags in atomics on the
 mutex path, a cross-scheduler-safe allocator, two mutex implementations chosen
 dynamically, and the loss of the atomic-critical-section property. That is the
 whole complexity the design exists to avoid, for a workload it does not target.
@@ -224,7 +224,7 @@ C11 permits it outright — nothing in the standard promises parallel execution,
 only concurrent progress. Three consequences, all of which are design and not
 implementation:
 
-- **A guest spin-wait hangs the core permanently.** `while (!atomic_load(&f));`
+- **A guest spin-wait hangs its scheduler permanently.** `while (!atomic_load(&f));`
   reaches no yield point, and invariant 7 forbids the fix. The vendoring policy
   falls out of this: libuc hosts C that *blocks on I/O*, not C that spins. State
   this before vendoring anything, not after a hang.
@@ -415,11 +415,12 @@ scheduler is presupposed by the process existing, and a scheduler with zero
 fibers is valid — `rt_main` boots in exactly that order (`rt_scheduler_init`,
 then `rt_scheduler_spawn`, then `rt_scheduler_run`).
 
-**This is now structural, not just the boot path's habit.** There is no call
-that creates a scheduler on another thread's behalf: `rt_scheduler_init` runs
-on the thread that is becoming one, and the public surface is `become`, not
-`create` (`.scratch/scheduler.md`). Boot is not a special case that the rest
-of the design works around — it is the only case, replicated.
+**This is now structural, not just the boot path's habit.** No thread ever has
+a scheduler made for it: `rt_scheduler_init` runs on the thread that is
+becoming one. `uc_scheduler_spawn` does not weaken this — it creates a
+*thread*, and that thread calls become on itself (`.scratch/scheduler.md`).
+Boot is not a special case that the rest of the design works around; it is the
+only case, with the clone omitted.
 
 Boot is four steps, all on the kernel-supplied stack:
 
@@ -447,10 +448,10 @@ of them decisions already made elsewhere:
   resuming, timer expiry and the deadlock check all run inline in the
   scheduler loop, which gets the CPU at every suspension point.
 - **A supervisor scheduler cannot supervise.** Invariant 7 forbids preempting
-  a wedged core, the kernel vetoes migrating fibers off it (`SINGLE_ISSUER`
+  a wedged scheduler, the kernel vetoes migrating fibers off it (`SINGLE_ISSUER`
   binds a ring to its thread), and invariant 3 forbids the shared state that
   even *observing* it would need. Cross-core liveness machinery was considered
-  and dropped (§3 above; plan.md milestone 3 accepts the wedged core as a bug
+  and dropped (§3 above; plan.md milestone 3 accepts the wedged scheduler as a bug
   class for the debugger).
 - **It forces the open problems into boot.** Getting `main` onto a spawned
   scheduler needs clone, a second ring, and cross-scheduler transport — the
@@ -606,7 +607,7 @@ in "a foreign translation unit linked against us and ran."
 ## Open questions
 
 - Does the fd table live per-scheduler or per-fiber? Per-scheduler follows shared-nothing,
-  but `stdout` is then shared by every fiber on the core and needs a lock that
+  but `stdout` is then shared by every fiber on the scheduler and needs a lock that
   invariant 3 says should not exist. A per-scheduler `FILE` with cooperative
   exclusion is probably right, and is not obviously right.
 - `thrd_t` identity across a crash-and-respawn supervisor (language.md's

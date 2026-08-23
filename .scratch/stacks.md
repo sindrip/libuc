@@ -48,7 +48,7 @@ effect lattice.
 
 **The borrowed-C-stack hazard.** A dense task's FFI hop parks its C frames on
 the shared per-scheduler C stack. If that C code calls back into language code that
-*suspends*, the core's C stack is held by a parked task and every other dense
+*suspends*, the scheduler's C stack is held by a parked task and every other dense
 task's FFI deadlocks — this is exactly why Loom pins virtual threads on native
 frames. Rule: code running on the borrowed stack must not suspend. Enforceable
 at the import signature, since function types carry effects (language.md):

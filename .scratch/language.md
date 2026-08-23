@@ -205,7 +205,7 @@ concurrency scope. Here they are the same scope. Its three Go duties: unlock
 ## 7. Scheduling and topology
 
 - Cooperative only (invariant 7). Never preempted, no safepoints in loop
-  backedges: a fiber that won't yield starves its core, and that is accepted
+  backedges: a fiber that won't yield starves its scheduler, and that is accepted
   as a bug class — deterministic, so it reproduces under the debugger.
   Runtime starvation detection is deliberately out of the language design.
 - **The kernel vetoes migration**: `SINGLE_ISSUER` binds a ring to its task at
