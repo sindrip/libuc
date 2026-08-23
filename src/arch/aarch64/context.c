@@ -3,17 +3,6 @@
 
 #include "context.h"
 
-struct rt_ctx_regs {
-  unsigned long gp[10];
-  unsigned long fp;
-  unsigned long lr;
-  unsigned long sp;
-  double d[8];
-};
-
-static_assert(sizeof(struct rt_ctx_regs) == RT_CTX_SIZE);
-static_assert(alignof(struct rt_ctx_regs) == RT_CTX_ALIGN);
-
 static constexpr size_t ctx_gp = offsetof(struct rt_ctx_regs, gp);
 static constexpr size_t ctx_fp = offsetof(struct rt_ctx_regs, fp);
 static constexpr size_t ctx_sp = offsetof(struct rt_ctx_regs, sp);

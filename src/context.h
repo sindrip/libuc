@@ -4,7 +4,7 @@
 #include "context_arch.h"
 
 struct rt_ctx {
-  alignas(RT_CTX_ALIGN) unsigned char opaque[RT_CTX_SIZE];
+  alignas(struct rt_ctx_regs) unsigned char opaque[sizeof(struct rt_ctx_regs)];
 };
 
 extern void rt_switch(struct rt_ctx *from, struct rt_ctx *to);
