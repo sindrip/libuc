@@ -111,54 +111,13 @@ ubsan_impl = static_library(
   pic: false,
 )
 
-memcmp_impl = static_library(
-  'uc-memcmp-internal',
-  'src/string/memcmp.c',
-  build_by_default: false,
-  c_args: common_c_args + ['-fno-builtin'],
-  include_directories: public_include,
-  pic: false,
-)
-
-memcpy_impl = static_library(
-  'uc-memcpy-internal',
-  'src/string/memcpy.c',
-  build_by_default: false,
-  c_args: common_c_args + ['-fno-builtin'],
-  include_directories: public_include,
-  pic: false,
-)
-
-memmove_impl = static_library(
-  'uc-memmove-internal',
-  'src/string/memmove.c',
-  build_by_default: false,
-  c_args: common_c_args + ['-fno-builtin'],
-  include_directories: public_include,
-  pic: false,
-)
-
-memset_impl = static_library(
-  'uc-memset-internal',
-  'src/string/memset.c',
-  build_by_default: false,
-  c_args: common_c_args + ['-fno-builtin'],
-  include_directories: public_include,
-  pic: false,
-)
+subdir('src/string')
 
 libc = static_library(
   'c',
   build_by_default: true,
   install: true,
-  link_whole: [
-    startup_impl,
-    ubsan_impl,
-    memcmp_impl,
-    memcpy_impl,
-    memmove_impl,
-    memset_impl,
-  ],
+  link_whole: [startup_impl, ubsan_impl] + string_impls,
   pic: false,
 )
 
