@@ -1,7 +1,7 @@
-# Task stacks and per-core memory
+# Task stacks and per-scheduler memory
 
 Status: **conversation-derived proposal, 2026-08-18. Not argued through in
-plan.md.** Addresses plan.md's open question "per-core arena allocator design
+plan.md.** Addresses plan.md's open question "per-scheduler arena allocator design
 and task stack sizing/guard pages". RT-004's 64 KiB + guard-page scheme is
 correct for now; this documents where it goes as task counts grow.
 
@@ -25,7 +25,7 @@ correct for now; this documents where it goes as task counts grow.
    mmap + guard per task is 2 VMAs per task against `vm.max_map_count`
    (default 65530, raisable to millions), and every map/madvise takes the
    process-global `mmap_lock` — the one lock a shared-nothing design cannot
-   shard. Per-stack VMA traffic from N pinned cores serializes there.
+   shard. Per-stack VMA traffic from N schedulers serializes there.
 
 ## The dial: stack kind is a per-task property
 
@@ -33,7 +33,7 @@ correct for now; this documents where it goes as task counts grow.
 |---|---|---|
 | layout | own mapping + `PROT_NONE` guard (RT-004) | one giant `MAP_NORESERVE` mapping, no guards |
 | overflow | hardware fault at guard | prologue check emitted by the future compiler — 3–4 instructions (the limit must be loaded from the task's TLS/struct), or 2 with a dedicated register, which is Go's `g` answer |
-| C frames | anywhere — FFI is a plain `bl` | none on this stack — FFI hops to a fat per-core C stack (~6 instructions, ~2–5 ns) |
+| C frames | anywhere — FFI is a plain `bl` | none on this stack — FFI hops to a fat per-scheduler C stack (~6 instructions, ~2–5 ns) |
 | density | hundreds of thousands (VMA-count-bound) | millions (one VMA total, no VMA *creation* in steady state; reclamation madvise still takes `mmap_lock` in read mode — batch it) |
 
 Not a global mode. A million parked connection-tasks in dense mode and a few
@@ -47,7 +47,7 @@ FFI stays free. See language.md — this is the load-bearing consequence of the
 effect lattice.
 
 **The borrowed-C-stack hazard.** A dense task's FFI hop parks its C frames on
-the shared per-core C stack. If that C code calls back into language code that
+the shared per-scheduler C stack. If that C code calls back into language code that
 *suspends*, the core's C stack is held by a parked task and every other dense
 task's FFI deadlocks — this is exactly why Loom pins virtual threads on native
 frames. Rule: code running on the borrowed stack must not suspend. Enforceable
@@ -58,12 +58,12 @@ promoted to an owned fat stack on first FFI.
 
 **Stack pooling — required at any density.** The fat-stack limiter in practice
 is lifecycle *churn*, not parked count: an mmap/munmap pair per task life
-hammers the process-global `mmap_lock` from N pinned cores. Pool stacks per
+hammers the process-global `mmap_lock` from N schedulers. Pool stacks per
 core and reuse; never unmap in steady state. VMA count then bounds live +
 pooled stacks and the lock traffic collapses to pool refills.
 
 Until the language exists, the C runtime needs only the default scheme plus
-per-core stack pooling, and — when task counts grow — aged batched `madvise`
+per-scheduler stack pooling, and — when task counts grow — aged batched `madvise`
 and a raised `max_map_count`.
 
 The Go/Loom alternative — copyable stacks with pointer maps, pinned while C
@@ -154,7 +154,7 @@ backtrace that lies. Recorded in RT-004.
   rule*. Any arena memory referenced by an in-flight SQE stays kernel-visible
   until its CQE is reaped, cancellation included; teardown is cancel → drain →
   drop, never just drop (transport.md, "Buffer lifetime"). Kernel-visible
-  receive buffers should come from per-core pools rather than task arenas so
+  receive buffers should come from per-scheduler pools rather than task arenas so
   the common teardown has nothing to wait for. With that caveat: no per-object
   free in the common case; a request-shaped task's memory story is "bump,
   bump, die".
@@ -162,4 +162,4 @@ backtrace that lies. Recorded in RT-004.
   owning core only (invariant 3), refilled from the kernel in batches to keep
   `mmap_lock` traffic rare.
 - Long-lived allocations that outlive a task are the exception, not the model,
-  and get an explicit per-core allocator when something actually needs one.
+  and get an explicit per-scheduler allocator when something actually needs one.

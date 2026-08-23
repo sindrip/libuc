@@ -1,19 +1,19 @@
 # Cross-core transport
 
 Status: **conversation-derived proposal, 2026-08-18. Not argued through in
-plan.md.** Addresses plan.md's open question "cross-core message transport and
+plan.md.** Addresses plan.md's open question "cross-scheduler message transport and
 buffer ownership". Kernel claims verified against `out/src/` 2026-08-18; cites
 inline.
 
 ## The invariant decides the design
 
-Invariant 3 forbids cross-core allocation and free. Ownership *transfer* of a
+Invariant 3 forbids allocating on one scheduler and freeing on another. Ownership *transfer* of a
 buffer between cores means the receiver eventually frees memory the sender
-allocated — a cross-core free by definition. Therefore:
+allocated — a cross-scheduler free by definition. Therefore:
 
 **Copy-on-send is the simplest transport the invariants permit.** Not the only
 one: a *loan* — receiver reads sender-owned memory in place, acks, sender frees
-— also has no cross-core alloc or free, at the cost of an ack protocol and
+— also has no cross-scheduler alloc or free, at the cost of an ack protocol and
 sender memory held until it completes. Copy is the right default because it
 needs no protocol and BEAM has run on exactly this model for three decades; the
 loan is the fallback if profiles ever show copy cost, and it is *cheaper* to
@@ -45,7 +45,7 @@ reach than ownership transfer because it needs no exception to invariant 3.
   - the remote post allocates (`GFP_KERNEL`, `msg_ring.c:124`) — `-ENOMEM` is
     a possible sender-side result; the doorbell is not allocation-free.
   - a target still `R_DISABLED` returns `-EBADFD` (`msg_ring.c:146`):
-    enable rings before any cross-core doorbell (interacts with the
+    enable rings before any cross-scheduler doorbell (interacts with the
     RESTRICTIONS sealing sequence in bpf.md).
   - the pure-data path to a `DEFER_TASKRUN` target never punts to io-wq — the
     trylock/`-EAGAIN` punt (`msg_ring.c:40-55`) is only for non-remote/IOPOLL
@@ -71,7 +71,7 @@ that matters, the carve-out is one of:
   whose blocks return to the owning core via a flushed free-list
   (mimalloc-style deferred remote free), or
 - **Region handoff**: whole arenas change owner at once, amortizing the
-  cross-core accounting to one event per region.
+  cross-scheduler accounting to one event per region.
 
 Either is a deliberate exception to invariant 3 and goes through the same
 "discuss before violating" gate as everything else — a registry entry, not a
@@ -91,13 +91,13 @@ crash teardown, and scope joins — "the function unwound" is not "the task is
 done".
 
 The structural fix that makes the rule cheap: kernel-visible *receive* buffers
-should be owned by per-core pools, not by task-lifetime memory. plan.md's
+should be owned by per-scheduler pools, not by task-lifetime memory. plan.md's
 pending milestone-2 decision on `IORING_REGISTER_PBUF_RING` is this same
 question — provided buffer rings are exactly core-owned receive buffers — so
 the two should be decided together.
 
 ## Sequencing
 
-Milestone 3 (multi-core) needs only the doorbell. Milestone 4 (cross-core
+Milestone 3 (multi-core) needs only the doorbell. Milestone 4 (cross-scheduler
 transport, plan.md) needs the mailbox. Transfer needs a profiler showing copies
 on a flame graph, and not before.

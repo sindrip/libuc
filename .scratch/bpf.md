@@ -46,7 +46,7 @@ SQE-flags allowed/required masks. Registration is only accepted while the
 ring is still `IORING_SETUP_R_DISABLED` (`register.c:173`), so the sealing
 sequence is: setup with `R_DISABLED` → register restrictions → enable rings.
 Note the interaction recorded in transport.md: MSG_RING to a still-disabled
-ring returns `-EBADFD`, so enable before any cross-core doorbell.
+ring returns `-EBADFD`, so enable before any cross-scheduler doorbell.
 
 Verify remaining: seccomp filter interaction with `io_uring_enter`; whether
 the syscall side should be seccomp (cheap, number granularity) or BPF-LSM
@@ -68,7 +68,7 @@ single idea in this file; furthest out (needs the language to exist).
 ### 3. XDP flow steering — shared-nothing enforced at the NIC
 
 An XDP program hashes flows to cores so a connection's packets always arrive
-where its task lives: no cross-core socket state, softirq work lands on the
+where its task lives: no cross-scheduler socket state, softirq work lands on the
 owning core. A BPF arena/map that userspace updates with per-core load lets
 *new* connections steer to the least-loaded ring — work distribution without
 work stealing, upholding invariant 3 instead of negotiating with it.

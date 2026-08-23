@@ -128,7 +128,7 @@ it blocked on. Real pthreads cannot tell you that; here it is a scheduler
 invariant, and it turned the scariest failure mode of a shim into its most
 precise diagnostic.
 
-### 3. One scheduler per core
+### 3. How many schedulers, and where
 
 An attempt to measure this **failed, and the failure is the finding.** Recorded
 because the first version of it looked convincing and was wrong.
@@ -164,9 +164,9 @@ follows below never depended on the measurement.
 
 **What forces the design is the allocator, not the scheduler.** Vendored C
 mallocs on one thread and frees on another as a matter of routine. If
-`pthread_create` distributed fibers across cores, a per-core arena would be
+`pthread_create` distributed fibers across schedulers, a per-scheduler arena would be
 violated on the first `free` — invariant 3, immediately. So `pthread_create`
-must spawn on the calling core, and that is not a scheduling preference but a
+must spawn on the calling scheduler, and that is not a scheduling preference but a
 consequence of owning the allocator. The shim results in section 2 then carry
 over intact: each core is exactly the single-core system that was spiked,
 replicated N times, with mutexes still intra-core, still atomic-free, still
@@ -185,17 +185,17 @@ question, and it applies to any vendored library that threads for speedup.
 **The casualty is the deadlock detector.** "Run queue empty and some fiber still
 blocked" is exact with one scheduler and merely *local* with N — core A can be
 idle with blocked fibers while core B is about to signal them. Global deadlock
-becomes a distributed quiescence problem. The design carries no cross-core
+becomes a distributed quiescence problem. The design carries no cross-scheduler
 liveness machinery (a tick-based watchdog was considered and dropped), so
 nothing exists to carry an "idle with blocked fibers" bit — the best diagnostic
 property of the single-core design is the first thing multi-core takes away,
 and it is currently rebuilt by nothing. If the gap ever needs closing, that is
 a deliberate design job, not a revival by default.
 
-If cross-core pthreads are ever wanted anyway, `IORING_OP_FUTEX_WAIT`/`WAKE`
+If cross-scheduler pthreads are ever wanted anyway, `IORING_OP_FUTEX_WAIT`/`WAKE`
 (`io_uring.h:307-309`) makes them ring-native: a fiber blocks on a futex without
 blocking its core. Implementable and elegant — and it drags in atomics on the
-mutex path, a cross-core-safe allocator, two mutex implementations chosen
+mutex path, a cross-scheduler-safe allocator, two mutex implementations chosen
 dynamically, and the loss of the atomic-critical-section property. That is the
 whole complexity the design exists to avoid, for a workload it does not target.
 
@@ -216,7 +216,7 @@ whole complexity the design exists to avoid, for a workload it does not target.
 ## The decision that determines the file list
 
 **`thrd_t` is a fiber, not a cloned thread.** `thrd_create` spawns a task on the
-calling core; the thread never migrates. This is the only mapping consistent
+calling scheduler; the thread never migrates. This is the only mapping consistent
 with invariant 3, and it is the libuc thesis stated as an API: the guest calls
 `mtx_lock` and receives a suspension rather than a futex.
 
@@ -235,7 +235,7 @@ implementation:
 - **Cross-core `thrd_create` is deliberately not in v1.** The ring-native
   primitive exists if it is ever wanted — `IORING_OP_FUTEX_WAIT`/`WAKE`/`WAITV`,
   verified at `out/src/include/uapi/linux/io_uring.h:307-309` — but a shared
-  futex word is cross-core mutable state, which is the thing invariant 3 exists
+  futex word is cross-scheduler mutable state, which is the thing invariant 3 exists
   to forbid. If parallelism is wanted later it arrives as `spawn(pin: core)`
   with message passing (transport.md), not as a portable-looking `thrd_create`
   that quietly violates the model.
@@ -272,7 +272,7 @@ src/libuc/
   start/    crt1.S · __libc_start_main.c · exit.c (atexit, fini_array)
   tls/      tls.c (PT_TLS image -> per-fiber TCB) · __errno_location.c
   thread/   thrd.c mtx.c cnd.c tss.c once.c      <- thin over task.c
-  mem/      malloc.c (per-core arena) · string.c (exists)
+  mem/      malloc.c (per-scheduler arena) · string.c (exists)
   io/       fd table · read/write/openat/close as ring ops · stdio.c
   misc/     abort.c assert.c stack_chk.c · ubsan handlers (exist)
 ```
@@ -345,7 +345,7 @@ must encode instead of leaving them as comments:
 
 Here, "slab" means stable, indexed allocation, not a small fixed-capacity array.
 For millions of fibers, each core can grow task-record storage in `mmap`-backed
-chunks, with objects never moved and freed slots returned to per-core free
+chunks, with objects never moved and freed slots returned to per-scheduler free
 lists. A large reserved virtual range committed incrementally is another
 possible implementation. Task records and task stacks are separate allocation
 problems; stack density and guarding are covered in `stacks.md`.
@@ -499,7 +499,7 @@ piece worth deciding ahead of need.
 
 | API | becomes | notes |
 |---|---|---|
-| `thrd_create` | `rt_fiber_create` + enqueue | on the calling core, always |
+| `thrd_create` | `rt_fiber_create` + enqueue | on the calling scheduler, always |
 | `thrd_join` | park until target is `RT_DEAD`, then drain | "joined" means *drained*, per language.md |
 | `thrd_detach` | mark for self-reap at exit | |
 | `thrd_yield` | `__libuc_fiber_yield()` | public standard wrapper over today's `rt_fiber_yield()`; no C `yield` keyword |
@@ -517,7 +517,7 @@ The threading layer is the *small* part of libuc. `task.c` already is it.
 Two items dominate, and neither is threads.
 
 **`malloc`.** The north star files "no allocator" as phase discipline; libuc is
-the phase. A per-core arena with `malloc`/`calloc`/`realloc`/`free`/
+the phase. A per-scheduler arena with `malloc`/`calloc`/`realloc`/`free`/
 `aligned_alloc` on top is the first thing a vendored library demands. Design
 input already exists in stacks.md; plan.md still lists it as an open question
 and should list it as a scheduled deliverable instead.
@@ -596,9 +596,9 @@ in "a foreign translation unit linked against us and ran."
 
 ## Open questions
 
-- Does the fd table live per-core or per-fiber? Per-core follows shared-nothing,
+- Does the fd table live per-scheduler or per-fiber? Per-scheduler follows shared-nothing,
   but `stdout` is then shared by every fiber on the core and needs a lock that
-  invariant 3 says should not exist. A per-core `FILE` with cooperative
+  invariant 3 says should not exist. A per-scheduler `FILE` with cooperative
   exclusion is probably right, and is not obviously right.
 - `thrd_t` identity across a crash-and-respawn supervisor (language.md's
   `restart: OnCrash`) has no C11 answer, because C11 has no supervisors.

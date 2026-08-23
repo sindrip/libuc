@@ -21,7 +21,7 @@ the target is an Apple Silicon VM running the guest under QEMU.
 | Purity | Every op with an opcode goes through the ring. Direct syscalls only where no opcode exists |
 | Ring flags | `SINGLE_ISSUER \| DEFER_TASKRUN`, **never** `SQPOLL` |
 | Task | Stackful coroutine, hand-rolled aarch64 asm switch |
-| Cores | Strict shared-nothing, no migration, no work stealing |
+| Schedulers | Strict shared-nothing, no migration, no work stealing. Count and placement are the program's |
 | Threads | `clone()`, one address space (isolation by discipline, not MMU) |
 | libc | None — true freestanding |
 | Language | C23 (`-std=c23`) |
@@ -322,10 +322,12 @@ data.** `-ENOBUFS` is one of the ways it ends.
 
 This does not close `.scratch/transport.md`'s reap rule, which stands unchanged:
 cancel → drain → only then release memory.
-3. **Multi-core** — `clone()`, `sched_setaffinity`, N rings, one per pinned
-   thread. No cross-core liveness machinery: a starving or wedged core is an
-   accepted bug class, found by the debugger, not detected at runtime.
-4. **Cross-core transport** — still open. `MSG_RING` gives a ring-native
+3. **Multi-core** — `clone()`, `sched_setaffinity`, N rings, one per
+   scheduler thread. How many schedulers, and how they map onto cores, is the
+   program's decision rather than the runtime's. No cross-scheduler liveness
+   machinery: a starving or wedged scheduler is an accepted bug class, found by
+   the debugger, not detected at runtime.
+4. **Cross-scheduler transport** — still open. `MSG_RING` gives a ring-native
    doorbell but only 96 bits, so the payload/ownership question is unresolved.
    Not needed before milestone 3.
 
@@ -379,9 +381,9 @@ stride the arithmetic assumes matches the ring that was actually created.
 
 ## Open questions
 
-- Cross-core message transport and buffer ownership (deferred, needed at #3).
+- Cross-scheduler message transport and buffer ownership (deferred, needed at #3).
 - Offload path for genuinely CPU-bound work that steps outside the model.
-- Per-core arena allocator design and task stack sizing/guard pages.
+- Per-scheduler arena allocator design and task stack sizing/guard pages.
 
 ## Verification
 

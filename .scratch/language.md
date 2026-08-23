@@ -97,7 +97,7 @@ Borrow checking, decomposed — one job deleted, one trivialized, one declined:
 2. **Use-after-free: collapsed to one rule at two points.** References never
    cross a fiber boundary; `spawn` and channel/`s.spawn` payloads are sendable
    **values** (moves/copies). Same rule, three justifications accumulated:
-   sender-arena lifetime (same-core), races (cross-core), placement
+   sender-arena lifetime (same-scheduler), races (cross-scheduler), placement
    (`s.spawn`). Decidable at the call site, no lifetime inference.
 3. **Aliasing+mutation: declined**, cushioned by runtime checks (bounds,
    overflow → crash handler) and by determinism — remaining bugs reproduce.
@@ -132,7 +132,7 @@ Borrow checking, decomposed — one job deleted, one trivialized, one declined:
   (mimalloc's remote-free pattern; count is a plain int touched by one
   scheduler). Transfer-not-dup is the default on send, which deletes the
   distributed-RC race.
-- Blobs are sealed-immutable; cross-core reads need no synchronization.
+- Blobs are sealed-immutable; cross-scheduler reads need no synchronization.
   `loan.keep()` promotes a kernel buffer to a blob zero-copy;
   `conn.write(blob)` holds a lease until its CQE (the teardown rule and the
   blob lease are one concept). `IORING_REGISTER_CLONE_BUFFERS`
@@ -381,7 +381,7 @@ wanted). To be argued in explicitly, per the registry discipline.
   surveillance, dropped everywhere (plan.md milestone 3 included). It was
   also the only cross-scheduler shared state besides the slot rings, so the
   designated-sharing ledger shrinks. Consequences accepted openly:
-  starvation and cross-core deadlock are undetected-at-runtime bug classes,
+  starvation and cross-scheduler deadlock are undetected-at-runtime bug classes,
   deterministic and debugger-found; the epoch grace clock is an ordinary
   per-scheduler quiescence counter, not a watchdog byproduct.
 - **Flag-word APIs** (`O_*` style) — options in a trenchcoat; intent

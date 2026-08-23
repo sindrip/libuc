@@ -566,7 +566,7 @@ What actually gates migration, none of it in this struct:
    non-null owner and is therefore not eligible to move. Forwarding would only
    be needed to make migration legal *during* an in-flight operation, which
    nothing wants.
-2. **The per-core arena.** `libuc.md` is explicit that the allocator forces
+2. **The per-scheduler arena.** `libuc.md` is explicit that the allocator forces
    the design: allocate on one, free on another, and invariant 3 breaks on
    the first `free`. This is the wall, and it stands even for two schedulers
    sharing a CPU, since each owns its own allocator.

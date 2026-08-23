@@ -125,7 +125,7 @@ rather than an arbitrary choice.
 It differs where it counts: the split is a **trust partition**, not an ABI
 claim; the paper never argues io_uring is a general syscall interface; and it
 **polls promises** in a `while` loop rather than suspending anything. No
-scheduler, no libc, no per-core ring discipline.
+scheduler, no libc, no per-scheduler ring discipline.
 
 ## Not novel — do not claim it
 
