@@ -1,3 +1,4 @@
+#include <stddef.h>
 #include <stdint.h>
 
 #include <string.h>
@@ -55,8 +56,15 @@ static inline int compare_wide(const unsigned char *a, const unsigned char *b) {
       return result;
     }
   }
-  return compare_span(a + wide_width - block_width,
-                      b + wide_width - block_width, block_width);
+
+  block128 lv = 0;
+  block128 rv = 0;
+  __builtin_memcpy(&lv, a + wide_width - block_width, block_width);
+  __builtin_memcpy(&rv, b + wide_width - block_width, block_width);
+  if (lv == rv) {
+    unreachable(); // memcmp_arch_equal proved they differ
+  }
+  return __builtin_bswapg(lv) < __builtin_bswapg(rv) ? -1 : 1;
 }
 
 int memcmp(const void *lhs, const void *rhs, size_t n) {
