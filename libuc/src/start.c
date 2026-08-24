@@ -32,7 +32,7 @@ int __libuc_start(void *initial_stack) {
   }
 
   __libuc_auxv_init((const uintptr_t *)(environment_end + 1));
-  if (!__libuc_thread_local_layout_init()) {
+  if (__libuc_thread_local_layout() == nullptr) {
     return 127;
   }
 

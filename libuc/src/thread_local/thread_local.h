@@ -10,8 +10,7 @@ struct __libuc_thread_local_layout {
   size_t alignment;
 };
 
-[[nodiscard]] bool __libuc_thread_local_layout_init(void);
 [[nodiscard]] const struct __libuc_thread_local_layout *
-__libuc_thread_local_layout_get(void);
+__libuc_thread_local_layout(void);
 
 #endif

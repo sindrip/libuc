@@ -4,7 +4,7 @@
 
 int main(int argc, char **argv, char **envp) {
   const struct __libuc_thread_local_layout *thread_local_layout =
-      __libuc_thread_local_layout_get();
+      __libuc_thread_local_layout();
   if (thread_local_layout == nullptr || thread_local_layout->image != nullptr ||
       thread_local_layout->image_size != 0 ||
       thread_local_layout->block_size != 0 ||
@@ -12,8 +12,7 @@ int main(int argc, char **argv, char **envp) {
     return 124;
   }
 
-  if (!__libuc_thread_local_layout_init() ||
-      __libuc_thread_local_layout_get() != thread_local_layout) {
+  if (__libuc_thread_local_layout() != thread_local_layout) {
     return 123;
   }
 

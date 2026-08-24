@@ -8,17 +8,18 @@
 
 #include "auxv.h"
 
-static const struct __libuc_thread_local_layout *layout = nullptr;
-
 static_assert(sizeof(uintptr_t) == sizeof(Elf64_Addr));
 static_assert(sizeof(size_t) == sizeof(Elf64_Xword));
 
-bool __libuc_thread_local_layout_init(void) {
+const struct __libuc_thread_local_layout *__libuc_thread_local_layout(void) {
+  static struct __libuc_thread_local_layout process_layout;
+  static const struct __libuc_thread_local_layout *layout = nullptr;
+
   if (layout != nullptr) {
-    return true;
+    return layout;
   }
 
-  /* Read the final executable layout from auxv. PT_TLS, not libuc.ld, is the
+  /* Read the final executable layout from auxv. PT_TLS is the
    * thread-local metadata ABI. */
   uintptr_t address;
   uintptr_t entry_size;
@@ -26,19 +27,19 @@ bool __libuc_thread_local_layout_init(void) {
   if (!__libuc_auxv_get(AT_PHDR, &address) ||
       !__libuc_auxv_get(AT_PHENT, &entry_size) ||
       !__libuc_auxv_get(AT_PHNUM, &entry_count)) {
-    return false;
+    return nullptr;
   }
 
   if (address == 0 || address % alignof(Elf64_Phdr) != 0 ||
       entry_size != sizeof(Elf64_Phdr) || entry_count == 0 ||
       entry_count > SIZE_MAX / sizeof(Elf64_Phdr)) {
-    return false;
+    return nullptr;
   }
 
   const size_t header_count = (size_t)entry_count;
   const size_t table_size = header_count * sizeof(Elf64_Phdr);
   if (table_size > UINTPTR_MAX - address) {
-    return false;
+    return nullptr;
   }
 
   const Elf64_Phdr *headers = (const Elf64_Phdr *)address;
@@ -52,32 +53,36 @@ bool __libuc_thread_local_layout_init(void) {
       continue;
     }
     if (segment != nullptr) {
-      return false;
+      return nullptr;
     }
     segment = header;
   }
 
-  /* Decode either the canonical empty image or the validated PT_TLS segment
-   * without publishing partial metadata. */
-  static struct __libuc_thread_local_layout stored_layout = {.alignment = 1};
-
-  if (segment != nullptr) {
+  /* Decode the absent segment explicitly as the canonical empty layout. */
+  if (segment == nullptr) {
+    process_layout = (struct __libuc_thread_local_layout){
+        .image = nullptr,
+        .image_size = 0,
+        .block_size = 0,
+        .alignment = 1,
+    };
+  } else {
     /* Validate the image dimensions, mapped range, and effective alignment. */
     if (segment->p_filesz > segment->p_memsz ||
         segment->p_memsz > UINT64_MAX - segment->p_vaddr) {
-      return false;
+      return nullptr;
     }
 
     const Elf64_Xword alignment = segment->p_align == 0 ? 1 : segment->p_align;
     if (__builtin_popcountg(alignment) != 1) {
-      return false;
+      return nullptr;
     }
 
     const unsigned char *image =
         segment->p_filesz == 0
             ? nullptr
             : (const unsigned char *)(uintptr_t)segment->p_vaddr;
-    stored_layout = (struct __libuc_thread_local_layout){
+    process_layout = (struct __libuc_thread_local_layout){
         .image = image,
         .image_size = (size_t)segment->p_filesz,
         .block_size = (size_t)segment->p_memsz,
@@ -85,12 +90,7 @@ bool __libuc_thread_local_layout_init(void) {
     };
   }
 
-  /* Make the validated layout available. */
-  layout = &stored_layout;
-  return true;
-}
-
-const struct __libuc_thread_local_layout *
-__libuc_thread_local_layout_get(void) {
+  /* Make the decoded layout available. */
+  layout = &process_layout;
   return layout;
 }

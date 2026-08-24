@@ -34,10 +34,10 @@ layout holds the initialization image, image size, future thread-local block
 size, and effective alignment; no `PT_TLS` produces the empty layout with
 alignment one.
 
-Layout initialization is idempotent: once recorded, subsequent calls succeed
-without reparsing or republishing it. `false` therefore means only that the
-executable cannot provide a usable layout, while the getter returns `nullptr`
-until initialization first succeeds.
+The layout query memoizes successful decoding and returns the same immutable
+descriptor thereafter. A failed decode is deliberately not cached: startup
+immediately returns status 127 on the first `nullptr`, so no later code can
+observe or retry that failure in the current contract.
 
 Missing or inconsistent auxv metadata, an invalid image size or alignment,
 address arithmetic overflow, and multiple `PT_TLS` entries all fail startup.

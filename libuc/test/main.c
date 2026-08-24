@@ -34,11 +34,9 @@ static volatile int stage;
   int initial_value = 0;
 
   const struct __libuc_thread_local_layout *thread_local_layout =
-      __libuc_thread_local_layout_get();
-  const bool thread_local_layout_reinitialized =
-      __libuc_thread_local_layout_init();
+      __libuc_thread_local_layout();
   const bool thread_local_layout_stable =
-      __libuc_thread_local_layout_get() == thread_local_layout;
+      __libuc_thread_local_layout() == thread_local_layout;
   if (thread_local_layout != nullptr && thread_local_layout->image != nullptr &&
       thread_local_layout->image_size == sizeof(tls_initialized)) {
     memcpy(&initial_value, thread_local_layout->image, sizeof(initial_value));
@@ -48,8 +46,8 @@ static volatile int stage;
                           page_size == (uintptr_t)4096 &&
                           !__libuc_auxv_get(UINTPTR_MAX, &absent_value);
   const bool thread_local_layout_ready =
-      thread_local_layout != nullptr && thread_local_layout_reinitialized &&
-      thread_local_layout_stable && initial_value == 42 &&
+      thread_local_layout != nullptr && thread_local_layout_stable &&
+      initial_value == 42 &&
       thread_local_layout->block_size ==
           sizeof(tls_initialized) + sizeof(tls_zeroed) &&
       thread_local_layout->alignment == alignof(int);
