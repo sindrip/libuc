@@ -4,7 +4,7 @@
 
 #include "memcmp_arch.h"
 
-constexpr size_t word_width = sizeof(uint64_t);
+constexpr size_t scalar_width = sizeof(uint64_t);
 constexpr size_t wide_width = memcmp_arch_width;
 static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__);
 
@@ -24,7 +24,7 @@ int memcmp(const void *lhs, const void *rhs, size_t n) {
   }
 
   /* Lexicographic byte order is big-endian numeric order. */
-  while (remaining >= word_width) {
+  while (remaining >= scalar_width) {
     uint64_t av;
     uint64_t bv;
     __builtin_memcpy(&av, a, sizeof(av));
@@ -34,9 +34,9 @@ int memcmp(const void *lhs, const void *rhs, size_t n) {
       return __builtin_bswap64(av) < __builtin_bswap64(bv) ? -1 : 1;
     }
 
-    a += word_width;
-    b += word_width;
-    remaining -= word_width;
+    a += scalar_width;
+    b += scalar_width;
+    remaining -= scalar_width;
   }
 
   for (size_t i = 0; i < remaining; i++) {
