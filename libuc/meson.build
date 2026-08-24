@@ -43,6 +43,7 @@ if not fs.is_dir(uapi_path)
 endif
 
 public_include = include_directories('include')
+private_include = include_directories('src')
 
 base_c_args = [
   '-ffreestanding',
@@ -107,7 +108,7 @@ auxv_impl = static_library(
     '-Wno-missing-noreturn',
     '-Wno-reserved-identifier',
   ],
-  include_directories: [public_include, include_directories('src')],
+  include_directories: [public_include, private_include],
   pic: false,
 )
 
@@ -174,8 +175,8 @@ if get_option('tests')
   start_probe = executable(
     'start',
     'test/main.c',
-    c_args: common_c_args,
-    include_directories: public_include,
+    c_args: common_c_args + ['-Wno-reserved-identifier'],
+    include_directories: [public_include, private_include],
     link_args: probe_link_args,
     link_depends: 'libuc.ld',
     link_whole: [crt1_internal, libc],

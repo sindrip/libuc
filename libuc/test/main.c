@@ -1,4 +1,9 @@
 #include <stddef.h>
+#include <stdint.h>
+
+#include <sys/auxv.h>
+
+#include "auxv.h"
 
 /* Initializers must run before main, in priority order: numbered slots
  * first (101 before 202; 1..100 are reserved by the toolchain), then the
@@ -12,7 +17,14 @@ static volatile int stage;
 #pragma clang diagnostic ignored "-Wglobal-constructors"
 
 [[gnu::constructor(101)]] static void init_first(void) {
-  stage = (stage == 0) ? 1 : -1;
+  uintptr_t page_size;
+  uintptr_t absent_value;
+
+  const bool auxv_ready = __libuc_auxv_get(AT_PAGESZ, &page_size) &&
+                          page_size == (uintptr_t)4096 &&
+                          !__libuc_auxv_get(UINTPTR_MAX, &absent_value);
+
+  stage = (stage == 0 && auxv_ready) ? 1 : -1;
 }
 
 [[gnu::constructor(202)]] static void init_second(void) {
