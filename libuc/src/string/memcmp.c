@@ -123,7 +123,7 @@ int memcmp(const void *lhs, const void *rhs, size_t n) {
   }
 
   if (n >= 1) {
-    return compare_pair(a, b, n, 1);
+    return a[0] - b[0];
   }
 
   return 0;
