@@ -3,13 +3,12 @@
 
 #include <string.h>
 
-typedef unsigned _BitInt(128) block128;
-typedef unsigned char lane64 [[gnu::vector_size(64)]];
-
 #include "memcmp_arch.h"
 
+typedef unsigned _BitInt(128) block128;
+
 constexpr size_t block_width = sizeof(block128);
-constexpr size_t wide_width = sizeof(lane64);
+constexpr size_t wide_width = memcmp_arch_width;
 static_assert(block_width == 16);
 static_assert(wide_width == 64);
 static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__);
@@ -41,12 +40,7 @@ static inline int compare_pair(const unsigned char *a, const unsigned char *b,
 
 [[gnu::always_inline]]
 static inline int compare_wide(const unsigned char *a, const unsigned char *b) {
-  lane64 av;
-  lane64 bv;
-  __builtin_memcpy(&av, a, sizeof(av));
-  __builtin_memcpy(&bv, b, sizeof(bv));
-
-  if (memcmp_arch_equal(av, bv)) {
+  if (memcmp_arch_equal(a, b)) {
     return 0;
   }
 
