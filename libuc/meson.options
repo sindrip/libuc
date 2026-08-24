@@ -8,6 +8,6 @@ option(
 option(
   'ubsan',
   type: 'feature',
-  value: 'auto',
+  value: 'disabled',
   description: 'Instrument libuc with Clang\'s freestanding minimal UBSan ABI',
 )

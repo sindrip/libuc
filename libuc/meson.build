@@ -99,17 +99,21 @@ startup_impl = static_library(
   pic: false,
 )
 
-ubsan_impl = static_library(
-  'uc-ubsan-internal',
-  'src/ubsan.c',
-  build_by_default: false,
-  c_args: common_c_args + [
-    '-Wno-empty-translation-unit',
-    '-Wno-reserved-identifier',
-  ],
-  include_directories: public_include,
-  pic: false,
-)
+libc_impls = [startup_impl]
+
+if ubsan_args.length() != 0
+  libc_impls += static_library(
+    'uc-ubsan-internal',
+    'src/ubsan.c',
+    build_by_default: false,
+    c_args: common_c_args + [
+      '-Wno-empty-translation-unit',
+      '-Wno-reserved-identifier',
+    ],
+    include_directories: public_include,
+    pic: false,
+  )
+endif
 
 subdir('src/string')
 
@@ -117,7 +121,7 @@ libc = static_library(
   'c',
   build_by_default: true,
   install: true,
-  link_whole: [startup_impl, ubsan_impl] + string_impls,
+  link_whole: libc_impls + string_impls,
   pic: false,
 )
 
