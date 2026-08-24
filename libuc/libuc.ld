@@ -22,7 +22,13 @@ SECTIONS
 {
   . = 0x400000 + SIZEOF_HEADERS;
 
-  .rodata : { *(.rodata .rodata.*) }
+  .rodata : {
+    /* Keep the ELF and program headers in the first PT_LOAD. Linux exposes
+     * that mapped table through AT_PHDR; an empty first output section would
+     * otherwise let LLD start the first segment at .text on the next page. */
+    BYTE(0)
+    *(.rodata .rodata.*)
+  }
 
   . = ALIGN(CONSTANT(MAXPAGESIZE));
 

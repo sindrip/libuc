@@ -1,7 +1,7 @@
 ---
 id: UC-002
 title: Create an independent thread-local block
-status: todo
+status: next
 depends: [UC-001]
 ---
 

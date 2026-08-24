@@ -3,7 +3,10 @@
 
 #include <sys/auxv.h>
 
+#include <string.h>
+
 #include "auxv.h"
+#include "thread_local/thread_local.h"
 
 /* Initializers must run before main, in priority order: numbered slots
  * first (101 before 202; 1..100 are reserved by the toolchain), then the
@@ -28,12 +31,26 @@ static volatile int stage;
 [[gnu::constructor(101)]] static void init_first(void) {
   uintptr_t page_size;
   uintptr_t absent_value;
+  int initial_value = 0;
+
+  const struct __libuc_thread_local_image *thread_local_image =
+      __libuc_thread_local_image_get();
+  if (thread_local_image->initialization != nullptr &&
+      thread_local_image->initialized_size == sizeof(tls_initialized)) {
+    memcpy(&initial_value, thread_local_image->initialization,
+           sizeof(initial_value));
+  }
 
   const bool auxv_ready = __libuc_auxv_get(AT_PAGESZ, &page_size) &&
                           page_size == (uintptr_t)4096 &&
                           !__libuc_auxv_get(UINTPTR_MAX, &absent_value);
+  const bool thread_local_image_ready =
+      initial_value == 42 &&
+      thread_local_image->size ==
+          sizeof(tls_initialized) + sizeof(tls_zeroed) &&
+      thread_local_image->alignment == alignof(int);
 
-  stage = (stage == 0 && auxv_ready) ? 1 : -1;
+  stage = (stage == 0 && auxv_ready && thread_local_image_ready) ? 1 : -1;
 }
 
 [[gnu::constructor(202)]] static void init_second(void) {

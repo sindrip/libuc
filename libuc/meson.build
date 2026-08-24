@@ -112,7 +112,9 @@ auxv_impl = static_library(
   pic: false,
 )
 
-libc_impls = [startup_impl, auxv_impl]
+subdir('src/thread_local')
+
+libc_impls = [startup_impl, auxv_impl, thread_local_impls]
 
 if ubsan_args.length() != 0
   libc_impls += static_library(
@@ -183,10 +185,22 @@ if get_option('tests')
     name_suffix: 'elf',
   )
 
+  start_no_thread_local_probe = executable(
+    'start-no-thread-local',
+    'test/no_thread_local.c',
+    c_args: common_c_args + ['-Wno-reserved-identifier'],
+    include_directories: [public_include, private_include],
+    link_args: probe_link_args,
+    link_depends: 'libuc.ld',
+    link_whole: [crt1_internal, libc],
+    name_suffix: 'elf',
+  )
+
   # Do not run target code unless the machine file says it is executable here
   # or supplies an exe_wrapper.
   if meson.can_run_host_binaries()
-    test('startup contract', start_probe)
+    test('startup contract with PT_TLS', start_probe)
+    test('startup contract without PT_TLS', start_no_thread_local_probe)
   else
     message('probe execution disabled: add cross/runnable.ini in a matching Linux environment')
   endif
@@ -203,4 +217,17 @@ if get_option('tests')
   )
 
   alias_target('initramfs', start_initramfs)
+
+  start_no_thread_local_initramfs = custom_target(
+    'start-no-thread-local-initramfs',
+    build_by_default: false,
+    command: [sh, mkinitramfs, '@INPUT@', '@OUTPUT@'],
+    input: start_no_thread_local_probe,
+    output: 'start-no-thread-local.initramfs.cpio.gz',
+  )
+
+  alias_target(
+    'initramfs-no-thread-local',
+    start_no_thread_local_initramfs,
+  )
 endif

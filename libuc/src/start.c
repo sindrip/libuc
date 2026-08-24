@@ -1,6 +1,7 @@
 #include <stdint.h>
 
 #include "auxv.h"
+#include "thread_local/thread_local.h"
 
 [[gnu::visibility("hidden")]] extern void (*const __libuc_init_array_start[])(
     void);
@@ -31,6 +32,9 @@ int __libuc_start(void *initial_stack) {
   }
 
   __libuc_auxv_init((const uintptr_t *)(environment_end + 1));
+  if (!__libuc_thread_local_image_init()) {
+    return 127;
+  }
 
   for (void (*const *init)(void) = __libuc_init_array_start;
        init != __libuc_init_array_end; init++) {
