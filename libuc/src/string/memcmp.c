@@ -3,6 +3,7 @@
 #include "memcmp_arch.h"
 
 static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__);
+constexpr size_t scalar_size = sizeof(unsigned long long);
 
 int memcmp(const void *lhs, const void *rhs, size_t n) {
   const unsigned char *l = lhs;
@@ -20,7 +21,6 @@ int memcmp(const void *lhs, const void *rhs, size_t n) {
   }
 
   /* Lexicographic byte order is big-endian numeric order. */
-  constexpr size_t scalar_size = sizeof(unsigned long long);
   while (remaining >= scalar_size) {
     unsigned long long a;
     unsigned long long b;
