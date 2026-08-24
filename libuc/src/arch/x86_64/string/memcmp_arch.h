@@ -4,18 +4,18 @@
 #include <stddef.h>
 
 #ifdef __AVX2__
-typedef unsigned char memcmp_lane [[gnu::vector_size(128)]];
+typedef unsigned char memcmp_block [[gnu::vector_size(128)]];
 #else
-typedef unsigned char memcmp_lane [[gnu::vector_size(64)]];
+typedef unsigned char memcmp_block [[gnu::vector_size(64)]];
 #endif
 
-constexpr size_t memcmp_arch_width = sizeof(memcmp_lane);
+constexpr size_t memcmp_arch_block_size = sizeof(memcmp_block);
 
 [[gnu::always_inline]]
 static inline bool memcmp_arch_equal(const unsigned char *a,
                                      const unsigned char *b) {
-  memcmp_lane av;
-  memcmp_lane bv;
+  memcmp_block av;
+  memcmp_block bv;
   __builtin_memcpy(&av, a, sizeof(av));
   __builtin_memcpy(&bv, b, sizeof(bv));
   return __builtin_reduce_and(av == bv) != 0;
