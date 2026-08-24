@@ -1,18 +1,13 @@
 # libuc — the minimal deliverable
 
-Status: **conversation-derived, 2026-08-18.** Nothing here changes a current
-ticket; RT-005 and RT-006 remain the next work. Scope: what a first libuc must
-ship to compile, link, and run a C11-threads program against, and which
-decisions determine that list.
+Status: **active libuc design record.** Small implementation steps are tracked
+under `.scratch/tickets/uc/`.
 
 ## Where this sits
 
-`src/` and the RT-00N tickets are a **viability probe**, and a way to learn C
-properly. Their product is knowledge — the ticket Outcome sections and these
-`.scratch/` notes — not a library anyone links against. If the architecture
-holds, **libuc is the goal**, and it is a fresh tree seeded by *copying* from
-`src/`: no shared build, no compatibility obligation, no abstraction inserted
-today for the sake of reuse tomorrow.
+`src/` is the frozen viability probe. Its product is knowledge, not code libuc
+links against. **libuc is the goal**, and it is a fresh tree: no shared build,
+no compatibility obligation, and no retrofit work in `src/`.
 
 Two consequences, both cutting against normal instincts:
 
@@ -369,120 +364,39 @@ become a global limit on the number of userspace fibers.
 
 ## crt1 is where the inversion lives
 
-A normal crt1 runs `_start` -> `__libc_start_main(main, ...)` -> `main`, with
-`main` on the kernel-supplied stack. libuc's runs:
+A normal crt1 calls `main` on the kernel-supplied stack. libuc's bootstrap is:
 
 ```
-_start -> __libc_start_main -> rt_boot()          ring, core, arena
-                            -> spawn fiber(main)
-                            -> scheduler loop     never returns
+_start
+  -> parse argc, argv, envp, and auxv
+  -> record the executable thread-local image
+  -> create the root fiber (stack, context, thread-local block)
+  -> switch to the root fiber
+       -> run constructors
+       -> call main
+  -> resume bootstrap with main's status
+  -> exit_group
 ```
 
-**`main` runs on a fiber**, and the kernel-supplied stack becomes the
-scheduler's. That single change is what makes every blocking call in the guest a
-suspension, and it is why libuc is a platform rather than a shim — Foreactor
-intercepts calls, libuc owns the process from the first instruction
-(strategy.md, prior art).
+There is deliberately **no scheduler in this sequence**. The kernel stack holds
+only the bootstrap context needed to enter the root fiber and receive its exit
+status. It owns no queue, ring, arena, or pool.
 
-`src/start.S` is already most of crt1. What it gains: auxv parsing (`AT_PAGESZ`,
-and `AT_RANDOM` to seed the stack guard), `.preinit_array`/`.init_array`
-traversal via the linker-provided `__init_array_start`/`__init_array_end`, and
-`exit()` wiring so `.fini_array` and `atexit` handlers run — including the
-`stdout` flush, without which a guest's output is lost on exit.
+The root fiber is the first real C execution context. It is built with the same
+fiber and thread-local machinery later fibers will use; startup does not grow a
+permanent special “initial thread” path. A future executor may schedule fibers,
+but that is a separate subsystem and is not a prerequisite for entering
+`main`.
 
-**RT-006's `rt_main` is crt1's future shape.** Worth writing it that way now: a
-boot function, a spawn, and a scheduler loop that never returns, rather than a
-milestone driver with the boot inlined.
-
-## The boot contract
-
-Status: conversation-derived, 2026-08-22. The language-side statement is
-language.md §7 — init creates exactly one scheduler, every additional one is
-program text, `main` runs on scheduler 0. This section is the libc-side
-mechanics: what crt1's sequence above actually rests on, and the boot topology
-that was considered and rejected.
-
-**The scheduler is never created; the boot thread becomes it.** A fiber is a
-manufactured thread of control — `rt_fiber_create` mmaps a stack, places a
-guard page, and forges a context so the first switch lands in the trampoline.
-The scheduler needs none of that. `struct rt_scheduler`'s own `context`
-(`scheduler.h:62`) is never primed; it is written for the first time by the
-switch *away* from it (`rt_scheduler_resume`, `scheduler.c:82`), so the
-scheduler's context is captured lazily by the act of leaving it. Its state —
-ring, ready queue, arena — is a struct the boot thread fills in before
-anything runs. So there is no chicken-and-egg between fiber and scheduler: the
-scheduler is presupposed by the process existing, and a scheduler with zero
-fibers is valid — `rt_main` boots in exactly that order (`rt_scheduler_init`,
-then `rt_scheduler_spawn`, then `rt_scheduler_run`).
-
-**This is now structural, not just the boot path's habit.** No thread ever has
-a scheduler made for it: `rt_scheduler_init` runs on the thread that is
-becoming one. `uc_scheduler_spawn` does not weaken this — it creates a
-*thread*, and that thread calls become on itself (`.scratch/scheduler.md`).
-Boot is not a special case that the rest of the design works around; it is the
-only case, with the clone omitted.
-
-Boot is four steps, all on the kernel-supplied stack:
-
-1. `_start` — neither fiber nor scheduler; just the process.
-2. `rt_boot()` — fill in scheduler 0's state. The calling thread has now
-   *become* the scheduler.
-3. `rt_fiber_create(fiber 0)` — a stack and a primed context in the queue;
-   nothing running yet but the boot thread.
-4. Enter the loop. The first `rt_switch` stamps the scheduler's `context`,
-   and from that instruction the kernel stack is permanently its home.
-
-**Fiber 0 is the runtime's identity.** It is not mechanically special — just
-the first thing the boot path spawns. In v1 its body is the crt1 wrapper: run
-`main(argc, argv, envp)`, then drive `exit()`. If a supervising root is ever
-wanted (language.md's `restart: OnCrash`), fiber 0's body becomes the
-supervisor and `main` its first child — same machinery, one more
-`rt_fiber_create`. The hierarchy above `main` is a fiber, never a scheduler.
-
-**Rejected: a boot-time runtime/work scheduler split** — a tiny scheduler for
-the runtime that spawns a work scheduler for the program. Four reasons, three
-of them decisions already made elsewhere:
-
-- **Nothing for it to do.** Zero ambient concurrency (language.md §7) means
-  there is no job category for a dedicated runtime scheduler: reaping,
-  resuming, timer expiry and the deadlock check all run inline in the
-  scheduler loop, which gets the CPU at every suspension point.
-- **A supervisor scheduler cannot supervise.** Invariant 7 forbids preempting
-  a wedged scheduler, the kernel vetoes migrating fibers off it (`SINGLE_ISSUER`
-  binds a ring to its thread), and invariant 3 forbids the shared state that
-  even *observing* it would need. Cross-core liveness machinery was considered
-  and dropped (§3 above; plan.md milestone 3 accepts the wedged scheduler as a bug
-  class for the debugger).
-- **It forces the open problems into boot.** Getting `main` onto a spawned
-  scheduler needs clone, a second ring, and cross-scheduler transport — the
-  unresolved question — before the first line of the program. "The runtime
-  kernel is finished at single-core" exists precisely so nothing before `main`
-  depends on transport.
-- **It spends the exact deadlock detector on every program**, including those
-  that never wanted topology; and on the 1-vCPU dev VM it is two threads
-  timesharing one core.
-
-The cost asymmetry is the argument in one line: a fiber is a 64 KB stack plus
-a 168-byte context; a scheduler is a cloned thread, a ring with two mappings,
-a crash altstack, an arena, and an unsolved transport problem. The runtime's
-identity lives in the thing that costs a struct, not the thing that costs a
-core.
-
-**The legitimate form of "a scheduler for the work" is inverted.** The one
-workload that genuinely wants another scheduler is CPU-bound batch work that
-would starve a cooperative core — plan.md's open offload path. There the
-*exceptional* work moves out, on demand, by program text
-(`uc::rt::scheduler(cpu)` then `s.spawn(f, x)`), while `main` and the
-latency-sensitive work stay on scheduler 0. Boot stays single; the split is a
-decision the program makes when it has a reason, not a posture the runtime
-assumes for it.
+Constructors run on the root fiber after its thread pointer is installed, so
+their `_Thread_local` accesses have exactly the same semantics as `main`.
 
 ## TLS — one instruction, and errno falls out
 
 Under `-static`, `_Thread_local` relaxes to the **local-exec** model: the
 compiler emits `mrs xN, tpidr_el0` plus a link-time-fixed offset. So per-fiber
-TLS costs exactly one `msr tpidr_el0, xN` in `rt_switch`, plus copying the
-linker's `PT_TLS` image into each fiber's TCB at spawn. aarch64 is Variant I —
+thread-local state costs one thread-pointer install in the fiber switch, plus
+copying the linker's `PT_TLS` image when each fiber is created. aarch64 is Variant I —
 TCB at the thread pointer, TLS block above it (strategy.md).
 
 `__tls_get_addr` is needed only for the general- and local-dynamic models, which
@@ -501,9 +415,8 @@ Two things follow for free once this exists:
   slot does not apply here. It *will* apply at the port, which is why the TCB
   layout must reserve those offsets before it ossifies (strategy.md).
 
-TLS is the item on this page with the worst retrofit cost, because it touches
-the context switch and `struct rt_fiber` — both already written. It is the one
-piece worth deciding ahead of need.
+Thread-local state is built before the libuc fiber switch so the switch owns
+the thread-pointer transition from its first version.
 
 ## The C11 surface
 
@@ -585,24 +498,12 @@ and vendored C wants it more often than expected (libpng and libjpeg both do).
 
 ## Sequencing
 
-This is libuc-tree work, not RT tickets — it belongs to the successor codebase
-and starts only once the probe's questions are answered. IDs unassigned
-deliberately. The exception is the first row, which is a probe experiment and
-could be an RT ticket today.
+The active bootstrap sequence is `UC-001` through `UC-006` under
+`.scratch/tickets/uc/`. It ends with `main` running on a thread-local-aware root
+fiber and introduces no scheduler.
 
-| work item | depends | trigger |
-|---|---|---|
-| `tpidr_el0` in `rt_switch`; a guest `_Thread_local` that survives a switch | RT-004 | **probe experiment** — not to fix a layout, but to learn whether per-fiber TLS works at all |
-| Per-core arena + `malloc` family | milestone 2 | first vendored library |
-| `crt1.o` / `__libc_start_main` / `exit` | RT-006 | first guest `main` |
-| `<threads.h>` over `task.c` | above | the conformance claim |
-| `FILE` + `vfprintf` tier 1 | arena, ring write | first vendored `printf` |
-| `crti.o`/`crtn.o`, empty archives, `ucc` wrapper | crt1 | first unmodified `clang --sysroot` link |
-| Vendor one static library end to end | all above | the actual proof |
-
-That last row is the one that matters: the north star's first deliverable class
-is vendored static libraries, and nothing in `.scratch/tickets/` currently ends
-in "a foreign translation unit linked against us and ran."
+Vendoring a static library remains the milestone after this bootstrap sequence;
+none of these six tickets claims that larger proof.
 
 ## Open questions
 

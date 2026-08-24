@@ -1,5 +1,9 @@
 # io_uring-native runtime — foundation
 
+> **Frozen runtime-probe record.** `src/` is no longer under feature
+> development and the completed `RT-*` tickets have been removed. Active libuc
+> work is tracked in `.scratch/tickets/uc/`.
+
 ## Context
 
 Greenfield project (no commits yet). The goal is to learn C by building a
@@ -340,52 +344,18 @@ cancel → drain → only then release memory.
    doorbell but only 96 bits, so the payload/ownership question is unresolved.
    Not needed before milestone 3.
 
-## Deliverables — `.scratch/`
+## Runtime probe status
 
-```
-.scratch/plan.md               this document
-.scratch/tickets/RT-00N-*.md   one file per ticket
-```
-
-Add `.scratch/` to `.gitignore` (currently only `out/`) unless you want the
-tickets committed — repo has no commits yet, so it's a free choice.
-
-Each ticket file carries: `id`, `status`, `depends`, then **Goal**, **Spec**,
-**Files**, **Acceptance**, **Notes**.
+The probe is frozen and its completed `RT-*` ticket files have been removed.
+This document retains design rationale only. The active queue is indexed by
+`.scratch/tickets/README.md`.
 
 ### The one sanctioned purity exception
 
-`raw_write()` — a direct `write` syscall to the console. Required because every
-ticket below RT-005 has no ring, and because ring *setup failure* and the crash
-handler must be able to report when the ring is unusable or in unknown state.
-Used nowhere else. Documented as a carve-out, not discovered as a violation.
-
-### Tickets
-
-| id | title | depends | acceptance |
-|---|---|---|---|
-| RT-001 | Pin Alpine by digest, verify C23 | — | **done** — Clang 22.1.3 / GCC 15.2.0, C23 OK, `<stdbit.h>` absent on both |
-| RT-002 | `debug.sh` — QEMU + gdbstub | — | **done** — `lldb` → `gdb-remote localhost:1234` halts at kernel entry |
-| RT-003 | Freestanding skeleton | 001 | **done** — Boots as PID 1, `raw_write`s a byte to `hvc0`, spins; no panic |
-| RT-004 | Context switch + task struct | 002, 003 | Spawn → switch in → switch out → switch in again; verified under gdbstub |
-| RT-005 | Raw ring setup + NOP | 003 | `io_uring_setup` succeeds; NOP SQE submitted, CQE reaped, `res == 0` |
-| RT-006 | **Milestone 1** — join them | 004, 005 | Task suspends on NOP, scheduler resumes it, `hello` via `IORING_OP_WRITE`, no panic |
-| RT-007 | Crash handler — **do before RT-004** | 003 | Deliberate null deref dumps registers + FP chain to console |
-| RT-009 | **Milestone 2** — echo server | 006 | **done** — accept loop, fiber per connection; concurrent clients interleave, pool exhaustion is reported and recovers |
-
-**Execution order is 001, 002, 003, 007, 004, 005, 006** — not the
-numbering. RT-001 and RT-002 are independent of the runtime: RT-001 decides
-which language dialect actually compiles, and RT-002 must exist before RT-004
-because debugging hand-rolled aarch64 context-switch asm without a debugger is
-the failure mode this whole ordering exists to avoid. RT-007 moves ahead of
-RT-004 for the same reason: testing is manual console inspection with no
-regression net, so the crash handler is the only diagnostic the project has when
-the hand-rolled context switch corrupts something.
-
-RT-005 takes its structs from `<linux/io_uring.h>` via `make ARCH=arm64 headers`; kernel
-types are never retyped by hand. Its `static_assert`s guard the one thing the
-types cannot say — that the setup flags exclude `SQE128`/`CQE32`, so the ring
-stride the arithmetic assumes matches the ring that was actually created.
+`raw_write()` — a direct `write` syscall to the console. Required before the
+ring exists, and because ring *setup failure* and the crash handler must be able
+to report when the ring is unusable or in unknown state. Used nowhere else.
+Documented as a carve-out, not discovered as a violation.
 
 ## Open questions
 
