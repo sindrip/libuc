@@ -65,6 +65,13 @@ strict_warnings = [
   '-Wno-declaration-after-statement',
   '-Wno-pre-c11-compat',
   '-Wno-pre-c23-compat',
+  # -Weverything carries both -Wswitch-default and -Wcovered-switch-default:
+  # one demands a default label on every switch, the other rejects a default
+  # that covers all enumeration values. A fully-covered enum switch cannot
+  # satisfy both, so -Weverything forces a choice rather than expressing one.
+  # Suppressing this one keeps covered-switch-default, which is what turns a
+  # new enumerator into a build failure instead of a silent fall-through.
+  '-Wno-switch-default',
   '-Wno-unsafe-buffer-usage',
   '-Wno-unused-command-line-argument',
   '-Werror',
