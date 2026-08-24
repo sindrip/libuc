@@ -5,6 +5,8 @@
 typedef unsigned _BitInt(128) block128;
 typedef unsigned char lane64 [[gnu::vector_size(64)]];
 
+#include "memcmp_arch.h"
+
 constexpr size_t block_width = sizeof(block128);
 constexpr size_t wide_width = sizeof(lane64);
 static_assert(block_width == 16);
@@ -43,14 +45,7 @@ static inline int compare_wide(const unsigned char *a, const unsigned char *b) {
   __builtin_memcpy(&av, a, sizeof(av));
   __builtin_memcpy(&bv, b, sizeof(bv));
 
-  // Each ISA lowers only some equality spellings to its native across-vector
-  // test, and no spelling is native on both:
-  //
-  //   reduce_max(av ^ bv) == 0     aarch64: umaxv     x86-64: pmaxub funnel
-  //   reduce_and(av == bv)         aarch64: funnel    x86-64: movemask
-  //   reduce_or(av ^ bv) == 0      aarch64: funnel    x86-64: movemask
-  //   reduce_min(av == bv) != 0    aarch64: funnel    x86-64: movemask
-  if (__builtin_reduce_max(av ^ bv) == 0) {
+  if (memcmp_arch_equal(av, bv)) {
     return 0;
   }
 

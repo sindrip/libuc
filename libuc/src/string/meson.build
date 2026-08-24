@@ -1,10 +1,12 @@
+memcmp_arch_include = include_directories('../arch/' + arch + '/string')
+
 string_impls = [
   static_library(
     'uc-memcmp-internal',
     'memcmp.c',
     build_by_default: false,
     c_args: common_c_args + ['-fno-builtin'],
-    include_directories: public_include,
+    include_directories: [public_include, memcmp_arch_include],
     pic: false,
   ),
   static_library(
