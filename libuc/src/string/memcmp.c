@@ -10,14 +10,14 @@ static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__);
 [[gnu::always_inline]]
 static inline int compare_block(const unsigned char *a,
                                 const unsigned char *b) {
-  const block128 differences = *(const block128 *)a ^ *(const block128 *)b;
+  const block128 av = *(const block128 *)a;
+  const block128 bv = *(const block128 *)b;
 
-  if (differences == 0) {
+  if (av == bv) {
     return 0;
   }
 
-  const size_t byte = (size_t)__builtin_ctzg(differences) / 8;
-  return a[byte] < b[byte] ? -1 : 1;
+  return __builtin_bswapg(av) < __builtin_bswapg(bv) ? -1 : 1;
 }
 
 int memcmp(const void *lhs, const void *rhs, size_t n) {
