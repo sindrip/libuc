@@ -33,18 +33,19 @@ int memcmp(const void *lhs, const void *rhs, size_t n) {
     return 0;
   }
 
-  size_t i = 0;
-  while (n - i >= block_width) {
-    const int result = compare_block(a + i, b + i);
+  // The final block; when n is not a block multiple it overlaps bytes the
+  // loop will have proved equal, and equal bytes contribute no difference.
+  const unsigned char *const last_a = a + n - block_width;
+  const unsigned char *const last_b = b + n - block_width;
+
+  while (a < last_a) {
+    const int result = compare_block(a, b);
     if (result != 0) {
       return result;
     }
-    i += block_width;
+    a += block_width;
+    b += block_width;
   }
 
-  if (i == n) {
-    return 0;
-  }
-
-  return compare_block(a + n - block_width, b + n - block_width);
+  return compare_block(last_a, last_b);
 }
