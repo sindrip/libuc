@@ -99,7 +99,19 @@ startup_impl = static_library(
   pic: false,
 )
 
-libc_impls = [startup_impl]
+auxv_impl = static_library(
+  'uc-auxv-internal',
+  'src/auxv.c',
+  build_by_default: false,
+  c_args: common_c_args + [
+    '-Wno-missing-noreturn',
+    '-Wno-reserved-identifier',
+  ],
+  include_directories: [public_include, include_directories('src')],
+  pic: false,
+)
+
+libc_impls = [startup_impl, auxv_impl]
 
 if ubsan_args.length() != 0
   libc_impls += static_library(
@@ -126,6 +138,7 @@ libc = static_library(
 )
 
 install_headers('include/string.h')
+install_headers('include/sys/auxv.h', subdir: 'sys')
 
 summary(
   {

@@ -1,5 +1,7 @@
 #include <stdint.h>
 
+#include "auxv.h"
+
 [[gnu::visibility("hidden")]] extern void (*const __libuc_init_array_start[])(
     void);
 [[gnu::visibility("hidden")]] extern void (*const __libuc_init_array_end[])(
@@ -23,6 +25,12 @@ int __libuc_start(void *initial_stack) {
   }
 
   char **envp = &argv[argument_count + 1];
+  char **environment_end = envp;
+  while (*environment_end != nullptr) {
+    environment_end++;
+  }
+
+  __libuc_auxv_init((const uintptr_t *)(environment_end + 1));
 
   for (void (*const *init)(void) = __libuc_init_array_start;
        init != __libuc_init_array_end; init++) {
