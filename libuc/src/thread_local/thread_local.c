@@ -1,5 +1,6 @@
 #include "thread_local.h"
 
+#include <stdckdint.h>
 #include <stdint.h>
 
 #include <linux/elf.h>
@@ -31,14 +32,15 @@ const struct __libuc_thread_local_layout *__libuc_thread_local_layout(void) {
   }
 
   if (address == 0 || address % alignof(Elf64_Phdr) != 0 ||
-      entry_size != sizeof(Elf64_Phdr) || entry_count == 0 ||
-      entry_count > SIZE_MAX / sizeof(Elf64_Phdr)) {
+      entry_size != sizeof(Elf64_Phdr) || entry_count == 0) {
     return nullptr;
   }
 
   const size_t header_count = (size_t)entry_count;
-  const size_t table_size = header_count * sizeof(Elf64_Phdr);
-  if (table_size > UINTPTR_MAX - address) {
+  size_t table_size;
+  uintptr_t table_end;
+  if (ckd_mul(&table_size, header_count, sizeof(Elf64_Phdr)) ||
+      ckd_add(&table_end, address, table_size)) {
     return nullptr;
   }
 
@@ -68,8 +70,9 @@ const struct __libuc_thread_local_layout *__libuc_thread_local_layout(void) {
     };
   } else {
     /* Validate the image dimensions, mapped range, and effective alignment. */
+    uint64_t segment_end;
     if (segment->p_filesz > segment->p_memsz ||
-        segment->p_memsz > UINT64_MAX - segment->p_vaddr) {
+        ckd_add(&segment_end, segment->p_vaddr, segment->p_memsz)) {
       return nullptr;
     }
 
