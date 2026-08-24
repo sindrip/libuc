@@ -30,6 +30,9 @@ SECTIONS
 
   . = ALIGN(CONSTANT(MAXPAGESIZE));
 
+  .tdata : { *(.tdata .tdata.*) }
+  .tbss  : { *(.tbss .tbss.*) }
+
   .init_array : {
     PROVIDE_HIDDEN(__libuc_init_array_start = .);
     KEEP(*(SORT_BY_INIT_PRIORITY(.init_array.*)))

@@ -11,6 +11,15 @@
  * advance unless the previous one already happened. */
 static volatile int stage;
 
+/* This function is emitted for ELF and machine-code inspection, but is not
+ * called until libuc can establish the architecture's thread pointer. */
+[[gnu::used]] static _Thread_local volatile int tls_initialized = 42;
+[[gnu::used]] static _Thread_local volatile int tls_zeroed;
+
+[[gnu::used]] static int tls_contract_probe(void) {
+  return tls_initialized + tls_zeroed;
+}
+
 /* -Wglobal-constructors exists to flag initialization hiding before main;
  * proving that initialization runs is this file's entire purpose. */
 #pragma clang diagnostic push
