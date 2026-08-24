@@ -8,7 +8,15 @@
 // pmovmskb is the across-vector test here; the max reduction aarch64 uses
 // lowers to a pmaxub shift cascade that costs ten more instructions per
 // window, which is why the test lives per architecture.
+//
+// Four registers per window, so the width follows the widest register the
+// build was told it has: 16 bytes at the SSE2 baseline, 32 under AVX2. A
+// window wider than the registers backing it only unrolls the same work.
+#ifdef __AVX2__
+typedef unsigned char memcmp_lane [[gnu::vector_size(128)]];
+#else
 typedef unsigned char memcmp_lane [[gnu::vector_size(64)]];
+#endif
 
 constexpr size_t memcmp_arch_width = sizeof(memcmp_lane);
 
