@@ -1,3 +1,5 @@
+#include <stdint.h>
+
 #include <string.h>
 
 typedef unsigned _BitInt(128) block128 [[gnu::aligned(1), gnu::may_alias]];
@@ -12,9 +14,6 @@ constexpr size_t wide_width = sizeof(lane64);
 static_assert(block_width == 16);
 static_assert(wide_width == 64);
 static_assert(alignof(block128) == 1);
-static_assert(alignof(block64) == 1);
-static_assert(alignof(block32) == 1);
-static_assert(alignof(block16) == 1);
 static_assert(alignof(lane64) == 1);
 static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__);
 
@@ -54,65 +53,37 @@ int memcmp(const void *lhs, const void *rhs, size_t n) {
   const unsigned char *a = lhs;
   const unsigned char *b = rhs;
 
-  if (n < block_width) {
-    if (n >= sizeof(block64)) {
-      const block64 head_a = *(const block64 *)a;
-      const block64 head_b = *(const block64 *)b;
-      if (head_a != head_b) {
-        return __builtin_bswapg(head_a) < __builtin_bswapg(head_b) ? -1 : 1;
-      }
-      const block64 tail_a = *(const block64 *)(a + n - sizeof(block64));
-      const block64 tail_b = *(const block64 *)(b + n - sizeof(block64));
-      if (tail_a != tail_b) {
-        return __builtin_bswapg(tail_a) < __builtin_bswapg(tail_b) ? -1 : 1;
-      }
-      return 0;
+  if (n >= block_width) {
+    const int head = compare_block(a, b);
+    if (head != 0) {
+      return head;
     }
 
-    if (n >= sizeof(block32)) {
-      const block32 head_a = *(const block32 *)a;
-      const block32 head_b = *(const block32 *)b;
-      if (head_a != head_b) {
-        return __builtin_bswapg(head_a) < __builtin_bswapg(head_b) ? -1 : 1;
-      }
-      const block32 tail_a = *(const block32 *)(a + n - sizeof(block32));
-      const block32 tail_b = *(const block32 *)(b + n - sizeof(block32));
-      if (tail_a != tail_b) {
-        return __builtin_bswapg(tail_a) < __builtin_bswapg(tail_b) ? -1 : 1;
-      }
-      return 0;
+    if (n <= 2 * block_width) {
+      return compare_block(a + n - block_width, b + n - block_width);
     }
 
-    if (n >= sizeof(block16)) {
-      const block16 head_a = *(const block16 *)a;
-      const block16 head_b = *(const block16 *)b;
-      if (head_a != head_b) {
-        return __builtin_bswapg(head_a) < __builtin_bswapg(head_b) ? -1 : 1;
+    if (n <= 4 * block_width) {
+      const int second = compare_block(a + block_width, b + block_width);
+      if (second != 0) {
+        return second;
       }
-      const block16 tail_a = *(const block16 *)(a + n - sizeof(block16));
-      const block16 tail_b = *(const block16 *)(b + n - sizeof(block16));
-      if (tail_a != tail_b) {
-        return __builtin_bswapg(tail_a) < __builtin_bswapg(tail_b) ? -1 : 1;
+      const int third =
+          compare_block(a + n - 2 * block_width, b + n - 2 * block_width);
+      if (third != 0) {
+        return third;
       }
-      return 0;
+      return compare_block(a + n - block_width, b + n - block_width);
     }
 
-    if (n == 0) {
-      return 0;
-    }
-
-    if (a[0] != b[0]) {
-      return a[0] < b[0] ? -1 : 1;
-    }
-
-    return 0;
-  }
-
-  if (n >= wide_width) {
-    // The final chunk; when n is not a chunk multiple it overlaps bytes the
-    // loop will have proved equal, and equal bytes contribute no difference.
+    // The head proved the first block equal, which licenses skipping up to
+    // one block to align the loop; the final chunk overlaps as usual.
     const unsigned char *const last_a = a + n - wide_width;
     const unsigned char *const last_b = b + n - wide_width;
+    const size_t skew =
+        block_width - (size_t)((uintptr_t)a & (block_width - 1));
+    a += skew;
+    b += skew;
 
     while (a < last_a) {
       const int result = compare_wide(a, b);
@@ -126,19 +97,55 @@ int memcmp(const void *lhs, const void *rhs, size_t n) {
     return compare_wide(last_a, last_b);
   }
 
-  // The final block; when n is not a block multiple it overlaps bytes the
-  // loop will have proved equal, and equal bytes contribute no difference.
-  const unsigned char *const last_a = a + n - block_width;
-  const unsigned char *const last_b = b + n - block_width;
-
-  while (a < last_a) {
-    const int result = compare_block(a, b);
-    if (result != 0) {
-      return result;
+  if (n >= sizeof(block64)) {
+    const block64 head_a = *(const block64 *)a;
+    const block64 head_b = *(const block64 *)b;
+    if (head_a != head_b) {
+      return __builtin_bswapg(head_a) < __builtin_bswapg(head_b) ? -1 : 1;
     }
-    a += block_width;
-    b += block_width;
+    const block64 tail_a = *(const block64 *)(a + n - sizeof(block64));
+    const block64 tail_b = *(const block64 *)(b + n - sizeof(block64));
+    if (tail_a != tail_b) {
+      return __builtin_bswapg(tail_a) < __builtin_bswapg(tail_b) ? -1 : 1;
+    }
+    return 0;
   }
 
-  return compare_block(last_a, last_b);
+  if (n >= sizeof(block32)) {
+    const block32 head_a = *(const block32 *)a;
+    const block32 head_b = *(const block32 *)b;
+    if (head_a != head_b) {
+      return __builtin_bswapg(head_a) < __builtin_bswapg(head_b) ? -1 : 1;
+    }
+    const block32 tail_a = *(const block32 *)(a + n - sizeof(block32));
+    const block32 tail_b = *(const block32 *)(b + n - sizeof(block32));
+    if (tail_a != tail_b) {
+      return __builtin_bswapg(tail_a) < __builtin_bswapg(tail_b) ? -1 : 1;
+    }
+    return 0;
+  }
+
+  if (n >= sizeof(block16)) {
+    const block16 head_a = *(const block16 *)a;
+    const block16 head_b = *(const block16 *)b;
+    if (head_a != head_b) {
+      return __builtin_bswapg(head_a) < __builtin_bswapg(head_b) ? -1 : 1;
+    }
+    const block16 tail_a = *(const block16 *)(a + n - sizeof(block16));
+    const block16 tail_b = *(const block16 *)(b + n - sizeof(block16));
+    if (tail_a != tail_b) {
+      return __builtin_bswapg(tail_a) < __builtin_bswapg(tail_b) ? -1 : 1;
+    }
+    return 0;
+  }
+
+  if (n == 0) {
+    return 0;
+  }
+
+  if (a[0] != b[0]) {
+    return a[0] < b[0] ? -1 : 1;
+  }
+
+  return 0;
 }
