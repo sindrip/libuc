@@ -33,24 +33,28 @@ static volatile int stage;
   uintptr_t absent_value;
   int initial_value = 0;
 
-  const struct __libuc_thread_local_image *thread_local_image =
-      __libuc_thread_local_image_get();
-  if (thread_local_image->initialization != nullptr &&
-      thread_local_image->initialized_size == sizeof(tls_initialized)) {
-    memcpy(&initial_value, thread_local_image->initialization,
-           sizeof(initial_value));
+  const struct __libuc_thread_local_layout *thread_local_layout =
+      __libuc_thread_local_layout_get();
+  const bool thread_local_layout_reinitialized =
+      __libuc_thread_local_layout_init();
+  const bool thread_local_layout_stable =
+      __libuc_thread_local_layout_get() == thread_local_layout;
+  if (thread_local_layout != nullptr && thread_local_layout->image != nullptr &&
+      thread_local_layout->image_size == sizeof(tls_initialized)) {
+    memcpy(&initial_value, thread_local_layout->image, sizeof(initial_value));
   }
 
   const bool auxv_ready = __libuc_auxv_get(AT_PAGESZ, &page_size) &&
                           page_size == (uintptr_t)4096 &&
                           !__libuc_auxv_get(UINTPTR_MAX, &absent_value);
-  const bool thread_local_image_ready =
-      initial_value == 42 &&
-      thread_local_image->size ==
+  const bool thread_local_layout_ready =
+      thread_local_layout != nullptr && thread_local_layout_reinitialized &&
+      thread_local_layout_stable && initial_value == 42 &&
+      thread_local_layout->block_size ==
           sizeof(tls_initialized) + sizeof(tls_zeroed) &&
-      thread_local_image->alignment == alignof(int);
+      thread_local_layout->alignment == alignof(int);
 
-  stage = (stage == 0 && auxv_ready && thread_local_image_ready) ? 1 : -1;
+  stage = (stage == 0 && auxv_ready && thread_local_layout_ready) ? 1 : -1;
 }
 
 [[gnu::constructor(202)]] static void init_second(void) {

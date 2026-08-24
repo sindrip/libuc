@@ -196,6 +196,21 @@ if get_option('tests')
     name_suffix: 'elf',
   )
 
+  sh = find_program('sh', native: true)
+  llvm_readelf = find_program('llvm-readelf', native: true)
+  program_headers_test = files('test/program_headers.sh')
+
+  test(
+    'startup program headers',
+    sh,
+    args: [
+      program_headers_test,
+      llvm_readelf.full_path(),
+      start_probe,
+      start_no_thread_local_probe,
+    ],
+  )
+
   # Do not run target code unless the machine file says it is executable here
   # or supplies an exe_wrapper.
   if meson.can_run_host_binaries()
@@ -205,7 +220,6 @@ if get_option('tests')
     message('probe execution disabled: add cross/runnable.ini in a matching Linux environment')
   endif
 
-  sh = find_program('sh', native: true)
   mkinitramfs = files('tools/mkinitramfs.sh')
 
   start_initramfs = custom_target(

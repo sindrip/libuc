@@ -3,15 +3,15 @@
 
 #include <stddef.h>
 
-struct __libuc_thread_local_image {
-  const unsigned char *initialization;
-  size_t initialized_size;
-  size_t size;
+struct __libuc_thread_local_layout {
+  const unsigned char *image;
+  size_t image_size;
+  size_t block_size;
   size_t alignment;
 };
 
-[[nodiscard]] bool __libuc_thread_local_image_init(void);
-[[nodiscard]] const struct __libuc_thread_local_image *
-__libuc_thread_local_image_get(void);
+[[nodiscard]] bool __libuc_thread_local_layout_init(void);
+[[nodiscard]] const struct __libuc_thread_local_layout *
+__libuc_thread_local_layout_get(void);
 
 #endif

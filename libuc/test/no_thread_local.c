@@ -3,12 +3,18 @@
 #include "thread_local/thread_local.h"
 
 int main(int argc, char **argv, char **envp) {
-  const struct __libuc_thread_local_image *thread_local_image =
-      __libuc_thread_local_image_get();
-  if (thread_local_image->initialization != nullptr ||
-      thread_local_image->initialized_size != 0 ||
-      thread_local_image->size != 0 || thread_local_image->alignment != 1) {
+  const struct __libuc_thread_local_layout *thread_local_layout =
+      __libuc_thread_local_layout_get();
+  if (thread_local_layout == nullptr || thread_local_layout->image != nullptr ||
+      thread_local_layout->image_size != 0 ||
+      thread_local_layout->block_size != 0 ||
+      thread_local_layout->alignment != 1) {
     return 124;
+  }
+
+  if (!__libuc_thread_local_layout_init() ||
+      __libuc_thread_local_layout_get() != thread_local_layout) {
+    return 123;
   }
 
   if (argc < 1 || argv == nullptr || argv[0] == nullptr || envp == nullptr) {
