@@ -13,12 +13,11 @@ int memcmp(const void *lhs, const void *rhs, size_t n) {
   const unsigned char *a = lhs;
   const unsigned char *b = rhs;
 
-  /* Three loops, each finer than the one before it. This one leaps a whole
-   * window at a time, and abandons the leap the moment a window disagrees
-   * without having charged n for it; the count that remains therefore still
-   * spans the disagreeing bytes, and the finer loops below are certain to
-   * reach them. Charge n for that window and the difference is stepped over
-   * in silence. */
+  /* Three loops, each finer than the one before. This one advances a whole
+   * window at a time and stops at the first window that differs, without
+   * decrementing n for it, so the remaining count still covers the bytes
+   * that differ and the loops below are certain to reach them. Decrementing
+   * n there would step past the difference. */
   while (n >= wide_width) {
     if (!memcmp_arch_equal(a, b)) {
       break;
@@ -29,8 +28,8 @@ int memcmp(const void *lhs, const void *rhs, size_t n) {
   }
 
   /* Lexicographic order on bytes is numeric order on their big-endian
-   * reading, so reversing the bytes of each word turns the comparison we
-   * want into the one the hardware already offers. */
+   * reading, so reversing the bytes of each word makes an ordinary integer
+   * comparison give the answer memcmp wants. */
   while (n >= word_width) {
     word av;
     word bv;
