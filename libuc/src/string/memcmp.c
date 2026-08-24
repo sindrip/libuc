@@ -13,6 +13,8 @@ int memcmp(const void *lhs, const void *rhs, size_t n) {
   const unsigned char *a = lhs;
   const unsigned char *b = rhs;
 
+  // n is not charged for the window that breaks, so the scans below still
+  // cover the bytes that differ.
   while (n >= wide_width) {
     if (!memcmp_arch_equal(a, b)) {
       break;
@@ -22,6 +24,7 @@ int memcmp(const void *lhs, const void *rhs, size_t n) {
     n -= wide_width;
   }
 
+  // memcmp order is big-endian numeric order.
   while (n >= word_width) {
     word av;
     word bv;
