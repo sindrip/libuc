@@ -13,11 +13,7 @@ int memcmp(const void *lhs, const void *rhs, size_t n) {
   const unsigned char *a = lhs;
   const unsigned char *b = rhs;
 
-  /* Three loops, each finer than the one before. This one advances a whole
-   * window at a time and stops at the first window that differs, without
-   * decrementing n for it, so the remaining count still covers the bytes
-   * that differ and the loops below are certain to reach them. Decrementing
-   * n there would step past the difference. */
+  /* The break leaves n intact; the difference is in the first window. */
   while (n >= wide_width) {
     if (!memcmp_arch_equal(a, b)) {
       break;
@@ -27,9 +23,7 @@ int memcmp(const void *lhs, const void *rhs, size_t n) {
     n -= wide_width;
   }
 
-  /* Lexicographic order on bytes is numeric order on their big-endian
-   * reading, so reversing the bytes of each word makes an ordinary integer
-   * comparison give the answer memcmp wants. */
+  /* Lexicographic byte order is big-endian numeric order. */
   while (n >= word_width) {
     word av;
     word bv;
