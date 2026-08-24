@@ -8,13 +8,13 @@ typedef unsigned char memcmp_block [[gnu::vector_size(64)]];
 constexpr size_t memcmp_arch_block_size = sizeof(memcmp_block);
 
 [[gnu::always_inline]]
-static inline bool memcmp_arch_equal(const unsigned char *a,
-                                     const unsigned char *b) {
-  memcmp_block av;
-  memcmp_block bv;
-  __builtin_memcpy(&av, a, sizeof(av));
-  __builtin_memcpy(&bv, b, sizeof(bv));
-  return __builtin_reduce_max(av ^ bv) == 0;
+static inline bool memcmp_arch_equal(const unsigned char *lhs,
+                                     const unsigned char *rhs) {
+  memcmp_block a;
+  memcmp_block b;
+  __builtin_memcpy(&a, lhs, sizeof(a));
+  __builtin_memcpy(&b, rhs, sizeof(b));
+  return __builtin_reduce_max(a ^ b) == 0;
 }
 
 #endif
