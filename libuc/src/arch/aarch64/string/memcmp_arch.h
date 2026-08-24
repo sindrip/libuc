@@ -7,7 +7,6 @@ typedef unsigned char memcmp_lane [[gnu::vector_size(64)]];
 
 constexpr size_t memcmp_arch_width = sizeof(memcmp_lane);
 
-// Compiles to a single umaxv.
 [[gnu::always_inline]]
 static inline bool memcmp_arch_equal(const unsigned char *a,
                                      const unsigned char *b) {

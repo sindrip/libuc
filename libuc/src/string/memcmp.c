@@ -13,9 +13,6 @@ int memcmp(const void *lhs, const void *rhs, size_t n) {
   const unsigned char *a = lhs;
   const unsigned char *b = rhs;
 
-  // Skip whole windows while they are equal. The window that stops the skip
-  // still holds the difference and n is not charged for it, so the scans
-  // below resolve that mismatch as well as comparing a short call outright.
   while (n >= wide_width) {
     if (!memcmp_arch_equal(a, b)) {
       break;
@@ -25,9 +22,6 @@ int memcmp(const void *lhs, const void *rhs, size_t n) {
     n -= wide_width;
   }
 
-  // memcmp order is big-endian numeric order, so the ordering follows from
-  // the loaded values: nothing goes back to memory for the differing byte,
-  // which lets the pointers die at the loads.
   while (n >= word_width) {
     word av;
     word bv;

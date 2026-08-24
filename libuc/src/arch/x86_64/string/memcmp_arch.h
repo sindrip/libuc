@@ -3,7 +3,6 @@
 
 #include <stddef.h>
 
-// 128 also fits AVX-512, as two zmm. 256 measures slower.
 #ifdef __AVX2__
 typedef unsigned char memcmp_lane [[gnu::vector_size(128)]];
 #else
@@ -12,7 +11,6 @@ typedef unsigned char memcmp_lane [[gnu::vector_size(64)]];
 
 constexpr size_t memcmp_arch_width = sizeof(memcmp_lane);
 
-// Compiles to pcmpeqb + pmovmskb.
 [[gnu::always_inline]]
 static inline bool memcmp_arch_equal(const unsigned char *a,
                                      const unsigned char *b) {
