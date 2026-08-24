@@ -3,14 +3,11 @@
 
 #include <stddef.h>
 
-// The window is the architecture's: its width and the equality test native to
-// it travel together, so generic code never names a vector type. umaxv is the
-// across-vector reduction here, and the spelling that reaches it is not the
-// one x86-64 lowers natively, which is why the test lives per architecture.
 typedef unsigned char memcmp_lane [[gnu::vector_size(64)]];
 
 constexpr size_t memcmp_arch_width = sizeof(memcmp_lane);
 
+// umaxv is the native across-vector test; x86-64 lowers a different spelling.
 [[gnu::always_inline]]
 static inline bool memcmp_arch_equal(const unsigned char *a,
                                      const unsigned char *b) {
