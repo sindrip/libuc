@@ -10,7 +10,7 @@
 #   2  the pinned kernel's uapi
 #   3  anything else in <>, which under -nostdlibinc should not compile at all
 #   4  the headers libuc installs, as their consumers spell them — <string.h>
-#      here is bucket "ours", not bucket "should not compile"
+#      and <sys/auxv.h> here are bucket "ours", not bucket "should not compile"
 #   5  project-private headers in ""
 #
 # Regroup rather than Preserve so the grouping is enforced and reformatted
@@ -26,7 +26,7 @@ IncludeCategories:
     Priority: 1
   - Regex: '^<(asm|asm-generic|linux)/'
     Priority: 2
-  - Regex: '^<(string)\.h>$'
+  - Regex: '^<(string|sys/auxv)\.h>$'
     Priority: 4
   - Regex: '^<'
     Priority: 3

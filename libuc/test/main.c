@@ -1,9 +1,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <sys/auxv.h>
-
 #include <string.h>
+#include <sys/auxv.h>
 
 #include "auxv.h"
 #include "thread_local/thread_local.h"
