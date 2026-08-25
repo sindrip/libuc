@@ -44,13 +44,13 @@ const struct __libuc_thread_local_layout *__libuc_thread_local_layout(void) {
     return nullptr;
   }
 
-  const Elf64_Phdr *headers = (const Elf64_Phdr *)address;
+  const auto headers = (const Elf64_Phdr *)address;
 
   /* Find the executable's sole PT_TLS segment. Absence is valid; a second
    * segment makes the image ambiguous. */
   const Elf64_Phdr *segment = nullptr;
   for (size_t index = 0; index < header_count; index++) {
-    const Elf64_Phdr *header = &headers[index];
+    const auto header = &headers[index];
     if (header->p_type != PT_TLS) {
       continue;
     }
