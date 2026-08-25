@@ -70,7 +70,7 @@ const struct __libuc_thread_local_layout *__libuc_thread_local_layout(void) {
     };
   } else {
     /* Validate the image dimensions, mapped range, and effective alignment. */
-    uint64_t segment_end;
+    Elf64_Addr segment_end;
     if (segment->p_filesz > segment->p_memsz ||
         ckd_add(&segment_end, segment->p_vaddr, segment->p_memsz)) {
       return nullptr;
