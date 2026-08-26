@@ -1,6 +1,20 @@
 #ifndef LIBUC_SRC_ARCH_X86_64_SYSCALL_ARCH_H
 #define LIBUC_SRC_ARCH_X86_64_SYSCALL_ARCH_H
 
+[[nodiscard]] static inline long __libuc_syscall2(long number, long argument_0,
+                                                  long argument_1) {
+  register long rax __asm__("rax") = number;
+  register long rdi __asm__("rdi") = argument_0;
+  register long rsi __asm__("rsi") = argument_1;
+
+  __asm__ volatile("syscall"
+                   : "+r"(rax)
+                   : "r"(rdi), "r"(rsi)
+                   : "rcx", "r11", "memory", "cc");
+
+  return rax;
+}
+
 [[nodiscard]] static inline long
 __libuc_syscall6(long number, long argument_0, long argument_1, long argument_2,
                  long argument_3, long argument_4, long argument_5) {
