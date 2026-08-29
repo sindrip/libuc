@@ -44,6 +44,7 @@ void __libuc_fiber_run(struct __libuc_fiber *fiber) {
   fiber->return_to = &home;
   fiber_arch_switch(&home, &fiber->context);
 
-  fiber_arch_context_poison(&fiber->context);
+  /* We are back on the caller's stack. Poison the completed context. */
+  fiber->context = (struct fiber_arch_context){0};
   fiber->return_to = nullptr;
 }

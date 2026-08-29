@@ -78,10 +78,4 @@ static inline void fiber_arch_context_make(struct fiber_arch_context *context,
   };
 }
 
-static inline void
-fiber_arch_context_poison(struct fiber_arch_context *context) {
-  context->lr = 0;
-  context->sp = 0;
-}
-
 #endif
