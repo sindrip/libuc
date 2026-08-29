@@ -44,6 +44,7 @@ endif
 
 public_include = include_directories('include')
 private_include = include_directories('src')
+arch_include = include_directories('src/arch/' + arch)
 
 base_c_args = [
   '-ffreestanding',
@@ -103,7 +104,7 @@ startup_impl = static_library(
   'src/start.c',
   build_by_default: false,
   c_args: common_c_args + ['-Wno-reserved-identifier'],
-  include_directories: public_include,
+  include_directories: [public_include, private_include, arch_include],
   pic: false,
 )
 
@@ -192,6 +193,17 @@ if get_option('tests')
     name_suffix: 'elf',
   )
 
+  exit_status_probe = executable(
+    'exit-status',
+    'test/exit_status.c',
+    c_args: common_c_args + ['-Wno-reserved-identifier'],
+    include_directories: [public_include, private_include],
+    link_args: probe_link_args,
+    link_depends: 'libuc.ld',
+    link_whole: [crt1_internal, libc],
+    name_suffix: 'elf',
+  )
+
   start_no_thread_local_probe = executable(
     'start-no-thread-local',
     'test/no_thread_local.c',
@@ -203,11 +215,14 @@ if get_option('tests')
     name_suffix: 'elf',
   )
 
+  test_arch_include = include_directories('test/arch/' + arch)
+
   fiber_probe = executable(
     'fiber',
     'test/fiber.c',
     c_args: common_c_args + ['-Wno-reserved-identifier'],
-    include_directories: [public_include, private_include, fiber_arch_include],
+    include_directories: [public_include, private_include, fiber_arch_include,
+                          test_arch_include],
     link_args: probe_link_args,
     link_depends: 'libuc.ld',
     link_whole: [crt1_internal, libc],
@@ -216,6 +231,15 @@ if get_option('tests')
 
   sh = find_program('sh', native: true)
   llvm_readelf = find_program('llvm-readelf', native: true)
+  llvm_nm = find_program('llvm-nm', native: true)
+
+  test(
+    'no scheduler symbol',
+    sh,
+    args: ['-c', 'symbols=$("$1" --defined-only "$2") || exit 1; ' +
+           '! printf %s "$symbols" | grep -qi sched', 'check',
+           llvm_nm, libc],
+  )
   program_headers_test = files('test/program_headers.sh')
 
   test(
@@ -235,6 +259,11 @@ if get_option('tests')
     test('startup contract with PT_TLS', start_probe)
     test('startup contract without PT_TLS', start_no_thread_local_probe)
     test('fiber bootstrap round trip', fiber_probe)
+    test(
+      'main status reaches exit_group',
+      sh,
+      args: ['-c', '"$1"; test $? -eq 42', 'check', exit_status_probe],
+    )
   else
     message('probe execution disabled: add cross/runnable.ini in a matching Linux environment')
   endif
