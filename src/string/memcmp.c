@@ -12,13 +12,13 @@ int memcmp(const void *lhs, const void *rhs, size_t n) {
   size_t remaining = n;
 
   /* The break skips the decrement; the difference is in the first window. */
-  while (remaining >= memcmp_arch_block_size) {
-    if (!memcmp_arch_equal(l, r)) {
+  while (remaining >= memcmp_block_size) {
+    if (!memcmp_block_equal(l, r)) {
       break;
     }
-    l += memcmp_arch_block_size;
-    r += memcmp_arch_block_size;
-    remaining -= memcmp_arch_block_size;
+    l += memcmp_block_size;
+    r += memcmp_block_size;
+    remaining -= memcmp_block_size;
   }
 
   /* Lexicographic byte order is big-endian numeric order. */

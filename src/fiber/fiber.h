@@ -6,14 +6,14 @@
 #include "fiber_arch.h"
 
 struct __libuc_fiber {
-  struct fiber_arch_context context; /* where the fiber stopped */
+  struct fiber_context context; /* where the fiber stopped */
   void (*entry)(void *);
   void *argument;
   unsigned char *stack;
   size_t stack_length;
   /* Where completion lands: the pending run's own frame. Set by run, dead
    * between runs. */
-  struct fiber_arch_context *return_to;
+  struct fiber_context *return_to;
 };
 
 [[nodiscard]] bool __libuc_fiber_create(struct __libuc_fiber *fiber,

@@ -7,11 +7,11 @@
 /* Variant 1 as sysvabi64 fixes it: the thread pointer addresses the 16-byte
  * TCB, and compiled TP-relative accesses assume the block begins at tcb_size
  * rounded up to the block's alignment. */
-constexpr size_t thread_local_arch_tcb_size = 16;
+constexpr size_t thread_local_tcb_size = 16;
 
 /* A block's geometry within one mapping, measured from a base the caller has
  * placed on an alignment boundary. */
-struct thread_local_arch_placement {
+struct thread_local_placement {
   size_t length;       /* bytes the mapping must span */
   size_t block_offset; /* where the initialization image is copied */
   size_t tp_offset;    /* the thread-pointer value */
@@ -20,10 +20,10 @@ struct thread_local_arch_placement {
 /* block_size and alignment are whatever the executable's PT_TLS declared;
  * the sums fail rather than wrap. */
 [[nodiscard]] static inline bool
-thread_local_arch_place(size_t block_size, size_t alignment,
-                        struct thread_local_arch_placement *placement) {
+thread_local_place(size_t block_size, size_t alignment,
+                   struct thread_local_placement *placement) {
   size_t raised;
-  if (ckd_add(&raised, thread_local_arch_tcb_size, alignment - 1)) {
+  if (ckd_add(&raised, thread_local_tcb_size, alignment - 1)) {
     return false;
   }
 
@@ -33,7 +33,7 @@ thread_local_arch_place(size_t block_size, size_t alignment,
     return false;
   }
 
-  *placement = (struct thread_local_arch_placement){
+  *placement = (struct thread_local_placement){
       .length = length,
       .block_offset = block_offset,
       .tp_offset = 0,

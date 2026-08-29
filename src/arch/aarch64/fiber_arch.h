@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-struct fiber_arch_context {
+struct fiber_context {
   unsigned long gp[10]; /* x19..x28 */
   unsigned long fp;     /* x29 */
   unsigned long lr;     /* x30 */
@@ -13,8 +13,7 @@ struct fiber_arch_context {
 };
 
 [[gnu::naked]] [[maybe_unused]] static void
-fiber_arch_switch(struct fiber_arch_context *save,
-                  const struct fiber_arch_context *restore) {
+fiber_switch(struct fiber_context *save, const struct fiber_context *restore) {
   __asm__ volatile("stp x19, x20, [x0, #%c[x19]]\n"
                    "stp x21, x22, [x0, #%c[x21]]\n"
                    "stp x23, x24, [x0, #%c[x23]]\n"
@@ -42,38 +41,38 @@ fiber_arch_switch(struct fiber_arch_context *save,
                    "ldp d14, d15, [x1, #%c[d14]]\n"
                    "ret\n"
                    :
-                   : [x19] "i"(offsetof(struct fiber_arch_context, gp[0])),
-                     [x21] "i"(offsetof(struct fiber_arch_context, gp[2])),
-                     [x23] "i"(offsetof(struct fiber_arch_context, gp[4])),
-                     [x25] "i"(offsetof(struct fiber_arch_context, gp[6])),
-                     [x27] "i"(offsetof(struct fiber_arch_context, gp[8])),
-                     [fp] "i"(offsetof(struct fiber_arch_context, fp)),
-                     [sp] "i"(offsetof(struct fiber_arch_context, sp)),
-                     [d8] "i"(offsetof(struct fiber_arch_context, d[0])),
-                     [d10] "i"(offsetof(struct fiber_arch_context, d[2])),
-                     [d12] "i"(offsetof(struct fiber_arch_context, d[4])),
-                     [d14] "i"(offsetof(struct fiber_arch_context, d[6]))
+                   : [x19] "i"(offsetof(struct fiber_context, gp[0])),
+                     [x21] "i"(offsetof(struct fiber_context, gp[2])),
+                     [x23] "i"(offsetof(struct fiber_context, gp[4])),
+                     [x25] "i"(offsetof(struct fiber_context, gp[6])),
+                     [x27] "i"(offsetof(struct fiber_context, gp[8])),
+                     [fp] "i"(offsetof(struct fiber_context, fp)),
+                     [sp] "i"(offsetof(struct fiber_context, sp)),
+                     [d8] "i"(offsetof(struct fiber_context, d[0])),
+                     [d10] "i"(offsetof(struct fiber_context, d[2])),
+                     [d12] "i"(offsetof(struct fiber_context, d[4])),
+                     [d14] "i"(offsetof(struct fiber_context, d[6]))
                    : "memory");
 }
 
-/* A context built by fiber_arch_context_make resumes here: x19 holds the
+/* A context built by fiber_context_make resumes here: x19 holds the
  * function, x20 its argument. The function must never return; x29 and x30
  * are zeroed so backtraces stop and a return faults. */
-[[gnu::naked]] [[maybe_unused]] static void fiber_arch_start(void) {
+[[gnu::naked]] [[maybe_unused]] static void fiber_start(void) {
   __asm__ volatile("mov x29, xzr\n"
                    "mov x30, xzr\n"
                    "mov x0, x20\n"
                    "br x19\n");
 }
 
-static inline void fiber_arch_context_make(struct fiber_arch_context *context,
-                                           unsigned char *stack_top,
-                                           void (*function)(void *),
-                                           void *argument) {
-  *context = (struct fiber_arch_context){
+static inline void fiber_context_make(struct fiber_context *context,
+                                      unsigned char *stack_top,
+                                      void (*function)(void *),
+                                      void *argument) {
+  *context = (struct fiber_context){
       .gp = {[0] = (unsigned long)(uintptr_t)function,
              [1] = (unsigned long)(uintptr_t)argument},
-      .lr = (unsigned long)(uintptr_t)fiber_arch_start,
+      .lr = (unsigned long)(uintptr_t)fiber_start,
       .sp = (unsigned long)(uintptr_t)stack_top & ~15UL,
   };
 }

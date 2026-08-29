@@ -9,7 +9,7 @@
 [[noreturn]] static void run_fiber(void *opaque) {
   struct __libuc_fiber *fiber = opaque;
   fiber->entry(fiber->argument);
-  fiber_arch_switch(&fiber->context, fiber->return_to);
+  fiber_switch(&fiber->context, fiber->return_to);
   __builtin_trap();
 }
 
@@ -29,8 +29,8 @@
       .stack = (unsigned char *)(uintptr_t)address,
       .stack_length = stack_length,
   };
-  fiber_arch_context_make(&fiber->context, fiber->stack + stack_length,
-                          run_fiber, fiber);
+  fiber_context_make(&fiber->context, fiber->stack + stack_length, run_fiber,
+                     fiber);
   return true;
 }
 
@@ -40,11 +40,11 @@
 }
 
 void __libuc_fiber_run(struct __libuc_fiber *fiber) {
-  struct fiber_arch_context home;
+  struct fiber_context home;
   fiber->return_to = &home;
-  fiber_arch_switch(&home, &fiber->context);
+  fiber_switch(&home, &fiber->context);
 
   /* We are back on the caller's stack. Poison the completed context. */
-  fiber->context = (struct fiber_arch_context){0};
+  fiber->context = (struct fiber_context){0};
   fiber->return_to = nullptr;
 }

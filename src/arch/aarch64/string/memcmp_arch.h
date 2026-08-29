@@ -5,11 +5,11 @@
 
 typedef unsigned char memcmp_block [[gnu::vector_size(64)]];
 
-constexpr size_t memcmp_arch_block_size = sizeof(memcmp_block);
+constexpr size_t memcmp_block_size = sizeof(memcmp_block);
 
 [[gnu::always_inline]]
-static inline bool memcmp_arch_equal(const unsigned char *l,
-                                     const unsigned char *r) {
+static inline bool memcmp_block_equal(const unsigned char *l,
+                                      const unsigned char *r) {
   memcmp_block a;
   memcmp_block b;
   __builtin_memcpy(&a, l, sizeof(a));
