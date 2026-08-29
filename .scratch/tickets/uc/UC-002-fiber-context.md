@@ -13,7 +13,9 @@ Introduce the smallest useful fiber: an owned stack and saved register context.
 
 Add fiber creation, destruction, and a two-context switch. A new fiber starts
 in a trampoline and returns to its caller when its entry function finishes.
-There is no run queue, scheduler, I/O, spawn policy, or stack pool.
+There is no run queue, scheduler, I/O, spawn policy, or stack pool. Re-entry
+is deliberately absent: nothing suspends a running fiber, and the API for
+suspension arrives with its first consumer.
 
 A fiber owns nothing thread-local: no block, no thread pointer. Its stack is
 a plain read-write anonymous mapping; guard pages are deferred. The process
