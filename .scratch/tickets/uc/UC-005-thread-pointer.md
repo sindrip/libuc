@@ -1,8 +1,8 @@
 ---
-id: UC-003
+id: UC-005
 title: Install a thread-local block
 status: todo
-depends: [UC-002]
+depends: [UC-004]
 ---
 
 ## Goal
@@ -11,13 +11,13 @@ Separate “make this block current” from creating the block.
 
 ## Spec
 
-Expose one private install operation. AArch64 writes `tpidr_el0`; x86-64 writes
-the FS base. Installation performs no allocation and owns no lifetime.
+Expose one private install operation. AArch64 writes `tpidr_el0`; x86-64
+writes the FS base. Installation performs no allocation and owns no lifetime.
 
 ## Files
 
 - `src/thread_local/thread_local.{c,h}`
-- `src/arch/*/thread_local_arch.{c,h}`
+- `src/arch/*/thread_local_arch.h`
 
 ## Acceptance
 

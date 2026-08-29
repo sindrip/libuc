@@ -1,4 +1,4 @@
-# What the UC-002..006 end-to-end sketch taught
+# What the end-to-end sketch taught
 
 2026-08-29: the whole ticket arc — block create/destroy, install, fibers,
 main on the root fiber — was built once as an uncommitted sketch to see the
@@ -69,12 +69,14 @@ the binary, `dmesg` prints pc/lr/registers; map the pc with llvm-objdump.
 
 ## API decisions from the design discussion (not in any ticket)
 
-- Block API shape A: create/destroy own the mmap, per the ticket text. The
-  musl/glibc shape — geometry + carve into caller memory, allocation owned
-  by the thread/fiber layer so stack and TLS share one mapping — was
-  considered and deferred: the block handle lives in a src/-private header,
-  so extracting carve when UC-005's fiber pool makes the need concrete costs
-  nothing. Both libcs ended there; we get to arrive with evidence.
+- Block API shape: create/destroy owning their mmap was chosen while TLS
+  preceded fibers in the queue; the queue inversion (fibers first) reopened
+  it, and the decision now belongs to the block ticket, made against the
+  fiber as the real caller. The alternative is the musl/glibc shape —
+  geometry + carve into caller memory, allocation owned by the thread/fiber
+  layer so stack and TLS share one mapping. Both libcs ended there; we get
+  to arrive with evidence. The handle lives in a src/-private header either
+  way, so nothing about the choice is ABI.
 - The handle is the transparent four-field struct {mapping, length, block,
   thread_pointer}: write down what destroy, install, and the acceptance
   probe need rather than re-deriving any of it.
