@@ -1,7 +1,7 @@
 ---
 id: UC-003
 title: Enter main on the root fiber
-status: next
+status: done
 depends: [UC-002]
 ---
 
@@ -24,7 +24,7 @@ constructors and `main` remain bound by the no-`_Thread_local` invariant.
 ## Files
 
 - `src/start.c`
-- `src/arch/*/start.S`
+- `src/arch/*/start.c`
 - `src/fiber/`
 - `test/main.c`
 

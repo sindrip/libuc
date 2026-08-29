@@ -12,6 +12,7 @@
  * unprioritized one after every numbered slot. Each stage refuses to
  * advance unless the previous one already happened. */
 static volatile int stage;
+static uintptr_t constructor_stack_witness;
 
 /* This function is emitted for ELF and machine-code inspection, but is not
  * called until libuc can establish the architecture's thread pointer. */
@@ -31,6 +32,9 @@ static volatile int stage;
   uintptr_t page_size;
   uintptr_t absent_value;
   int initial_value = 0;
+  unsigned char stack_probe;
+
+  constructor_stack_witness = (uintptr_t)&stack_probe;
 
   const struct __libuc_thread_local_layout *thread_local_layout =
       __libuc_thread_local_layout();
@@ -76,6 +80,24 @@ int main(int argc, char **argv, char **envp) {
   const size_t argument_count = (size_t)argc;
   if (argv[argument_count] != nullptr || envp != &argv[argument_count + 1]) {
     return 126;
+  }
+
+  /* argv lives on the kernel-provided stack; a local farther than any
+   * plausible bootstrap frame shows this frame is on some other mapping.
+   * That the other mapping is the root fiber's follows from the control
+   * flow, not from this distance check. */
+  unsigned char stack_probe;
+  const uintptr_t here = (uintptr_t)&stack_probe;
+  const uintptr_t kernel_stack = (uintptr_t)argv;
+  const uintptr_t main_distance =
+      here > kernel_stack ? here - kernel_stack : kernel_stack - here;
+  const uintptr_t constructor_distance =
+      constructor_stack_witness > kernel_stack
+          ? constructor_stack_witness - kernel_stack
+          : kernel_stack - constructor_stack_witness;
+  if (main_distance < ((uintptr_t)1 << 20) ||
+      constructor_distance < ((uintptr_t)1 << 20)) {
+    return 124;
   }
 
   return 0;

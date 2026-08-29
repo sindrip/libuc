@@ -1,6 +1,7 @@
 #include <stdint.h>
 
 #include "auxv.h"
+#include "fiber/fiber.h"
 #include "thread_local/thread_local.h"
 
 [[gnu::visibility("hidden")]] extern void (*const __libuc_init_array_start[])(
@@ -12,6 +13,29 @@ extern int main(int argc, char **argv, char **envp);
 
 int __libuc_start(void *initial_stack);
 
+constexpr size_t root_stack_length = (size_t)8 << 20;
+
+struct root_arguments {
+  char **argv;
+  char **envp;
+  int argument_count;
+  int status;
+};
+
+static void root_entry(void *opaque) {
+  struct root_arguments *arguments = opaque;
+
+  for (void (*const *init)(void) = __libuc_init_array_start;
+       init != __libuc_init_array_end; init++) {
+    (*init)();
+  }
+
+  arguments->status =
+      main(arguments->argument_count, arguments->argv, arguments->envp);
+}
+
+/* The kernel stack is bootstrap storage only: parse what the kernel handed
+ * over, build the root fiber, and carry main's status to exit_group. */
 int __libuc_start(void *initial_stack) {
   uintptr_t *words = initial_stack;
   const uintptr_t argument_count = words[0];
@@ -36,10 +60,16 @@ int __libuc_start(void *initial_stack) {
     return 127;
   }
 
-  for (void (*const *init)(void) = __libuc_init_array_start;
-       init != __libuc_init_array_end; init++) {
-    (*init)();
+  struct root_arguments arguments = {
+      .argv = argv,
+      .envp = envp,
+      .argument_count = (int)argument_count,
+      .status = 127,
+  };
+  struct __libuc_fiber root;
+  if (!__libuc_fiber_create(&root, root_stack_length, root_entry, &arguments)) {
+    return 127;
   }
-
-  return main((int)argument_count, argv, envp);
+  __libuc_fiber_run(&root);
+  return arguments.status;
 }
