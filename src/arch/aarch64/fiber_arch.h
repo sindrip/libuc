@@ -2,6 +2,7 @@
 #define LIBUC_SRC_ARCH_AARCH64_FIBER_ARCH_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 struct fiber_arch_context {
   unsigned long gp[10]; /* x19..x28 */
@@ -53,6 +54,28 @@ fiber_arch_switch([[maybe_unused]] struct fiber_arch_context *save,
                      [d12] "i"(offsetof(struct fiber_arch_context, d[4])),
                      [d14] "i"(offsetof(struct fiber_arch_context, d[6]))
                    : "memory");
+}
+
+/* A context built by fiber_arch_context_make resumes here: x19 holds the
+ * function, x20 its argument. The function must never return; x29 and x30
+ * are zeroed so backtraces stop and a return faults. */
+[[gnu::naked]] [[maybe_unused]] static void fiber_arch_start(void) {
+  __asm__ volatile("mov x29, xzr\n"
+                   "mov x30, xzr\n"
+                   "mov x0, x20\n"
+                   "br x19\n");
+}
+
+static inline void fiber_arch_context_make(struct fiber_arch_context *context,
+                                           unsigned char *stack_top,
+                                           void (*function)(void *),
+                                           void *argument) {
+  *context = (struct fiber_arch_context){
+      .gp = {[0] = (unsigned long)(uintptr_t)function,
+             [1] = (unsigned long)(uintptr_t)argument},
+      .lr = (unsigned long)(uintptr_t)fiber_arch_start,
+      .sp = (unsigned long)(uintptr_t)stack_top & ~15UL,
+  };
 }
 
 #endif
