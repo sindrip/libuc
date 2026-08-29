@@ -36,7 +36,7 @@ RUN apk add --no-cache clang lld clang-extra-tools make cpio gzip
 COPY --from=uapi-build /linux/usr/include /uapi/include
 
 FROM runtime-toolchain AS runtime-build
-COPY src /src
+COPY spike/src /src
 RUN clang --target=aarch64-unknown-linux-gnu -std=c23 \
         -ffreestanding -nostdlibinc -isystem /uapi/include -I/src -I/src/arch/aarch64 \
         -nostdlib -nostartfiles -static -fuse-ld=lld \
