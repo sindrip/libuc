@@ -165,10 +165,9 @@ if get_option('tests')
   # contract as the Make build without teaching generic code an architecture.
   crt1_internal = static_library(
     'uc-crt1-internal',
-    'src/arch/' + arch + '/start.S',
+    'src/arch/' + arch + '/start.c',
     build_by_default: false,
-    c_args: base_c_args,
-    override_options: ['c_std=none'],
+    c_args: common_c_args + ['-Wno-reserved-identifier'],
     pic: false,
   )
 
