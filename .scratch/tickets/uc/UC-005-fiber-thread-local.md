@@ -18,8 +18,8 @@ both the block and stack.
 
 ## Files
 
-- `libuc/src/fiber/`
-- `libuc/src/arch/*/fiber_arch.*`
+- `src/fiber/`
+- `src/arch/*/fiber_arch.*`
 
 ## Acceptance
 

@@ -18,8 +18,8 @@ the initialization bytes, initialized size, total size, and alignment. No
 
 ## Files
 
-- `libuc/src/thread_local/thread_local.{c,h}`
-- `libuc/src/start.c`
+- `src/thread_local/thread_local.{c,h}`
+- `src/start.c`
 
 ## Acceptance
 

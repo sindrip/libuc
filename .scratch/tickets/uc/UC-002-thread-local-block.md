@@ -41,8 +41,8 @@ allocation and lifetime generic.
 
 ## Files
 
-- `libuc/src/thread_local/thread_local.{c,h}`
-- `libuc/src/arch/*/thread_local_arch.{c,h}`
+- `src/thread_local/thread_local.{c,h}`
+- `src/arch/*/thread_local_arch.{c,h}`
 
 ## Acceptance
 

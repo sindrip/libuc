@@ -22,10 +22,10 @@ owns no queue, ring, arena, or pool.
 
 ## Files
 
-- `libuc/src/start.c`
-- `libuc/src/arch/*/start.S`
-- `libuc/src/fiber/`
-- `libuc/test/main.c`
+- `src/start.c`
+- `src/arch/*/start.S`
+- `src/fiber/`
+- `test/main.c`
 
 ## Acceptance
 

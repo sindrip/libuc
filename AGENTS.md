@@ -134,37 +134,51 @@ whose whole job is being accurate.
 ## Layout
 
 ```
+meson.build               libuc — the deliverable; Clang + LLD, one static libc.a
+meson.options             tests / ubsan toggles
+include/                  the headers libuc installs: <string.h>, <sys/auxv.h>
+src/                      the implementation
+  start.c                 _start's C half
+  auxv.h/.c               the auxiliary vector, parsed once at entry
+  syscall.h               raw syscall wrappers; -errno in -1..-4095
+  ubsan.c                 the minimal-runtime UBSan handlers
+  thread_local/           the PT_TLS image and the per-block lifetime
+  string/                 memcpy, memset, memmove, memcmp
+  arch/<arch>/            everything that knows the instruction set
+    start.S               _start
+    syscall_arch.h        the trap sequence and register assignment
+    thread_local_arch.h   the TLS variant the ABI fixes for the arch
+    string/               the vectorised memcmp block
+test/                     startup probes and their program-header checks
+tools/mkinitramfs.sh      wrap a probe as an initramfs image
+cross/                    meson cross files; runnable.ini layers exe-wrapper off
+libuc.ld                  linker script for the static probes
 build/kernel.Dockerfile   SHA256-pinned fetch, toolchain, Kconfig, kernel build
 build/kernel.config       fragment merged over tinyconfig + kvm_guest.config
-docker-bake.hcl           targets: `kernel` (default), `config`, `src`
-run.sh                    boot under QEMU (hvf; ACCEL/SMP overridable)
+docker-bake.hcl           targets: `kernel` (default), `config`, `src`, `uapi`, `uapi-x86_64`
+run.sh                    boot under QEMU (hvf; ACCEL/SMP/INITRD overridable)
 debug.sh                  same boot, halted, gdbstub on :1234
 src.sh                    export the pinned kernel tree -> out/src/
-src/                      the runtime
-  context.h               rt_switch + rt_ctx_init; rt_ctx as an opaque blob
-  syscall.h               svc wrappers; -errno in -1..-4095
-  auxv.h/.c               AT_PAGESZ and friends, parsed once at entry
-  fiber.{c,h}             a fiber, and the ways it gives up the CPU
-  io.{c,h}                the operations it can ask for — descriptions only
-  scheduler.{c,h}         queues, the loop, staging, reaping
-  ring.{c,h}              the raw io_uring, no liburing
-  arch/<arch>/            everything that knows the instruction set
-    context.c             the naked switch, rt_ctx_init
-    context_arch.h        struct rt_ctx_regs — the layout the blob is sized from
-    syscall_arch.h        the svc sequence and register assignment
-    start.S               _start: sp points at argc; align, call, exit_group
+spike/                    the pre-libuc runtime, frozen in place
 ```
 
-**The architecture is chosen by the include path, never by generic code.**
-`-Isrc -Isrc/arch/$(ARCH)` is in `CPPFLAGS`, so `context.h` says
-`#include "context_arch.h"` and the build decides which one that is. Generic
-headers naming `arch/aarch64/...` directly is the failure this prevents: it
-puts one architecture inside the code that is supposed to be portable, and the
-second architecture then arrives as an `#ifdef` ladder. Adding one should be a
-directory plus `ARCH=`, touching no generic file.
+`spike/` is the io_uring runtime the RT tickets built, moved aside whole —
+sources, Makefile, no path adjusted. It is a point-in-time reference, not a
+build: its Make targets assume the old repo root and are not expected to run.
+The kernel bake still compiles it because `./run.sh` boots its initramfs by
+default.
 
-The paired header keeps the `_arch` suffix on purpose. Naming it `context.h`
-inside `arch/<arch>/` would make `src/context.h`'s own include resolve to
+**The architecture is chosen by the include path, never by generic code.**
+Each consuming meson target adds `src/arch/` + the host `cpu_family` to its
+include directories, so `syscall.h` says `#include "syscall_arch.h"` and the
+build decides which one that is. Generic headers naming `arch/aarch64/...`
+directly is the failure this prevents: it puts one architecture inside the
+code that is supposed to be portable, and the second architecture then arrives
+as an `#ifdef` ladder. Adding one should be a directory plus a cross file,
+touching no generic file.
+
+The paired header keeps the `_arch` suffix on purpose. Naming it `syscall.h`
+inside `arch/<arch>/` would make `src/syscall.h`'s own include resolve to
 itself, since a quoted include searches the including file's directory first.
 
 ```
@@ -172,14 +186,19 @@ out/                      GENERATED — gitignored, never edit
 out/vmlinuz               the kernel
 out/kernel.config         what Kconfig actually resolved — read this, not the fragment
 out/System.map            kernel symbols
+out/uapi*/include/        the pinned kernel's uapi headers, per architecture
+out/initramfs.cpio.gz     the spike runtime, ./run.sh's default PID 1
 out/src/                  whole pinned kernel tree, read-only ground truth
+.cache/meson-<arch>/      meson build directories; compile_commands.json symlinks
+                          into the aarch64 one for clangd
 .scratch/plan.md          design decisions and rationale
-.scratch/tickets/         RT-00N work items
+.scratch/tickets/         RT-00N (spike, closed) and uc/UC-00N (active)
 ```
 
 Dockerfile stages: `linux-tarball` → `toolchain` → `kernel-tree` → `kconfig` →
-`kernel-build`, with three `scratch` export stages hanging off them —
-`linux-src`, `config`, `kernel`.
+`kernel-build`, plus the uapi header installs and the spike's initramfs
+compile, with `scratch` export stages hanging off them — `linux-src`,
+`config`, `kernel`, `uapi`, `uapi-x86_64`.
 
 `linux-tarball` is the only stage that knows `KERNEL_VERSION`: it `ADD --unpack`s
 the tarball to `/`, leaving the archive's own `linux-$V/` at the stage root.
@@ -199,24 +218,31 @@ fails the `ADD`.
 ## Build and run
 
 ```sh
-docker buildx bake kernel   # vmlinuz + kernel.config + System.map -> out/
+docker buildx bake kernel   # vmlinuz + kernel.config + System.map + spike initramfs -> out/
 docker buildx bake config   # what Kconfig resolved, WITHOUT compiling — fast
+docker buildx bake uapi     # kernel uapi headers -> out/uapi (uapi-x86_64 likewise)
 ./src.sh                    # whole kernel tree -> out/src/ (opt-in, ~1.7 GB, ~40s)
+
+meson setup .cache/meson-aarch64 --cross-file cross/aarch64.ini -Dtests=true -Dubsan=enabled
+meson compile -C .cache/meson-aarch64      # the check that matters while editing
+meson test    -C .cache/meson-aarch64      # program-header contract on the probes
+ninja -C .cache/meson-aarch64 clang-tidy   # from meson's own compile database
+
 ./run.sh                    # boot (QEMU + hvf, 1 vCPU). Ctrl-C quits
 ACCEL=tcg SMP=4 ./run.sh    # multi-core — slow, but hvf cannot do SMP
 ./debug.sh                  # same boot, halted, gdbstub on :1234
 lldb -o 'gdb-remote localhost:1234'
 ```
 
-There is also a **`Makefile`, and it is the check that matters while editing.**
-`make check` compiles every source file under `-Weverything -Werror` — a
-strictly stronger warning set than the container build's `-Wall -Wextra
--pedantic -Wsign-conversion`, and it takes about a second against a Docker
-build's minutes. `make tidy` runs clang-tidy over libuc, from
-libuc's own `compile_commands.json`; the Makefile still generates the Make
-tree's so the editor and the build cannot drift. **A green `docker buildx bake kernel` does not mean the
-tree is clean** — the container's flags are the weaker of the two, so run
-`make check` before claiming a build passes.
+**`meson compile` is the check that matters while editing.** libuc builds
+under `-Weverything -Werror` with minimal UBSan, and each architecture has its
+own build directory — compile both `.cache/meson-aarch64` and
+`.cache/meson-x86_64` before claiming the tree clean. clang-tidy runs as
+meson's built-in target from the same compile database the build uses, and the
+root `compile_commands.json` symlinks into `.cache/meson-aarch64`, so the
+editor, the build, and the tidy checks cannot drift apart. **A green
+`docker buildx bake kernel` says nothing about libuc** — the bake compiles
+only the frozen spike, under weaker flags.
 
 `bake config` is the fast path for any "is X enabled?" question — it resolves
 Kconfig without a compile. Kconfig turns on far more than the fragment asks for,
@@ -242,15 +268,16 @@ Each cost a debugging session to find; all are measured, not assumed.
    a second launcher, or be on bare metal by then.
 3. **No kernel symbols in lldb.** `out/vmlinuz` is a raw stripped `Image`, so
    symbolic breakpoints do not work; registers, disassembly, stepping and memory
-   do. The runtime's own ELF (`-g -static -no-pie`) will symbolise fine. Export
+   do. The runtime's own ELF (`-g -static`) will symbolise fine. Export
    `/linux/vmlinux` if kernel-side debugging is ever needed.
 
 ## Current boot state
 
-There is **no rootfs and no initramfs**. `./run.sh` boots the kernel, prints its
-log, and panics with `VFS: Unable to mount root fs`. That is expected and is the
-current milestone boundary: the runtime becomes the init, and the initramfs
-stage returns with it (`CONFIG_BLK_DEV_INITRD=y` is already set for that).
+`./run.sh` boots `out/initramfs.cpio.gz` — the frozen spike runtime — as PID 1
+by default. libuc's probes boot the same way:
+`meson compile -C .cache/meson-aarch64 initramfs` wraps the startup probe, and
+`INITRD=.cache/meson-aarch64/start.initramfs.cpio.gz ./run.sh` boots it
+(`initramfs-no-thread-local` likewise for the probe without a PT_TLS segment).
 
 Do not reintroduce busybox or a shell without discussion — the design calls for
 the runtime to be PID 1.
@@ -271,21 +298,26 @@ the C23 this project uses.
 Build flags are load-bearing, not stylistic:
 
 ```
--std=c23 -ffreestanding -nostdlib -nostartfiles -static -no-pie
--fno-stack-protector -fno-omit-frame-pointer -g -O1
--fsanitize=undefined -fsanitize-minimal-runtime -fno-sanitize-recover=all
+-std=c23 -ffreestanding -nostdlibinc -fno-stack-protector -fno-omit-frame-pointer
+-g -O2 -Weverything -Werror
+-fsanitize=undefined,local-bounds -fsanitize-minimal-runtime -fno-sanitize-recover=all
 ```
 
-- `-static -no-pie` — fixed load addresses; without them the gdbstub is a
-  guessing game.
-- `-fno-omit-frame-pointer` — the crash handler walks the FP chain.
+with the probes linked `-nostdlib -nostartfiles -static` against `libuc.ld`.
+
+- `-nostdlibinc` — drops the platform's libc include paths but keeps clang's
+  own, so `<stdint.h>` survives while `<stdio.h>` cannot be reached. Invariant
+  4 enforced by the compiler instead of by discipline.
+- `-static` — fixed load addresses; without them the gdbstub is a guessing
+  game.
+- `-fno-omit-frame-pointer` — backtraces walk the FP chain.
 - `-fno-stack-protector` — otherwise `__stack_chk_fail` is undefined.
-- `-fsanitize=undefined -fsanitize-minimal-runtime` — the closest thing to a
-  test suite this project has. Works freestanding: it emits undefined
-  `__ubsan_handle_*_minimal_abort` symbols that you implement yourself and route
-  into the RT-007 crash handler. Catches shifts past width, misaligned loads,
-  and signed overflow in exactly the hand-rolled pointer and ring-index
-  arithmetic where there is no other safety net.
+- `-fsanitize=undefined -fsanitize-minimal-runtime` — the sanitizer half of
+  the test story, dev-only: the shipped build is plain `-O2`. Works
+  freestanding: it emits undefined `__ubsan_handle_*_minimal_abort` symbols
+  that `src/ubsan.c` implements. Catches shifts past width, misaligned loads,
+  and signed overflow in exactly the hand-rolled pointer arithmetic where
+  there is no other safety net.
 
 Rules:
 
@@ -304,32 +336,29 @@ Rules:
 
 ## Testing
 
-**Manual, in-VM, by console inspection.** There is no test harness and no hosted
-unit-test build. Each ticket in `.scratch/tickets/` carries explicit acceptance
-criteria; running them is the test. Boot, read the console, compare.
+Two tiers. `meson test` is the mechanical one: it checks the probes' ELF
+contract (program headers via `llvm-readelf`) on every host, and runs the
+probes themselves wherever the machine can execute them — layer
+`cross/runnable.ini` after the architecture file in a matching Linux
+environment; on this Mac they cross-compile but do not run.
 
-This is a deliberate choice, not an omission. A hosted build would require
-separating pure logic from syscalls before we know what that boundary should be,
-and imposing that shape now would be designing the runtime around its test
-harness.
+Behaviour beyond what a host can see is checked **in-VM, by console
+inspection**. Each ticket in `.scratch/tickets/` carries explicit acceptance
+criteria; running them is the test. Boot the probe's initramfs, read the
+console, compare. Keep acceptance criteria mechanically checkable — an exact
+expected console string, not "looks right".
 
-The cost, stated plainly: **there is no regression net.** Nothing catches a
-change that breaks an earlier ticket. The discipline that makes this survivable:
-
-- When touching shared code (`arch/<arch>/context.c`, `ring.c`, `fiber.c`, `scheduler.c`),
-  re-run the acceptance checks of every ticket that depends on it, not just
-  the current one.
-- Keep acceptance criteria mechanically checkable — an exact expected console
-  string, not "looks right". `RT-004`'s `1A2B3C` is the model.
-- The crash handler (RT-007) is load-bearing under this policy. With no tests,
-  a good failure report is the only diagnostic you get.
-
-Revisit when either happens: a regression escapes twice, or the manual checks
-stop fitting in one console screen.
+The cost, stated plainly: **the in-VM half has no regression net.** Nothing
+catches a change that breaks an earlier ticket's boot behaviour, so when
+touching shared code (`start.c`, `src/thread_local/`, `src/arch/`), re-run the
+acceptance checks of every ticket that depends on it, not just the current
+one. Revisit when either happens: a regression escapes twice, or the manual
+checks stop fitting in one console screen.
 
 ## Where work is tracked
 
-`.scratch/plan.md` for decisions and rationale; `.scratch/tickets/RT-00N-*.md`
-for work items with acceptance criteria. Read the plan before proposing
-architecture — most of it has already been argued through, and the rationale for
-rejected alternatives is recorded there.
+`.scratch/plan.md` for decisions and rationale; `.scratch/tickets/uc/UC-00N-*.md`
+for the active work items with acceptance criteria (the `RT-00N` tickets are
+the spike's, closed). Read the plan before proposing architecture — most of it
+has already been argued through, and the rationale for rejected alternatives
+is recorded there.

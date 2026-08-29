@@ -17,8 +17,8 @@ There is no run queue, scheduler, I/O, spawn policy, or stack pool.
 
 ## Files
 
-- `libuc/src/fiber/`
-- `libuc/src/arch/*/fiber_arch.*`
+- `src/fiber/`
+- `src/arch/*/fiber_arch.*`
 
 ## Acceptance
 
