@@ -1,7 +1,7 @@
 ---
 id: UC-002
 title: Create and switch bare fibers
-status: todo
+status: next
 depends: []
 ---
 

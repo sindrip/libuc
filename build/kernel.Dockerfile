@@ -31,26 +31,6 @@ RUN make ARCH=arm64 headers
 FROM kernel-tree AS uapi-x86_64-build
 RUN make ARCH=x86_64 headers
 
-FROM base AS runtime-toolchain
-RUN apk add --no-cache clang lld clang-extra-tools make cpio gzip
-COPY --from=uapi-build /linux/usr/include /uapi/include
-
-FROM runtime-toolchain AS runtime-build
-COPY spike/src /src
-RUN clang --target=aarch64-unknown-linux-gnu -std=c23 \
-        -ffreestanding -nostdlibinc -isystem /uapi/include -I/src -I/src/arch/aarch64 \
-        -nostdlib -nostartfiles -static -fuse-ld=lld \
-        -fno-stack-protector -fno-omit-frame-pointer \
-        -Wall -Wextra -pedantic -Wsign-conversion -Werror -g -O1 \
-        -fsanitize=undefined -fsanitize-minimal-runtime -fno-sanitize-recover=all \
-        -fno-sanitize-link-runtime \
-        -o /init /src/arch/aarch64/start.S /src/arch/aarch64/context.c \
-        /src/ring.c /src/auxv.c /src/fiber.c /src/io.c /src/scheduler.c /src/fmt.c /src/crash.c /src/ubsan.c /src/main.c \
-    && mkdir -p /rootfs \
-    && cp /init /rootfs/init \
-    && cd /rootfs \
-    && find . | cpio -o -H newc | gzip -9 > /initramfs.cpio.gz
-
 FROM scratch AS linux-src
 COPY --from=linux-tarball /linux-*/ /
 
@@ -68,5 +48,3 @@ FROM scratch AS kernel
 COPY --from=kernel-build /vmlinuz /
 COPY --from=kernel-build /linux/.config /kernel.config
 COPY --from=kernel-build /linux/System.map /
-COPY --from=runtime-build /initramfs.cpio.gz /
-COPY --from=runtime-build /init /rt.elf

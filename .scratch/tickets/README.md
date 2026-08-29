@@ -3,9 +3,9 @@
 The active queue is [`UC-*`](uc/): small libuc changes that compose into one
 goal — enter `main` on a fiber without making a scheduler part of process
 startup, then make the fiber the owner of C thread-local state. Numbers
-follow dependency order. The old `RT-*` tickets have been removed; their
-runtime is the frozen `spike/`, which UC-000 retires. Findings no ticket
-captures live in [`findings.md`](findings.md).
+follow dependency order. The old `RT-*` tickets have been removed, and their
+runtime — the spike — was retired by UC-000. Findings no ticket captures live
+in [`findings.md`](findings.md).
 
 ## Active order
 

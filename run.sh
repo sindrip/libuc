@@ -17,9 +17,14 @@ cd "$(dirname "$0")"
 ACCEL="${ACCEL:-hvf}"
 SMP="${SMP:-1}"
 
-# What boots as PID 1. The default is the runtime's image; libuc's Meson
-# `initramfs` target wraps its startup probe the same way.
-INITRD="${INITRD:-out/initramfs.cpio.gz}"
+# What boots as PID 1. The default is libuc's startup probe, wrapped by the
+# Meson `initramfs` target.
+INITRD="${INITRD:-.cache/meson-aarch64/start.initramfs.cpio.gz}"
+if [ ! -f "$INITRD" ]; then
+  echo "run.sh: $INITRD is missing — build it with:" >&2
+  echo "  meson compile -C .cache/meson-aarch64 initramfs" >&2
+  exit 1
+fi
 case "$ACCEL" in
   hvf) CPU=host ;;
   *)   CPU=max  ;;
