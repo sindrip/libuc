@@ -46,6 +46,10 @@ SECTIONS
     PROVIDE_HIDDEN(__libuc_init_array_end = .);
   }
 
+  /* Capture the GOT explicitly: as an orphan LLD parks it right after .text,
+   * where its RW mapping strips execute from the page they then share. */
+  .got : { *(.got) *(.got.plt) }
+
   .data : { *(.data .data.*) }
   .bss  : { *(.bss .bss.*) *(COMMON) }
 
