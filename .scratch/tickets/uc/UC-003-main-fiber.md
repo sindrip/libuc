@@ -1,7 +1,7 @@
 ---
 id: UC-003
 title: Enter main on the root fiber
-status: todo
+status: next
 depends: [UC-002]
 ---
 
