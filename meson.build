@@ -120,8 +120,9 @@ auxv_impl = static_library(
 )
 
 subdir('src/thread_local')
+subdir('src/fiber')
 
-libc_impls = [startup_impl, auxv_impl, thread_local_impls]
+libc_impls = [startup_impl, auxv_impl, thread_local_impls, fiber_impls]
 
 if ubsan_args.length() != 0
   libc_impls += static_library(

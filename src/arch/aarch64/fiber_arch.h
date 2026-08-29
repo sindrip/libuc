@@ -13,8 +13,8 @@ struct fiber_arch_context {
 };
 
 [[gnu::naked]] [[maybe_unused]] static void
-fiber_arch_switch([[maybe_unused]] struct fiber_arch_context *save,
-                  [[maybe_unused]] const struct fiber_arch_context *restore) {
+fiber_arch_switch(struct fiber_arch_context *save,
+                  const struct fiber_arch_context *restore) {
   __asm__ volatile("stp x19, x20, [x0, #%c[x19]]\n"
                    "stp x21, x22, [x0, #%c[x21]]\n"
                    "stp x23, x24, [x0, #%c[x23]]\n"
@@ -76,6 +76,12 @@ static inline void fiber_arch_context_make(struct fiber_arch_context *context,
       .lr = (unsigned long)(uintptr_t)fiber_arch_start,
       .sp = (unsigned long)(uintptr_t)stack_top & ~15UL,
   };
+}
+
+static inline void
+fiber_arch_context_poison(struct fiber_arch_context *context) {
+  context->lr = 0;
+  context->sp = 0;
 }
 
 #endif
