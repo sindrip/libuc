@@ -17,9 +17,12 @@ initializes scheduler-local state and creates the calling task's ring. It takes
 no CPU argument: ring ownership is bound to the task, not to the CPU on which
 the task happens to run, and placement is separate policy.
 
-The scheduler owns a FIFO ready queue, its saved context, and its ring. All
-are local and require no atomics. The caller may seed ready fibers before
-entering the loop. Only scheduler code mutates the ready queue.
+The scheduler owns a FIFO ready queue and its ring. The active call to
+`__libuc_fiber_resume` saves the resumer context in its scheduler-stack frame;
+there is no separate saved-context field in the scheduler. Ready-queue state is
+task-local and needs no atomics, while CQ head/tail still use acquire/release
+because they are shared with the kernel. The caller may seed ready fibers
+before entering the loop. Only scheduler code mutates the queue.
 
 The first loop handles only the requests UC-007 implements. YIELD appends the
 fiber to the ready queue; EXIT drops it. Fiber objects remain caller-owned in
@@ -54,12 +57,13 @@ Those interfaces are not declared before they can have their full contracts.
 
 ## Acceptance
 
-On both architectures, the current task becomes one scheduler and runs two
-fibers whose yields produce the exact in-memory order `A0 B0 A1 B1 A2 B2`.
+Where thread-pointer installation is executable, the current task becomes one
+scheduler and runs two fibers whose yields produce the exact in-memory order
+`A0 B0 A1 B1 A2 B2`. Both architectures build.
 Each fiber observes its own thread-local value and current-fiber identity on
 every turn. Both exit, the loop returns with the ready queue empty, and their owners
 destroy them from the scheduler stack. The former `no scheduler symbol` test is
-retired by this ticket.
+retired by this ticket; x86-64 behavioral execution is UC-012.
 
 2026-08-30: done on aarch64 — the probe's two fibers produce exactly
 `A0B0A1B1A2B2`, each turn checking its own thread-local value and identity;

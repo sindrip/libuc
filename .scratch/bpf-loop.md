@@ -1,187 +1,139 @@
-# The in-kernel BPF loop — verified interface and the reap-loop lowering
+# The in-kernel BPF loop
 
-Status: conversation-derived, 2026-08-18. Interface claims **verified against
-`out/src/`** (cites inline); the lowering design itself is a proposal.
-Promotes bpf.md direction 7, which now points here. Config is already
-resolved on: `CONFIG_IO_URING_BPF=y`, `CONFIG_IO_URING_BPF_OPS=y`.
+Status: **verified kernel interface plus deferred proposal, 2026-08-30.** The
+plain userspace reactor is implemented. This optimization waits on UC-016's
+operation records and on a freestanding BPF loader. Kernel claims below were
+checked against the pinned 7.2 tree.
 
-## The interface as 7.2 ships it
+## Interface shipped by 7.2
 
-- One `struct_ops` (`io_uring_bpf_ops`) with a single callback, `loop_step`,
-  bound to one ring by fd at registration (`bpf-ops.c:155-158, 162-180`).
-- Installation **requires `DEFER_TASKRUN`** and rejects `SQPOLL`/`IOPOLL`
-  (`bpf-ops.c:164-167`) — our ring config is the required one, again.
-- Once installed, **every `io_uring_enter` on that ring runs the in-kernel
-  loop** instead of the normal submit/wait path (`io_uring.c:2617-2620`).
-  No flag; installing the ops changes what "enter" means for the ring.
-- The kernel loop (`loop.c:42-78`): call `loop_step` with `uring_lock` held →
-  on `IOU_LOOP_CONTINUE`, sleep until the CQ tail reaches the index the
-  program wrote into `lp->cq_wait_idx` (`loop.c:6-10, 58-60`; the verifier
-  explicitly allows writing that field, `bpf-ops.c:95-98`), run task work
-  (which is what posts CQEs under `DEFER_TASKRUN`), step again.
-  `IOU_LOOP_STOP` returns to userspace.
-- Two kfuncs (`bpf-ops.c:17-50`):
-  - `bpf_io_uring_submit_sqes(ctx, nr)` — submit from the SQ ring, in kernel,
-    sleepable.
-  - `bpf_io_uring_get_region(ctx, region_id, size)` — raw rdwr pointers to
-    the CQ ring, the SQ ring, and **`param_region`, a userspace-registered
-    shared memory region** (`register.c:712-746`). This is the shared-state
-    channel.
+One `io_uring_bpf_ops` struct_ops object supplies a `loop_step` callback and is
+bound to a ring fd during registration
+(`out/src/io_uring/bpf-ops.c:155-180`). Installation requires
+`IORING_SETUP_DEFER_TASKRUN` and rejects SQPOLL/IOPOLL
+(`out/src/io_uring/bpf-ops.c:162-167`).
 
-## The lowering
+Once installed, every `io_uring_enter` on that ring calls `io_run_loop` before
+the ordinary submission/wait path and returns from there
+(`out/src/io_uring/io_uring.c:2618-2621`). The loop therefore replaces normal
+userspace submission for that ring; it is not an optional reap hook.
 
-Task *headers* — `{state, inflight, res, cqe_flags}` — live in a slab inside
-`param_region`, alongside a ready-queue and a reclaim list. `loop_step` is the
-scheduler's reap loop:
+The kernel loop (`out/src/io_uring/loop.c:42-78`) calls `loop_step` with the
+uring lock held. The callback returns:
 
-1. Walk new CQEs in the CQ region (bounded batch — verifier requires it).
-2. Decode `user_data` as tag + offset; decrement `inflight` in the header
-   slab (skip the decrement while `IORING_CQE_F_MORE` is set — multishot).
-3. Zombie hitting zero → push its offset onto the reclaim list.
-4. `TAG_OP` for a blocked task → write `res`/`cqe_flags`, mark READY, push
-   onto the ready-queue. Bookkeeping tags (`TAG_LTIMEOUT`, `TAG_CANCEL`) →
-   nothing.
-5. `-EAGAIN`-class results → rewrite the SQE into the SQ region and
-   `bpf_io_uring_submit_sqes` — the fiber never learns it happened.
-6. Return `STOP` iff the ready-queue is non-empty; else set `cq_wait_idx`
-   and `CONTINUE`.
+- `IOU_LOOP_CONTINUE`: sleep until the CQ tail reaches the callback's
+  `cq_wait_idx`, run deferred task work, then call the step again;
+- `IOU_LOOP_STOP`: return from `io_uring_enter` to userspace.
 
-The wake policy becomes programmable: userspace is entered exactly once per
-"a fiber actually became runnable". Zombie drains, linked-timeout stragglers,
-cancel confirmations, and transient-failure resubmits never wake the core.
-Cross-core composes for free: a MSG_RING doorbell arrives as local task work
-using the same `cq_wait_nr` wake the loop sleeps on (`tw.c:186-205`), so
-remote messages wake the in-kernel loop exactly like local completions.
+The verifier permits the callback to write `cq_wait_idx`
+(`out/src/io_uring/bpf-ops.c:95-98`).
 
-**What cannot lower**: running fibers (the context switch is userspace
-register state) and memory reclamation itself (BPF flags a zombie
-reclaimable; only userspace recycles arenas and stacks). The scheduler
-bifurcates into a kernel data plane and a userspace control plane, split
-exactly along the line the reap-loop encoding already drew.
+Two kfuncs form the data plane (`out/src/io_uring/bpf-ops.c:17-50`):
 
-## Encoding change — adopt regardless of BPF
+- `bpf_io_uring_submit_sqes(ctx, nr)` submits SQEs from the ring;
+- `bpf_io_uring_get_region(ctx, region_id, size)` returns bounded read/write
+  access to the CQ region, SQ region, or a userspace-registered parameter
+  region (`out/src/io_uring/register.c:712-746`).
 
-`user_data` = **param-region offset | tag**, not raw pointer | tag. BPF
-cannot trust raw user pointers, but an offset into a bounds-checked region is
-verifier-friendly; userspace pays one add. It also makes every `user_data`
-bounds-checkable in the plain-userspace scheduler — a debug win on its own.
-`TAG_MSG` keeps its separate non-offset namespace (transport.md).
+The current resolved kernel configuration already contains
+`CONFIG_IO_URING_BPF=y` and `CONFIG_IO_URING_BPF_OPS=y`.
 
-## What the program looks like
+## Relationship to the userspace reactor
 
-No in-tree reference exists (`tools/` in the pinned tree has no consumer of
-`io_uring_bpf_ops`), so the shape below follows generic struct_ops practice —
-SEC conventions are libbpf's and a freestanding loader defines its own
-equivalents. Types come from a `vmlinux.h` generated from the pinned kernel's
-BTF: `iou_ctx`, `iou_loop_params`, `io_uring_bpf_ops` are kernel-internal
-(`bpf-ops.h`, `loop.h`), not uapi.
+The BPF callback may lower bounded bookkeeping, not fiber execution:
 
-```c
-/* rtloop.bpf.c — clang --target=bpf -O2 -g, against pinned-kernel vmlinux.h */
-char LICENSE[] SEC("license") = "GPL";
+1. inspect a bounded number of new CQEs;
+2. validate and decode the completion key into UC-016's operation slab;
+3. append opcode-specific delivery and update terminal bookkeeping;
+4. put a waiting owner on the ready queue only on the operation's defined wake
+   edge;
+5. put fully drained zombies on a userspace reclaim list;
+6. submit the SQ batch through `bpf_io_uring_submit_sqes`;
+7. stop when userspace has ready fibers or reclamation work, otherwise set the
+   next CQ index and continue sleeping in-kernel.
 
-extern int   bpf_io_uring_submit_sqes(struct iou_ctx *ctx, __u32 nr) __ksym;
-extern __u8 *bpf_io_uring_get_region(struct iou_ctx *ctx, __u32 region_id,
-                                     const size_t rdwr_buf_size) __ksym;
+Context switching, running fibers, allocating slab chunks, returning buffers,
+and reclaiming stacks or arenas remain userspace work.
 
-/* Layout mirrored in the C runtime; userspace fills the constants at init. */
-struct task_hdr { __u32 state; __u32 inflight; __s32 res; __u32 cqe_flags; };
-struct shm {
-    __u32 cq_mask, cqes_off, ntasks;
-    __u32 ready_tail;   __u32 ready[RQ_CAP];    /* BPF produces,       */
-    __u32 reclaim_tail; __u32 reclaim[RQ_CAP];  /* userspace consumes  */
-    struct task_hdr hdr[MAX_TASKS];
-};
+This is an optimization of a correct userspace state machine. The userspace
+and BPF paths must consume the same operation-record layout and pass the same
+forcing tests; there is no second BPF-specific completion identity space.
 
-SEC("struct_ops.s/loop_step")     /* .s: sleepable, required for submit kfunc */
-int BPF_PROG(rt_loop_step, struct iou_ctx *ctx, struct iou_loop_params *lp)
-{
-    __u8 *cqr = bpf_io_uring_get_region(ctx, IOU_REGION_CQ, CQ_REGION_SIZE);
-    struct shm *shm = (void *)bpf_io_uring_get_region(ctx, IOU_REGION_MEM,
-                                                      sizeof(struct shm));
-    if (!cqr || !shm)
-        return IOU_LOOP_STOP;                  /* fail open into userspace */
+## Completion-key requirement
 
-    struct io_rings *rings = (struct io_rings *)cqr;
-    __u32 head = rings->cq.head;
-    __u32 tail = __atomic_load_n(&rings->cq.tail, __ATOMIC_ACQUIRE);
-    struct io_uring_cqe *cqes = (void *)(cqr + shm->cqes_off);
-    bool runnable = false;
+Raw fiber pointers are unsuitable for BPF validation and already disappear in
+UC-016. The shared completion key is:
 
-    for (int i = 0; i < BATCH && head != tail; i++, head++) {
-        struct io_uring_cqe *cqe = &cqes[head & shm->cq_mask];
-        __u32 tag = cqe->user_data & TAG_MASK;
-        __u32 idx = (cqe->user_data & ~(__u64)TAG_MASK) / sizeof(struct task_hdr);
-
-        if (tag == TAG_MSG) { /* doorbell: mailbox offset, no task header */
-            runnable |= note_mailbox(shm, cqe);
-            continue;
-        }
-        if (idx >= shm->ntasks)                /* safety + verifier bound */
-            continue;
-        struct task_hdr *t = &shm->hdr[idx];
-
-        if (!(cqe->flags & IORING_CQE_F_MORE)) /* multishot: last CQE only */
-            t->inflight--;
-
-        if (t->state == RT_ZOMBIE) {
-            if (t->inflight == 0)
-                push(shm->reclaim, &shm->reclaim_tail, idx);
-        } else if (t->state == RT_BLOCKED && tag == TAG_OP) {
-            t->res = cqe->res; t->cqe_flags = cqe->flags;
-            t->state = RT_READY;
-            push(shm->ready, &shm->ready_tail, idx);
-            runnable = true;
-        }
-        /* TAG_LTIMEOUT / TAG_CANCEL: the decrement was the whole job */
-    }
-    __atomic_store_n(&rings->cq.head, head, __ATOMIC_RELEASE);
-
-    if (runnable || reclaim_pending(shm))
-        return IOU_LOOP_STOP;                  /* fibers to run: wake up */
-    lp->cq_wait_idx = tail + 1;                /* a hint; early wakes fine
-                                                  (loop.h:8-11) */
-    return IOU_LOOP_CONTINUE;
-}
-
-SEC(".struct_ops.link")
-struct io_uring_bpf_ops rt_loop = {
-    .loop_step = (void *)rt_loop_step,
-    /* .ring_fd set by the loader before registration (bpf-ops.c:146-160) */
-};
+```text
+generation | operation-slot offset | tag
 ```
 
-Open validation items for the sketch: whether `loop_step` may advance
-`cq.head` itself (it holds `uring_lock`; the posting side reads head for
-overflow decisions — check `io_uring.c` overflow paths); `shm->cqes_off` is
-userspace-provided and must be bounds-checked against the region size or the
-verifier (rightly) refuses; ring-resize (`rings_rcu`) interaction with a held
-region pointer. The `-EAGAIN` resubmit branch is elided above: write the SQE
-into the SQ region, bump its tail, `bpf_io_uring_submit_sqes(ctx, 1)`.
+The offset addresses a record in a bounded BPF-visible window of the
+per-scheduler operation slab. The generation rejects stale CQEs after slot
+reuse, and the tag distinguishes primary delivery, cancellation, linked
+timeouts, notifications, and transport.
 
-## Costs and gates
+The parameter region need not contain every fiber ever allocated. It may expose
+a bounded active window, multiple registered regions, or a reserved address
+range. The BPF encoding must not silently impose a global maximum fiber count.
 
-- `bpf(2)` on invariant 1's direct-syscall list (recorded in bpf.md; pending
-  discussion).
-- Verifier discipline: bounded CQE walk, provably in-bounds region access —
-  the `bpf fn` dialect's restriction set (language.md) showing up as a real
-  requirement years early. Until the language exists this is hand-written
-  BPF C compiled with Clang's BPF target.
-- **Bytecode delivery is solved, and cheaply: C23 `#embed`.** PID 1 has no
-  rootfs to read `rtloop.bpf.o` from, so the object rides in the runtime's
-  own `.rodata` as a real C array — compile-time `sizeof` to size the
-  `bpf(2)` load, no `xxd -i` codegen, no `.incbin`/`_binary_*_start` linker
-  ceremony. Verified working (with `__has_embed`) in clang 22 under the exact
-  build flags (probe 2026-08-22; also recorded in plan.md's C23 section). One
-  measured limit: the embedded *contents* are not integer constant
-  expressions — element access even on a `constexpr` array folds only as a
-  GNU extension, which `-Weverything`'s `-Wgnu-folding-constant` rejects
-  under `-Werror` — so the ELF magic-bytes sanity check belongs to the
-  loader at runtime, not a `static_assert`, unless that one suppression is
-  added when this ships.
-- **The real ticket is the loader.** No libc means no libbpf: loading a
-  struct_ops program by hand means BTF parsing, map/link creation, and
-  attachment via raw `bpf(2)` — likely comparable in effort to the ring
-  bootstrap itself. Budget for it as its own work item, sequenced after the
-  plain-userspace scheduler works (the BPF loop is an optimization of a
-  working loop, not a substitute for writing one).
+`IORING_CQE_F_SKIP` is ignored before key decoding only when mixed CQEs are
+enabled; otherwise it is configuration drift. `F_MORE` and `F_NOTIF` are
+operation-kind inputs. A terminal CQE can still carry a final result and must be
+delivered before its record retires.
+
+## What must not be lowered generically
+
+Do not automatically resubmit every completion returning `-EAGAIN`. A final
+`-EAGAIN` can be requested and caller-visible behavior, while many retryable
+paths are already handled inside io_uring. Any resubmission policy must belong
+to a specific operation kind and retain all SQE preparation state needed to
+issue it again.
+
+Do not decrement a single generic in-flight count merely because `F_MORE` is
+clear. Single-shot, streams, linked timeouts, cancellation, and zero-copy send
+notifications have different terminal protocols. UC-016 defines those state
+machines before the BPF lowering copies them.
+
+Do not reclaim memory in BPF. Reclaimability is a notification to userspace;
+only the scheduler returns memory to its own pools.
+
+## Validation still required
+
+Before this becomes a ticket, verify in the pinned tree and with a minimal
+program:
+
+- whether `loop_step` may advance CQ head directly without breaking overflow
+  accounting;
+- the required acquire/release operations for CQ and parameter-region queues;
+- how ring resize affects pointers returned by `get_region`;
+- how the callback observes the exact number of userspace-prepared SQEs under
+  `SQ_REWIND`;
+- verifier bounds for slab lookup, ready delivery, and reclaim production;
+- ordering between MSG_RING task work and local CQEs;
+- failure behavior when the BPF program or a kfunc returns an error.
+
+No in-tree userspace reference loader exists. The program needs kernel-internal
+types derived from the pinned BTF, not copied into UAPI-like local declarations.
+
+## Loader and purity cost
+
+The runtime must add `bpf(2)` to the enumerated direct-syscall allowlist before
+shipping this; no ring opcode loads BPF. That requires the invariant discussion,
+not a purity-exception entry.
+
+With no libbpf, the loader must parse enough BTF/ELF metadata, create maps and
+links, load the struct_ops program, and attach it to the ring. C23 `#embed` can
+carry the compiled BPF object in the runtime's `.rodata`, but it does not remove
+the loader work.
+
+The implementation order is therefore:
+
+1. UC-016 operation identity and userspace multi-CQE tests;
+2. UC-017 cancellation/zombie lifetime;
+3. a minimal freestanding struct_ops loader;
+4. the BPF callback running the same state-machine fixtures;
+5. measurement showing fewer user/kernel transitions or better tail latency.
+
+Without the final measurement, installing the loop adds a privileged loader and
+a second execution environment without a demonstrated benefit.

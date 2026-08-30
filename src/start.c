@@ -35,8 +35,8 @@ static void root_entry(void *opaque) {
       main(arguments->argument_count, arguments->argv, arguments->envp);
 }
 
-/* The kernel stack is bootstrap storage only: parse what the kernel handed
- * over, build the root fiber, and carry main's status to exit_group. */
+/* The live startup frame becomes scheduler zero's control stack: parse what
+ * the kernel handed over, build the root fiber, and run the reactor here. */
 int __libuc_start(void *initial_stack) {
   uintptr_t *words = initial_stack;
   const uintptr_t argument_count = words[0];

@@ -1,10 +1,11 @@
 # Prior art — has someone already built libuc?
 
-Status: **literature search, 2026-08-18.** No decision here; this is evidence.
+Status: **literature search performed 2026-08-18; reviewed 2026-08-30.** No
+decision here; this is dated evidence, not a continuously verified survey.
 strategy.md's reading list is the *positioning* argument — who the neighbours
 are and what each concedes. This document is what was actually searched, what
-was found, and what is confirmed absent, with the citations that are load-
-bearing for specific invariants.
+was found, and what that dated search did not find, with the citations that are
+load-bearing for specific invariants.
 
 The question asked: **has anyone published, or shipped, a libc whose blocking
 calls are fiber suspensions over io_uring?**
@@ -34,7 +35,8 @@ sharper than "nobody thought of this":
 | Java Loom | JDK blocking calls unmount continuations | dies at the C FFI boundary — see below |
 | Zig `std.Io` | parametrise stdlib over blocking/async | needs Zig source; adds a parameter per call |
 
-That column is the novelty claim. It survived both search angles.
+That column is the working novelty claim from this search. It survived both
+search angles, but must be rechecked before publication.
 
 ## FlexSC is the ancestor — cite it
 
@@ -59,8 +61,9 @@ TLB pollution. It differs in four ways that matter:
 - It ran *under* glibc. Per-fiber `errno`/TLS was a non-issue precisely because
   pthread binary compatibility meant inheriting glibc's per-OS-thread TLS.
 
-**Nobody has redone FlexSC on io_uring.** Searched explicitly; the post-2019
-FlexSC citation graph goes to *Software-Defined CPU Modes* (HotOS '23) and
+**No FlexSC-on-io_uring artifact was found.** The search was explicit; the
+post-2019 FlexSC citation graph goes to *Software-Defined CPU Modes* (HotOS '23)
+and
 *How to Copy Memory?* (SOSP '25), neither of which revisits exception-less
 syscalls on a modern ring.
 
@@ -91,8 +94,8 @@ Corroborating, and directly relevant to the Clang build: MSVC ships `/GT`
 ("support fiber-safe thread-local storage") solely because TLS-address caching
 miscompiles under fibers, and **LLVM issue #57260** has the coroutine optimizer
 preserving a stale thread id across `co_await` at `-O2`/`-O3`. The toolchain has
-to participate, not just the runtime. Worth knowing before the TLS probe
-experiment in libuc.md's sequencing table.
+to participate, not just the runtime. libuc now installs a fiber's TLS block on
+every switch; any optimization of that path must preserve the same semantics.
 
 **Loom's native-frame pinning is the strongest argument for the be-the-libc
 thesis, and it is a negative result.** JDK 24 fixed `synchronized` pinning by
@@ -103,10 +106,10 @@ capture and restore the native frame.
 
 This is the precise failure mode of solving fiber suspension from *above* the C
 boundary, and it has resisted a decade of very well-funded engineering.
-libuc.md's `crt1` inversion — `main` runs on a fiber, so the guest's blocking
-calls *are* the suspensions — is the structurally different answer, and nobody
-was found attempting it in C. stacks.md:52 already reaches this conclusion from
-the stack-layout side; it is the same finding arrived at twice.
+libuc.md's startup inversion — guest code runs on a fiber, so its blocking
+calls *are* the suspensions — is the structurally different answer, and this
+search found no C implementation attempting it. `stacks.md` reaches the same
+conclusion from the stack-layout side.
 
 **Ringmaster independently derived invariant 1's exception list.**
 *Ringmaster: How to juggle high-throughput host OS system calls from TrustZone
@@ -129,10 +132,14 @@ scheduler, no libc, no per-scheduler ring discipline.
 
 ## Not novel — do not claim it
 
-**Thread-per-core, shared-nothing, one ring per pinned core.** Standard practice:
+**Pinned executors, shared-nothing, and private rings.** Standard practice:
 Seastar/ScyllaDB, Glommio, monoio, compio, Redpanda, Apache Iggy. The substrate
 is conventional and there is no academic evaluation of it either — it lives
 entirely in industrial blog posts.
+
+libuc's unit is the scheduler task/thread, not the CPU: a placement policy may
+put one or more schedulers on a CPU, while each ring remains owned by its single
+issuer.
 
 The novelty is not the substrate. It is **refusing to colour the API on top of
 it**: every one of those keeps `async fn` or futures/continuations. That is the
@@ -166,32 +173,35 @@ rather than ignoring — a design is stronger for knowing who disagrees.
   usable (5.1, May 2019), which is the whole reason the axis is open.
   **GPLv3: read for ideas, cannot be vendored.**
 
-## Confirmed absent — open ground
+## Not found in the dated search — open ground
 
 Each of these returned nothing across both search angles:
 
 - **A libc whose blocking calls are fiber suspensions over io_uring.** The core
   claim. Nothing published; no serious unpublished project with a design
   document.
-- **Per-fiber allocator.** Zero hits — not even a problem statement. What breaks
+- **Per-fiber allocator.** This search found no direct treatment, not even a
+  problem statement. What breaks
   when a vendored library's `malloc` assumes per-thread arenas under a fiber
-  scheduler is unwritten. Directly relevant to libuc.md's `mem/` deliverable.
-- **Per-fiber `errno` in a C library.** Exists as standards-committee argument
+  scheduler is unwritten. Directly relevant to `libuc.md`'s allocator work.
+- **Per-fiber `errno` in a C library.** The search found standards-committee
+  argument
   and compiler bugs, never as a paper. libuc has sidestepped the hard half by
   having no `errno` at all internally (`src/syscall.h`), translating only at the
   boundary.
 - **The 7.2 BPF `struct_ops` in-kernel event loop** (`io_uring/loop.c`,
   `io_uring/bpf-ops.c`). LWN and LKML only — LWN Articles/1062286, /1046950,
   /1024361, /847951, plus Begunkov's RFC series. **Zero peer-reviewed work.**
-  This corroborates strategy.md's wedge #3: first published numbers here would
+  This corroborates `strategy.md`'s adoption item 3: first published numbers
+  here would
   be a flag planted on genuinely empty ground.
 - **`SINGLE_ISSUER`/`DEFER_TASKRUN` vs `SQPOLL` exclusivity** as an evaluated
   architecture. Nothing — despite it being invariant 2 and verified in-tree at
   `out/src/io_uring/io_uring.c:2815-2821`.
 - **Linking vendored *static* C libraries against a fiber-scheduling libc.** The
   nearest analogue is Loom's native-frame pinning, which is a problem report,
-  not a solution. libuc.md names this as its central risk; the literature
-  confirms nobody has retired it.
+  not a solution. `libuc.md` names this as its central risk; this search found
+  no artifact that had retired it.
 - **A freestanding, no-libc runtime as PID 1 with io_uring as its syscall ABI.**
   Nothing in any venue. The unikernel literature (Unikraft, OSv, HermiTux,
   Lupine) occupies adjacent ground but always with a libc — usually musl —
@@ -203,8 +213,9 @@ Each of these returned nothing across both search angles:
 
 - **iqiyi/libfiber** — the closest live artifact. Hooks `read`/`write`/`recv`/
   `send`/`accept`/`connect`/`poll`/`epoll_*`/`getaddrinfo` and friends, with an
-  io_uring backend, in production at iQiyi. libuc's user-visible semantics
-  already ship. Read it for what the hook boundary cannot cover, which is the
+  io_uring backend, in production at iQiyi. It demonstrates that similar
+  user-visible blocking-over-fiber semantics can ship. Read it for what the
+  hook boundary cannot cover, which is the
   argument for owning the libc.
 - **Bojie Li, arXiv 2607.02630** (Jul 2026) — an `LD_PRELOAD` fiber runtime,
   17.3x on an unmodified thread-per-connection binary. Two things earn it a

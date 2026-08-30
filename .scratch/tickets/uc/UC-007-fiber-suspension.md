@@ -38,12 +38,13 @@ bootstrap context has no block and must not touch `_Thread_local` state.
 
 ## Acceptance
 
-On both architectures, one bootstrap context resumes the same fiber at least
-three times, observing `bootstrap -> fiber -> bootstrap` on every turn. The
+Where thread-pointer installation is executable, one bootstrap context resumes
+the same fiber at least three times, observing
+`bootstrap -> fiber -> bootstrap` on every turn. Both architectures build. The
 fiber's stack address, callee-saved registers, `_Thread_local` value, and current
 fiber identity survive every suspension. Entry return produces EXIT, a second
 resume after EXIT is never attempted, and no scheduler symbol exists in
-`libc.a`.
+`libc.a`; x86-64 behavioral acceptance is UC-012.
 
 2026-08-30: met on aarch64 — `test/fiber_thread_local.c` interleaves three
 resumes across two fibers (exit 0, container and VM), the register harness

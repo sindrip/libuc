@@ -7,20 +7,41 @@ depends: [UC-009]
 
 ## Goal
 
-Make fiber spawn from a per-scheduler pool cheap, and settle
+Make fiber creation and recycling from a per-scheduler pool cheap, and settle
 create-versus-carve with measurements instead of projections.
 
 ## Spec
 
-A per-scheduler stack pool, per `../../stacks.md`. Against it, the deferred
-UC-004 decision comes due: create-owns (two mappings per fiber, pool cannot
-absorb the TLS mmap) versus geometry-and-carve (one mapping, recycle is
-memset+memcpy). The constraints that kept the swap an internal refactor are
-recorded in `../findings.md`; whichever shape wins, `block_create`'s
-alignment slack is trimmed or deleted with it.
+The ownership seam comes first. Today's caller-owned
+`__libuc_fiber_create(fiber, ...)` cannot reach a scheduler-owned pool, so this
+ticket must make the owner explicit before adding one. Choose and record either
+a scheduler-owned creation operation or a scheduler/pool argument on fiber
+creation and destruction. Do not introduce an ambient process-global pool or
+derive ownership from a CPU: the owner is the scheduler.
+
+Against that explicit owner, compare the deferred UC-004 shapes:
+
+- create-owns: stack and thread-local block retain separate mappings; the pool
+  can recycle the stack but not absorb the block mapping;
+- geometry-and-carve: one scheduler-owned allocation contains both, and recycle
+  reinitializes the block with zero-fill plus the executable TLS image.
+
+Use `../../stacks.md` for current implementation facts and questions to
+measure. The constraints that keep the swap private are in `../findings.md`:
+fiber code reaches TLS through the block handle and thread pointer, and the
+architecture placement helper remains the sole geometry authority. Whichever
+shape wins, remove mapping/alignment slack that it no longer needs.
+
+The root fiber is not exempt. Scheduler zero exists before it is created, so it
+must use the same ownership seam even if startup still supplies stable fiber
+record storage. Guard pages, pool refill size, high-water retention, and release
+at scheduler teardown are part of the recorded decision; dense language-only
+stacks are not.
 
 ## Acceptance
 
-A probe reports spawn and recycle syscall counts for both shapes on the
-console; the chosen shape lands with the pool, and the numbers plus the
-decision are recorded in `../findings.md`.
+A probe reports first-create and recycle syscall counts for both shapes. The
+chosen shape lands with a per-scheduler pool; destroying and recreating a fiber
+from a warm pool performs no `mmap` or `munmap`, reinitializes TLS, and never
+returns storage through a different scheduler. The root fiber uses the same
+ownership seam. The numbers and decision are recorded in `../findings.md`.

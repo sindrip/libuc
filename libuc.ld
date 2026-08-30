@@ -1,5 +1,5 @@
 /*
- * libuc's link contract: one startup object (arch/<arch>/start.S), one
+ * libuc's link contract: one startup object (arch/<arch>/start.c), one
  * initializer mechanism (.init_array, walked by start.c between the two
  * boundary symbols defined here), and nothing inherited from the historical
  * crt protocol — no crti/crtn, no crtbegin/crtend.

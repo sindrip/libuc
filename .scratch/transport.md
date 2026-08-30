@@ -1,103 +1,111 @@
-# Cross-core transport
+# Cross-scheduler transport
 
-Status: **conversation-derived proposal, 2026-08-18. Not argued through in
-plan.md.** Addresses plan.md's open question "cross-scheduler message transport and
-buffer ownership". Kernel claims verified against `out/src/` 2026-08-18; cites
-inline.
+Status: **deferred proposal, reviewed 2026-08-30.** No second scheduler or
+mailbox exists. Kernel claims were checked against the pinned 7.2 tree; mailbox
+layout, backpressure, shutdown, and public semantics remain undesigned.
 
-## The invariant decides the design
+## Ownership determines the baseline
 
-Invariant 3 forbids allocating on one scheduler and freeing on another. Ownership *transfer* of a
-buffer between cores means the receiver eventually frees memory the sender
-allocated — a cross-scheduler free by definition. Therefore:
+A scheduler does not free ordinary memory allocated by another scheduler.
+Therefore zero-copy ownership transfer is not the starting point.
 
-**Copy-on-send is the simplest transport the invariants permit.** Not the only
-one: a *loan* — receiver reads sender-owned memory in place, acks, sender frees
-— also has no cross-scheduler alloc or free, at the cost of an ack protocol and
-sender memory held until it completes. Copy is the right default because it
-needs no protocol and BEAM has run on exactly this model for three decades; the
-loan is the fallback if profiles ever show copy cost, and it is *cheaper* to
-reach than ownership transfer because it needs no exception to invariant 3.
+Two transfers respect the current invariant:
 
-## Shape
+- **copy:** the receiver stores a copy in receiver-owned memory;
+- **loan:** the receiver reads sender-owned immutable memory, acknowledges
+  completion, and the sender eventually reclaims it.
 
-- Per receiver (or per sender→receiver pair), a **mailbox region owned by the
-  receiving core**: allocated and freed only by its owner. Senders copy
-  payloads in; the region is the "explicitly designated shared state" that
-  invariant 3 already provides for. Shape matters: a single per-receiver MPSC
-  mailbox needs *atomic* cursor claims by competing senders; SPSC per
-  sender→receiver pair needs no atomics on the write side at the price of N²
-  regions. Start SPSC — core counts are small and fixed.
-- `MSG_RING` is the doorbell. Payload verified against
-  `out/src/io_uring/msg_ring.c:281-297`: `user_data` (from `sqe->off`, 64
-  bits) + `len` (32 bits, arrives as `cqe->res`) = 96 bits, plus 32 bits of
-  `cqe_flags` via `IORING_MSG_RING_FLAGS_PASS` — enough for an offset/length
-  into the mailbox, not for data. The receiving core learns of the message the
-  same way it learns everything: a CQE in its own ring.
-- **Delivery into a `DEFER_TASKRUN` target: VERIFIED, and the kernel requires
-  it rather than merely tolerating it.** `msg_ring.c:68-71` routes targets
-  with task-complete semantics to the remote path; `tw.c:236-241`
-  (`io_req_task_work_add_remote`) `WARN`s unless the target is
-  `DEFER_TASKRUN`. Wakeup: the post carries `IOU_F_TWQ_LAZY_WAKE`
-  (`msg_ring.c:93`), and `tw.c:186-205` counts `cq_wait_nr` down — a receiver
-  parked in `io_uring_enter` with `min_complete=1` wakes on a single
-  doorbell. Caveats found while reading:
-  - the remote post allocates (`GFP_KERNEL`, `msg_ring.c:124`) — `-ENOMEM` is
-    a possible sender-side result; the doorbell is not allocation-free.
-  - a target still `R_DISABLED` returns `-EBADFD` (`msg_ring.c:146`):
-    enable rings before any cross-scheduler doorbell (interacts with the
-    RESTRICTIONS sealing sequence in bpf.md).
-  - the pure-data path to a `DEFER_TASKRUN` target never punts to io-wq — the
-    trylock/`-EAGAIN` punt (`msg_ring.c:40-55`) is only for non-remote/IOPOLL
-    targets and fd-passing. Use `IORING_MSG_DATA` only and io-wq stays
-    out of it.
-  - `IORING_MSG_RING_CQE_SKIP` suppresses the sender-side CQE — doorbells can
-    be fire-and-forget. And `io_uring_sync_msg_ring` (`msg_ring.c:335`, via
-    `IORING_REGISTER_SEND_MSG_RING`) can send data *without a source ring* —
-    useful for pre-scheduler or crash-path signalling.
-- Large payloads: BEAM's split applies. Copy small messages; large ones live in
-  a designated shared region with a refcount, and only the *reference* is
-  copied. The threshold is a measurement, not a decision — start with
-  everything copied.
+Copy is the default because it keeps allocator ownership local. It still needs
+a publication, capacity, acknowledgement/backpressure, and shutdown protocol;
+“copy” solves memory ownership, not the whole transport.
 
-## Transfer as a later, registered exception
+## Proposed shape
 
-Zero-copy ownership transfer (the future language's `iso` move) is an
-*optimization* over copy-on-send with identical observable semantics — so it
-can land later without breaking any program. If profiles ever show copy cost
-that matters, the carve-out is one of:
+Start with one bounded SPSC mailbox per sender-scheduler/receiver-scheduler
+pair. The receiver owns the region's allocation and eventual release. The
+sender is the sole producer and the receiver the sole consumer.
 
-- **Message arenas**: transferable messages allocate from a dedicated arena
-  whose blocks return to the owning core via a flushed free-list
-  (mimalloc-style deferred remote free), or
-- **Region handoff**: whole arenas change owner at once, amortizing the
-  cross-scheduler accounting to one event per region.
+SPSC removes compare-and-swap contention, not synchronization. Producer and
+consumer cursors cross Linux tasks and require the same release/acquire
+publication discipline as any shared ring. An MPSC mailbox would additionally
+need atomic reservation among senders; a pairwise SPSC matrix trades memory for
+simpler ownership and ordering.
 
-Either is a deliberate exception to invariant 3 and goes through the same
-"discuss before violating" gate as everything else — a registry entry, not a
-quiet erosion.
+The message descriptor contains an offset and length into the mailbox plus a
+kind/generation needed by the receiver. Payload capacity and alignment are
+fixed by the mailbox, not by the doorbell.
 
-## Buffer lifetime: the reap rule
+## MSG_RING as doorbell
 
-Anything handed to the kernel — a mailbox slot, a read buffer, an SQE's
-address — stays kernel-visible until its CQE is reaped. Cancellation does not
-change this: `ASYNC_CANCEL` is a request, and the original operation still
-completes (with its result or `-ECANCELED`) and may write into the buffer
-until then. Therefore the universal rule:
+`IORING_OP_MSG_RING` delivers a CQE to the target scheduler's ring. The data
+path carries `user_data` from `sqe->off` plus the 32-bit `len` result
+(`out/src/io_uring/msg_ring.c:281-297`); flags can be passed separately with
+`IORING_MSG_RING_FLAGS_PASS`. This is enough for a mailbox descriptor, not a
+general payload.
 
-**A task is not done until its in-flight CQEs are drained. Cancel → drain →
-only then release memory.** This applies equally to deadline cancellation,
-crash teardown, and scope joins — "the function unwound" is not "the task is
-done".
+A `DEFER_TASKRUN` target uses the remote task-work path
+(`out/src/io_uring/msg_ring.c:68-93` and
+`out/src/io_uring/tw.c:186-241`). A target waiting with one required completion
+can therefore wake on one doorbell.
 
-The structural fix that makes the rule cheap: kernel-visible *receive* buffers
-should be owned by per-scheduler pools, not by task-lifetime memory. plan.md's
-pending milestone-2 decision on `IORING_REGISTER_PBUF_RING` is this same
-question — provided buffer rings are exactly core-owned receive buffers — so
-the two should be decided together.
+Caveats:
 
-## Sequencing
+- remote posting allocates with `GFP_KERNEL` (`msg_ring.c:124`), so the sender
+  can observe `-ENOMEM`;
+- a target still created with `R_DISABLED` rejects the message with `-EBADFD`
+  (`msg_ring.c:146`);
+- the pure data path avoids the non-remote trylock/io-wq punt, but fd passing is
+  a different operation and is not part of this proposal;
+- suppressing the sender-side success CQE does not remove the need to handle
+  submission failure or mailbox backpressure.
 
-Milestone 3 (multi-core) needs only the doorbell. Milestone 4 (cross-scheduler
-transport, plan.md) needs the mailbox. Transfer needs a profiler showing copies
-on a flame graph, and not before.
+The kernel never receives a pointer to the mailbox slot through MSG_RING. Slot
+lifetime is therefore governed by userspace publication and consumption, not by
+waiting for the doorbell CQE to release a kernel-held address. Memory referenced
+by a separate read/write/send operation still follows the terminal-CQE rule in
+`scheduler.md`.
+
+## Backpressure and failure
+
+A bounded mailbox needs both directions of notification:
+
+1. sender publishes a slot and rings the receiver when a transition requires a
+   wake;
+2. receiver consumes slots and notifies a blocked sender when capacity becomes
+   available;
+3. either side's scheduler shutdown closes the pair and resolves every blocked
+   continuation.
+
+Doorbells should be edge-triggered around empty/nonempty and full/nonfull
+transitions, not one CQE per message. Lost wakeup avoidance and cursor wrap need
+a small model or exhaustive test before implementation.
+
+A doorbell completion must use the same tagged operation/key namespace designed
+in UC-016, while remaining distinguishable from operation-slab offsets. Raw
+pointers and unversioned scheduler ids do not cross the ring.
+
+## Large payloads
+
+The first implementation copies every payload that fits. If measurements later
+show copy cost, a loan holds sender memory until an acknowledgement. Immutable
+shared blobs with home-scheduler reference accounting are a separate design;
+they introduce explicitly shared state and must not be smuggled in as a “large
+message optimization.”
+
+True ownership transfer requires a recorded change to invariant 3. Plausible
+mechanisms are dedicated transferable arenas with deferred remote return, or
+whole-region handoff. Neither is needed to establish transport semantics.
+
+## Implementation gate
+
+Transport waits until all of these exist:
+
+- a second scheduler and a lifecycle for its handle;
+- UC-016's generation-bearing completion-key namespace;
+- a bounded mailbox layout with release/acquire cursor rules;
+- explicit sender and receiver shutdown behavior;
+- acceptance tests for empty/nonempty, full/nonfull, receiver death, sender
+  death, `-ENOMEM`, and stale doorbells.
+
+Until then MSG_RING remains evidence that a ring-native doorbell exists, not a
+finished cross-scheduler API.

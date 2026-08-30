@@ -40,9 +40,10 @@ threads remain outside this ticket.
 
 ## Acceptance
 
-On both architectures, constructors and `main` still run on the root fiber's
-mapping with initialized independent thread-local state, and `main`'s status
-still reaches `exit_group`. The no-`PT_TLS` executable retains no `PT_TLS`
+Where thread-pointer installation is executable, constructors and `main` still
+run on the root fiber's mapping with initialized independent thread-local state,
+and `main`'s status still reaches `exit_group`. Both architectures build; x86-64
+behavioral execution is UC-012. The no-`PT_TLS` executable retains no `PT_TLS`
 program header while running with a TCB-backed root fiber. Scheduler zero's
 ring belongs to the startup task, the root fiber exits through scheduler
 dispatch, and its stack and thread-local block are destroyed only after control

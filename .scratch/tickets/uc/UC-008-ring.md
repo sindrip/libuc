@@ -15,8 +15,9 @@ of fiber queue policy.
 Add hand-written ring setup and mappings using only the pinned kernel UAPI.
 Setup uses `IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN |
 IORING_SETUP_NO_SQARRAY | IORING_SETUP_SQ_REWIND | IORING_SETUP_SUBMIT_ALL`
-(SUBMIT_ALL because a rewind discards the partial-submit position a failing
-SQE would otherwise leave behind, `io_uring.c:2057-2075`); `IORING_SETUP_SQPOLL` is never accepted. The task that
+(SUBMIT_ALL so per-SQE preparation failure does not stop the batch,
+`io_uring.c:2053-2061`; request-allocation short submissions remain possible
+and are retried by the userspace ring); `IORING_SETUP_SQPOLL` is never accepted. The task that
 calls setup is the ring's owner and remains its sole submitter.
 
 The initial interface acquires an SQE, enters the ring with the batch, and
@@ -44,7 +45,7 @@ ring; hosted teardown remains later work.
 | `DEFER_TASKRUN` | chosen | invariant 7; completions only inside owner's `enter(GETEVENTS)` |
 | `NO_SQARRAY` | chosen | legacy out-of-order indirection a sequential issuer cannot use |
 | `SQ_REWIND` | chosen | batch-from-zero deletes SQ head/tail protocol (`io_uring.c:1970,2029`) |
-| `SUBMIT_ALL` | chosen | rewind discards partial-submit position; without it a failing SQE silently drops the batch tail (`io_uring.c:2057-2075`) |
+| `SUBMIT_ALL` | chosen | continue past per-SQE preparation errors; allocation shorts are handled separately (`io_uring.c:2046-2068`) |
 | `SQPOLL` | rejected | invariant 2; excludes DEFER_TASKRUN (`io_uring.c:2815-2821`); kernel thread is a second issuer |
 | `SQ_AFF` | rejected | SQPOLL companion, moot |
 | `COOP_TASKRUN` | rejected | task work still runs at any kernel entry; DEFER is the strong form |
@@ -54,9 +55,9 @@ ring; hosted teardown remains later work.
 | `R_DISABLED` | rejected | sandbox/restrictions machinery libuc does not use |
 | `IOPOLL` | rejected | storage busy-poll burns the scheduler's CPU; a dedicated ring may revisit |
 | `HYBRID_IOPOLL` | rejected | IOPOLL variant, same lane |
-| `CQSIZE` | deferred (UC-009) | per-scheduler CQ sizing; default 2x SQ until then |
-| `NO_MMAP` | deferred (UC-011) | caller-owned ring memory; density and mmap_lock story |
-| `REGISTERED_FD_ONLY` | deferred (UC-011) | fd-less rings; requires NO_MMAP |
+| `CQSIZE` | deferred | per-scheduler CQ sizing; default 2x SQ until a workload measurement exists |
+| `NO_MMAP` | deferred | caller-owned ring memory; future ring-density work |
+| `REGISTERED_FD_ONLY` | deferred | fd-less rings; requires NO_MMAP |
 | `SQE128` | deferred (first big-SQE opcode) | ring-wide; MIXED preferred then |
 | `CQE32` | deferred (same) | ring-wide; MIXED preferred then |
 | `SQE_MIXED` | deferred (same) | per-entry 128B SQEs |
@@ -71,10 +72,10 @@ ring; hosted teardown remains later work.
 
 ## Acceptance
 
-On both architectures, a probe creates a ring with the exact required setup
-flags, submits one `IORING_OP_NOP`, and reaps exactly one CQE with result zero
-and unchanged nonzero `user_data`. The two architecture builds remain clean
-under the project warnings and UBSan configuration.
+A probe creates a ring with the exact required setup flags, submits one
+`IORING_OP_NOP`, and reaps exactly one CQE with result zero and unchanged
+nonzero `user_data`. Both architecture builds remain clean under the project
+warnings and UBSan configuration; x86-64 behavioral execution is UC-012.
 
 2026-08-30: done on aarch64 — the probe creates the ring with all five
 flags, submits one NOP, and reaps exactly one CQE with result zero and the

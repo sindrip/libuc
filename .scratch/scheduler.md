@@ -1,605 +1,191 @@
-# The scheduler — destination public interface
+# The scheduler — current contract and destination seams
 
-Status: conversation-derived from the retired runtime spike, 2026-08-23. The
-current libuc tree has no scheduler implementation. UC-007 through UC-010 now
-stage its first landing; this file retains the later public-interface and
-request-protocol decisions that remain beyond those tickets.
+Status: **current design record, 2026-08-30.** The private single-scheduler
+reactor is implemented through UC-015. Public topology, scheduler spawning,
+operation slabs, shutdown, and cross-scheduler transport are future work and
+are labelled as such below.
 
-## Why this is prose and not a header
-
-Every header in `src/` documents code that exists. The `uc_scheduler_*`
-surface needs `clone`, a second ring, and a scheduler registry — milestone 3
-at the earliest — so a header carrying it would be a standing lie about what
-the runtime does. When the public/private include split happens
-(`include/uc/scheduler.h` against `src/scheduler/`), this section is the spec
-to write it from.
-
-The split's acceptance test is mechanical: the public header includes
-`<stdint.h>` and nothing else, project or kernel. The future private scheduler
-header will include the ring layer and therefore the kernel UAPI; a public
-header derived from it by copying would drag that UAPI into every consumer.
-
-## The interface
+## Current private surface
 
 ```c
-typedef uint64_t uc_scheduler_id;
-
-constexpr uc_scheduler_id UC_SCHEDULER_INVALID = {};
-
-/* Called by a thread, on itself. Preserves the task's existing affinity and
-   returns UC_SCHEDULER_INVALID on failure. */
-[[nodiscard]] uc_scheduler_id uc_scheduler_become(void);
-[[noreturn]] void uc_scheduler_run(void);
-
-/* Clone a thread that becomes a scheduler on itself. Suspends the calling
-   fiber until the new scheduler has published its slot. */
-[[nodiscard]] uc_scheduler_id uc_scheduler_spawn(int cpu);
-
-[[nodiscard]] uc_scheduler_id uc_scheduler_current(void);
-```
-
-`int cpu` belongs only to `spawn`: it creates a Linux task, so it owns that
-task's initial placement policy, and a negative value says to inherit the
-caller's affinity mask without narrowing it. `become` instead accepts the
-calling task as it is. Placement is not part of scheduler identity — see below.
-
-`{}` rather than `0` so the initializer survives the id becoming a struct
-(generation plus slot) without touching call sites.
-
-`[[nodiscard]]` throughout: `ring.h` states the convention, and a handle that
-is the only route to a scheduler is the strongest case for it — especially
-once the zero handle means failure.
-
-## The first landing
-
-UC-009 deliberately lands the mechanism before this public surface:
-
-```c
-[[nodiscard]] long
+[[nodiscard]] bool
 __libuc_scheduler_become(struct __libuc_scheduler *scheduler);
+
+void __libuc_scheduler_enqueue(struct __libuc_scheduler *scheduler,
+                               struct __libuc_fiber *fiber);
+
+void __libuc_scheduler_run(struct __libuc_scheduler *scheduler);
 ```
 
-The caller supplies storage and receives raw `-errno`. The function initializes
-scheduler-local state and creates the calling task's ring; it does not publish
-a scheduler id, allocate registry state, change affinity, or enter the loop.
-Startup can therefore use it before public errno and the scheduler registry
-exist. The eventual public `uc_scheduler_become()` allocates or otherwise owns
-that storage, translates failure, publishes the id, and delegates to the same
-mechanism.
+The caller supplies stable scheduler storage. `become` initializes it and
+creates a ring owned by the calling Linux task. It does not change affinity,
+publish an id, allocate a registry entry, or enter the loop.
 
-## Reconsidered: create, layered over become
+The scheduler currently owns:
 
-The first version of this section rejected `uc_scheduler_create_on(cpu)`
-outright — the runtime clones a thread, pins it, sets up its ring, and hands
-back a handle once the new scheduler is ready. The decision has since changed:
-**spawning a scheduler is a library call**, and the program chooses how many
-exist and where they sit. `language.md`'s boot contract already said so; this
-file contradicted it.
+- its ring;
+- an intrusive FIFO of ready fibers;
+- `ready` and `parked`, which count the two places a live fiber can stand under
+  the single-CQE contract.
 
-Two of the three original objections survive intact, because the call is
-layered over `become` rather than replacing it:
+Fiber records remain caller-owned. UC-011 must make scheduler ownership
+explicit before a per-scheduler stack/block pool can replace the current
+per-fiber mappings.
 
-- **It invents a runtime that does not exist.** Still honoured. `spawn` creates
-  a *thread*; that thread calls `become` on itself. Nothing manufactures a
-  scheduler on another thread's behalf, and `libuc.md`'s boot contract — the
-  scheduler is never created, the thread becomes it — is untouched.
-- **It makes one object with two origins.** Still honoured, for the same
-  reason. Every scheduler becomes. Boot is not a special case; it is the case
-  with the clone omitted.
-- **It hides a rendezvous.** This one was right, so it is answered rather than
-  avoided. `spawn` must return a usable id, which means waiting for the child
-  to publish its slot. The ring-native answer: the calling fiber suspends on
-  `IORING_OP_FUTEX_WAIT` (`io_uring.h:307-309`) while its scheduler keeps
-  running. A fiber waits; no thread blocks. That is the same primitive
-  `libuc.md` declines for a cross-scheduler `thrd_create`, spent here on the
-  one operation that genuinely spans two threads.
+Scheduler zero lives in the active startup frame on the kernel-provided stack.
+Startup calls `become`, creates and enqueues the root fiber, runs the loop,
+destroys the root after the loop returns, and carries `main`'s status to
+`exit_group`. Scheduler code runs with the bootstrap thread pointer restored
+and must not touch compiler-generated `_Thread_local` state.
 
-What changed, stated plainly: **the library creates the additional thread.**
-The earlier text left that to the program and called it "the right place for it
-in a thread-per-core design" — an argument that assumed one scheduler per core.
-Once the program picks the topology, placement is an argument to `spawn`; an
-already-existing task arrives at `become` with its placement established.
+## One reactor iteration
 
-## Why spawned schedulers are normally pinned
+At the start of an iteration, snapshot `ready`. Dispatch exactly that many
+fibers; fibers that yield re-enter the tail for the next generation. This bound
+prevents a persistent yielder from starving submitted work.
 
-`become` deliberately does not pin. A task supplied by startup or a host may
-already have the exact affinity its owner intended, including a mask rather
-than one CPU; silently narrowing it would make scheduler construction a policy
-operation. A child created by `spawn` has no independent prior placement, so
-that construction path may narrow its inherited mask before the child calls
-`become`.
+Each dispatch produces one request:
 
-Correctness does not need it. `SINGLE_ISSUER` stores `get_task_struct(current)`
-(`io_uring.c:3067`) and every enforcement site compares against `current`
-(`tctx.c:202-204`, `register.c:764`, `rsrc.c:1433-1434`, `tw.c:313`,
-`tw.h:108`). The only `set_cpus_allowed_ptr` calls in io_uring are
-`sqpoll.c:307-311` and `io-wq.c:791` — the two mechanisms this design forbids.
-A scheduler thread that migrates carries its ring, arena and
-stacks with it; nothing is unmapped and no pointer changes.
+| request | scheduler action |
+|---|---|
+| `NONE` | trap: control returned without a published request |
+| `YIELD` | append the fiber to ready |
+| `EXIT` | leave it unqueued; its caller may reclaim it after the loop returns |
+| `AWAIT` | copy the fiber-frame SQE into the ring batch and increment `parked` |
 
-What pinning buys is the wakeup path. The loop passes `min_complete = 1` when
-nothing is ready (`scheduler.c:150`), so the thread sleeps in the kernel and is
-woken by `wake_up_state(ctx->submitter_task, TASK_INTERRUPTIBLE)` (`tw.c:205`).
-That is `try_to_wake_up(p, state, 0)` (`core.c:4551-4554`) plus `WF_TTWU`
-(`core.c:4256`) — no `WF_SYNC`, no `WF_CURRENT_CPU` — so `select_task_rq_fair`
-(`fair.c:9546`) picks the cpu on **every idle iteration of the event loop**.
+After the generation:
 
-| `fair.c` | unpinned | pinned |
-|---|---|---|
-| 9574 `want_affine = !wake_wide(p) && cpumask_test_cpu(cpu, p->cpus_ptr)` | mask test always passes; only `wake_wide` gates | fails when the waker is elsewhere, so `want_affine = 0` |
-| 9581-9589 | `wake_affine()` weighs waker-cpu against prev-cpu | skipped |
-| 9597-9599 `tmp->flags & sd_flag`, `sd_flag = WF_TTWU = SD_BALANCE_WAKE` | — | `SD_BALANCE_WAKE` is 0 in our domains, so `sd = NULL` and the loop breaks |
-| 9605 `select_idle_sibling` | may move it again | confined to the allowed cpu |
+- when `parked == 0`, continue without entering the kernel;
+- when fibers remain ready, submit with `min_complete = 0`;
+- when the ready queue drained, submit and wait with `min_complete = 1`;
+- reap every available CQE, write its result to the parked fiber, decrement
+  `parked`, and enqueue the fiber once.
 
-The waker is whatever completed the request — for network I/O, softirq on the
-cpu that took the device interrupt. An unpinned scheduler therefore drifts
-toward the IRQ cpu, and N of them drift toward the same one.
-
-Our own kernel config makes this worse than a distro kernel's would be.
-`CONFIG_SCHED_MC`, `CONFIG_SCHED_CLUSTER` and `CONFIG_SCHED_SMT` are all absent
-from `out/kernel.config`, so `default_topology[]` (`topology.c:2088-2100`)
-collapses to a single `PKG` level and `arch_llc_mask` falls back to
-`cpumask_of(cpu)` (`topology.c:2074-2076`) — **the kernel believes every cpu is
-its own LLC**. That one domain gets `sd_init`'s defaults
-(`topology.c:1963-1975`): `SD_WAKE_AFFINE` on, `SD_SHARE_LLC` off. No domain
-knows that any two cpus share cache, so no placement decision can prefer a warm
-one.
-
-The cache-hot brake does not cover this path either.
-`sysctl_sched_migration_cost = 500000` ns (`fair.c:82`) is read by
-`preempt_sync` (`fair.c:9745`) and idle-balance costing (`core.c:9025-9026`),
-never by wakeup placement.
-
-NUMA is not in play on this build — `# CONFIG_NUMA is not set` — so first-touch
-page placement, where the penalty is permanent rather than a re-warm, is a
-bare-metal concern and not a current one.
-
-## Rejected: an attribute struct, for now
-
-`struct uc_scheduler_attr` with placement, cpu, and ring entries was drafted
-and dropped. Two reasons:
-
-- **`ring_entries` is a layering violation.** SQ depth is io_uring mechanics;
-  a program has no business naming it. If sizing ever needs to come from the
-  caller it comes back as a workload statement — an expected fiber or
-  connection count — that the runtime translates into ring geometry.
-- **An extensible struct needs versioning it cannot yet justify.** libuc has
-  no external consumers, so ABI stability is a cost against no benefit.
-
-The migration path matters more than the starting point: when attributes are
-needed, add a `_with` variant taking the struct *alongside* the existing
-calls. Adding a function is ABI-safe; growing a struct is the hazard. Make
-that struct size-first when it appears — `io_uring_params`, `clone_args` and
-`sched_attr` all solve extension with a size or a reserved field, and this
-runtime reads those headers already.
-
-## Undefined, deliberately
-
-Named so the interface above is not read as complete.
-
-- **Nothing consumes an id.** `uc_scheduler_current()` returns a value with no
-  consumer until `uc_spawn_on(id, fn, arg)` exists, and that function is what
-  forces the registry: an id-to-pointer table read by every scheduler.
-  Invariant 3 permits it only as explicitly shared state, and publishing an
-  entry while other schedulers read the table is the synchronisation question
-  that has not been answered.
-- **No destroy, so no generations.** A generation-bearing id is only earned by
-  slot reuse, which needs a lifecycle: what happens to a destroyed
-  scheduler's fibers, its ring, and its in-flight operations. Until that
-  exists the id carries no generation, and `struct rt_scheduler` carries no
-  id field at all — a field written once and read by nothing reads as state
-  the runtime maintains.
-- **Nothing prevents a fiber from being on two queues.** `ready_next` is a
-  single field, so a fiber linked into two lists corrupts both. `wake_one`
-  removed the only sanctioned way to do it, but `rt_fiber_queue_push` is still
-  reachable from fiber context for program-owned queues, and nothing checks.
-  Detecting it needs a fiber to record which queue holds it, which is a field
-  whose only reader would be a panic — deferred on the same grounds as the
-  state enum.
-- **The deadlock report says nothing about who.** The condition is exact —
-  ready empty, nothing staged, nothing in flight, fibers alive — and verified
-  reachable. But `libuc.md`'s spike found the entire value was in naming the
-  fiber and what it blocked on, and that needs a registry of live fibers,
-  which does not exist. Today it is a correct panic, not a diagnosis.
-- **No shutdown or join.** `rt_scheduler_run` returns today when its last fiber
-  dies, which is a probe convenience — `main.c` runs two phases on one
-  scheduler. The destination is a loop that does not return merely because
-  the ready queue emptied: an idle scheduler waits for local I/O or a
-  cross-scheduler message. That distinction only becomes real when a
-  scheduler can receive one.
-- **Failure detail has nowhere to go.** `become` returns
-  `UC_SCHEDULER_INVALID` and the reason belongs in errno, which AGENTS.md
-  forbids and which does not exist. The private
-  `__libuc_scheduler_become` returns raw `-errno` like everything else in the
-  runtime. The public call joins the queue behind per-fiber errno, a deliverable
-  `libuc.md` already schedules. Shaping the public call around today's
-  constraint would buy nothing, since the public interface is not implementable
-  at the current milestone anyway.
-- **Nothing is pinned yet.** There is one existing task, `become` preserves its
-  inherited affinity, and `struct rt_scheduler` has no CPU field because
-  placement is not scheduler state. The future `spawn` child narrows its own
-  affinity, if requested, before calling `become` and binding its ring under
-  `SINGLE_ISSUER`.
-- **Spawn placement is a single CPU, not a mask.** `sched_setaffinity` takes a
-  set, but the first `spawn` surface names one CPU or uses a negative value to
-  retain the inherited mask. A program that wants a new scheduler on "any of
-  these four" cannot say so. Kept narrow deliberately; noted so the narrowness
-  is a choice. `become` has no such limitation because it preserves the full
-  mask the existing task already has.
+The current loop returns when `ready + parked == 0`. That is a probe-era
+termination contract, not resident scheduler shutdown. UC-016 adds operation
+lifetime; UC-017 adds zombies. Either makes termination depend on more than the
+two fiber-location counters.
 
 ## The request protocol
 
-A fiber does not call its scheduler; it leaves a message and gives up the CPU.
-`struct rt_fiber_request` is that message — a kind plus, where the kind needs
-one, a payload:
+A fiber does not mutate scheduler queues or the ring. It writes a request in
+its own record and transfers control to its resumer. The scheduler is the sole
+handler and the sole writer of scheduler-owned state.
 
-```
-NONE   cleared by the scheduler before every entry; seeing it on return
-       means control was transferred without going through fiber.c
-YIELD  still runnable
-IO     carries a struct io_uring_sqe the scheduler will stage
-EXIT   the fiber function returned
-PARK   carries a wait queue; only another fiber can undo it
-WAKE   carries a wait queue to take one fiber from — serviced without
-       suspending
-SPAWN  carries an entry point and argument — serviced without suspending
-```
-
-### The request protocol as a fixed effect handler
-
-Effect handling is a useful operational model for this protocol, with an
-important boundary. A request separates an operation from the scheduler policy
-that serves it, and a suspended fiber supplies its continuation. But this is
-not a general algebraic-effects facility: there is exactly one fixed handler,
-the performer is not abstract over which handler serves it, and handlers cannot
-compose or nest. The vocabulary below describes the runtime's control flow; it
-is not a promise that user-defined or nested handlers will appear later.
+This is usefully understood as a fixed effect handler:
 
 | effect term | runtime representation |
 |---|---|
-| operation set | `enum rt_fiber_request_kind` |
-| operation arguments | `request.value` |
-| perform | write the request, then `rt_fiber_suspend` |
-| continuation | the fiber's saved context and stack |
-| fixed handler | scheduler resume, dispatch and CQE reap paths |
-| resumption policy | the ready, submit and wait queues |
-| result channel | `fiber->result` |
+| operation | the fiber request enumerator and payload |
+| continuation | saved registers plus the live fiber stack |
+| perform | publish the request and switch to the resumer |
+| handler | scheduler dispatch or CQE reap |
+| result | scheduler writes the fiber/operation result before resumption |
 
-The continuation is concrete rather than compiler-manufactured: it is the rest
-of the fiber's computation, delimited by the fiber entry/exit boundary and
-preserved on its stack. It is one-shot. The scheduler may retain it, move it
-between queues, resume it, or discard it at EXIT, but it cannot clone it and a
-fiber cannot resume itself. When a continuation is retained, queue membership
-is therefore ownership of it, not merely bookkeeping about it.
+It is not a general algebraic-effects system. There is one handler, no handler
+composition, no continuation cloning, and no migration between handlers. The
+model is valuable because queue membership is ownership of the continuation,
+not merely a scheduling hint.
 
-The current operations have these semantic signatures:
+Admission rule for future requests:
 
-```text
-Yield : () -> ()
-Io    : Sqe -> i32
-Park  : WaitQueue -> ()
-Wake  : WaitQueue -> Bool
-Spawn : (FiberFn, void*) -> i32
-Exit  : () -> Never
-```
+> A request belongs in this protocol when it transfers the continuation or
+> needs authority over scheduler-owned state. Otherwise it is an ordinary
+> private call.
 
-That notation describes the fiber-facing interfaces, not types enforced by the
-request protocol. Arguments are distinguished by the tagged union, but IO,
-WAKE and SPAWN all return through one untyped `int result`. Each performer
-interprets that slot immediately after resumption and consumes it once, which
-is why the erasure works.
+No `default` belongs in a switch over the request enum. The build retains
+`-Wcovered-switch-default` and suppresses `-Wswitch-default`, so adding an
+enumerator fails every uncovered dispatch site at compile time.
 
-The handler chooses a different resumption policy for each operation. YIELD
-places the continuation at the back of the ready queue. IO and PARK defer it,
-respectively until a CQE arrives or another fiber wakes the wait queue. EXIT is
-abortive: it never resumes the continuation and returns its fiber to the idle
-queue.
+## Buffer and SQE lifetime
 
-WAKE and SPAWN are **tail-resumptive**. The handler performs bounded work and
-immediately returns a value to the same continuation. That is exactly the class
-of effect operation that can compile to a direct call without capturing a
-continuation. This runtime deliberately still pays a switch round trip so that
-the ready queue, live count and idle pool are mutated only in `scheduler.c`.
-The measured roughly 12 ns is an encapsulation cost of this implementation,
-not an inherent cost of the request protocol or the effects model.
+`__libuc_fiber_await` accepts one SQE stored in the calling frame. The fiber
+suspends before that frame can return, and the scheduler copies the SQE before
+the fiber is resumed. Every address referenced by the SQE must remain valid and
+exclusively available until the completion is observed.
 
-IO is the **deferred-resumption** case, not a nested effect boundary:
+The continuation protects only its own frame. It does not prevent another
+fiber from accessing an aliased static or heap buffer. C cannot express that
+loan, so the public libc boundary remains an auditable protocol rather than a
+safe API.
+
+Cancellation does not shorten the kernel-visible lifetime. A cancel request
+has its own CQE; the original request separately reaches its terminal CQE. The
+universal rule is:
 
 ```text
-fiber performs IO { SQE }
-    -> handler declines to resume it and returns to the scheduler loop
-    -> scheduler queues and stages the SQE
-    -> a CQE later enters another path through the same fixed handler
-    -> scheduler writes fiber->result and makes the continuation runnable
-    -> a later scheduler turn resumes it
+cancel -> observe the original terminal event -> reclaim referenced memory
 ```
 
-That is what lets ordinary blocking C remain direct style. `write(fd, buf,
-len)` looks like a call, while underneath it performs IO and the scheduler
-handles it. The buffer loan travels with the retained continuation: the handler
-may not discard the continuation while its loan is outstanding, and this API
-may not resume it past the call because returning makes the buffer accessible
-again.
+This applies to stacks, arenas, buffers, operation records, linked timeouts,
+and zero-copy notifications. It is the reason a dead fiber becomes a zombie
+rather than being freed immediately once operations can outlive its call frame.
 
-The effects model supplies that resource constraint; it does not say when the
-loan ends. io_uring supplies that fact. In particular, cancellation queues the
-original request to complete with `-ECANCELED`
-(`out/src/io_uring/cancel.c:476`); completion of the cancel request is not
-release of the original request's addresses. The continuation rule and the
-kernel completion rule are both needed to derive **cancel -> reap the original
-CQE -> reclaim**.
+## Completion identity
 
-The admission rule for future request kinds is therefore:
+Today `sqe->user_data` is the parked fiber pointer. That is valid only because:
 
-> Put an operation in this protocol when it must transfer the continuation or
-> requires authority over scheduler-owned state. Otherwise it remains an
-> ordinary call.
+- one fiber can await at most one operation;
+- the operation produces exactly one CQE;
+- the fiber cannot exit while parked;
+- the fiber record remains stable through the wait.
 
-This keeps the request union an operation set rather than a miscellaneous
-command bucket. It admits YIELD, IO, PARK, WAKE, SPAWN and EXIT.
+UC-016 ends that contract. The completion key becomes
+`{generation, operation slot, tag}` and indexes a per-scheduler operation slab.
+The record, not the fiber, lives until the operation's terminal event. It owns:
 
-**WAKE is a request, not a call, and that is the point.** A fiber could
-enqueue onto the scheduler's ready queue directly; it would work, because the
-runtime is cooperative and single-threaded and the push happens while the
-scheduler is parked inside `rt_switch`. It would also be scheduler state
-mutated from fiber context under three unchecked conditions, and the first
-`rt_fiber_queue_pop` from fiber context — waking a fiber that is already
-queued, say — would corrupt `ready_next` by linking it into two lists.
+- its fiber owner and current waiter, if any;
+- generation, kind, and staged/active/terminal state;
+- opcode-specific terminal bookkeeping;
+- a bounded result-delivery queue;
+- any preparation data needed until the kernel releases referenced memory.
 
-**WAKE names the wait queue, never a fiber.** It first took a
-`struct rt_fiber *`, which meant the caller wrote
-`rt_fiber_queue_pop(&q)` and then `rt_fiber_wake(f)` — two steps with the
-fiber on no queue at all in between, owned by nothing but a local variable.
-Every failure mode lived in that window: skip the second step and the fiber is
-unreachable while still counted live, so the scheduler eventually reports a
-deadlock it cannot attribute; repeat it and the same fiber is pushed twice,
-which is the `ready_next` corruption above arriving by the sanctioned route
-rather than the forbidden one.
+The generation detects a CQE aimed at a recycled slot; it does not permit early
+recycling. A slot returns to the free list only after its terminal protocol is
+complete. A fiber's stack and thread-local block return only after it owns zero
+live operations.
 
-The fiber pool made a third one possible that had not existed before. While
-fibers were never recycled a retained `struct rt_fiber *` stayed valid
-forever; once `rt_fiber_start` re-initialises a fiber taken from `idle`, a
-stale pointer names a later incarnation, and waking it is an ABA that corrupts
-whichever queue the new occupant is on.
+`F_MORE` means another CQE follows this one. Clearing `F_MORE` makes the current
+CQE terminal; it does not erase that CQE's payload. `F_NOTIF` participates in
+the zero-copy send protocol. `F_SKIP` is ignored only on a mixed-CQE ring where
+the kernel may insert a wrap filler; on the current ring it is a fatal format
+mismatch.
 
-`rt_fiber_wake_one(struct rt_fiber_queue *)` closes all three by construction,
-because there is no window and no pointer: the scheduler pops from the wait
-queue and pushes onto ready inside one serviced request, and returns whether
-it found anyone. The pair is symmetric — `rt_fiber_park` and
-`rt_fiber_wake_one` both name only the queue, and neither side of a handoff
-can hold a fiber across it.
+## Future scheduler construction
 
-That is the transferable part of the Rust operation model. C cannot prove the
-transfer, but it can refuse to hand out the pointer that makes getting it
-wrong expressible: **wait queue owns the fiber → the scheduler moves it →
-ready queue owns the fiber**, with no representable state in between. Waking a
-*specific* fiber is deliberately not offered; when something needs it, it wants
-a generation-bearing handle rather than a raw pointer, which is the same answer
-the id encoding above already reaches for.
+There is deliberately no public scheduler header yet. A complete surface must
+answer lifecycle and registry questions before exposing handles.
 
-`rt_scheduler_resume` is the concrete tail-resumption loop: it services WAKE or
-SPAWN and switches straight back, returning only for a deferred or abortive
-operation. The performing fiber keeps the CPU and is never re-queued. WAKE and
-SPAWN are therefore called **serviced** requests and must never reach dispatch;
-either arriving there means the resume loop let one through, and it panics.
+The constraints already settled are:
 
-`malloc` exposes the boundary of that choice. Allocation is tail-resumptive
-too, so switching to the scheduler adds no continuation semantics. Unlike WAKE
-and SPAWN, it also has no necessary scheduler transition to encapsulate; if it
-switches merely to touch a per-scheduler arena, the round trip is pure overhead.
-That is evidence that the arena's ownership is at the wrong layer — two
-schedulers can share a CPU, so per-scheduler allocation was never obviously
-right — rather than evidence that allocation belongs in the request protocol.
-Unanswered until there is an allocator.
+- an existing Linux task may become a scheduler without changing its affinity;
+- a library-created scheduler is a new Linux task that calls `become` on itself;
+- placement is policy, not scheduler identity;
+- spawning normally narrows the child to a requested CPU, but correctness is
+  task-based rather than CPU-based;
+- a scheduler id is not needed until another scheduler can consume it;
+- slot generations are earned only when scheduler destruction and reuse exist;
+- a public failure convention waits for per-fiber `errno` rather than exposing
+  raw negative kernel results.
 
-This is the only thing a fiber writes for the scheduler to read. There is no
-companion state field: what a fiber *is* follows from what the scheduler did
-with the request, and the scheduler does not need to write down its own
-conclusions.
+`SINGLE_ISSUER` stores the submitting task, not a CPU
+(`out/src/io_uring/io_uring.c:3065-3067`). Pinning is therefore a locality and
+wakeup-placement policy. It does not authorize naming cores as owners: rings,
+pools, fibers, and operation slabs belong to schedulers.
 
-**Why a tagged union rather than a state value.** Encoding the request in a
-fiber state works only while every request corresponds to a distinct resulting
-state and needs no arguments. That stopped being true when IO needed an SQE;
-PARK and WAKE share a wait-queue payload and SPAWN carries a third shape.
-An enum value can name the operation but cannot carry its arguments, which is
-exactly the effect-signature distinction between an operation and its
-invocation.
+## No migration
 
-**The dividend was single ownership of the fiber state, and then the state
-itself.** Before the split, the fiber wrote one state on its way out and the
-scheduler overwrote it with another: one field, two writers, held together by
-a comment. Making the request explicit gave the field a single writer — and
-then left it with nothing to say. Every value it carried is derivable from
-something already load-bearing:
+No fiber moves between schedulers. This is a design invariant even in states
+where the kernel would not detect a move.
 
-| | derivable from |
-|---|---|
-| running | the fiber `rt_scheduler_resume` just entered |
-| ready | on the ready queue |
-| pending submission | on the submit queue |
-| blocked | `owner != nullptr` |
-| dead | on no queue, not in `live_count` |
-
-It survived one change as a write-only field — seven assignments, and a single
-read that was strictly redundant with the `owner` check running immediately
-before it — and was deleted. The distinction it drew between "queued behind a
-full SQ" and "the kernel owes a completion" is real and still drawn; it is
-queue membership against `owner`, which are the facts the scheduler acts on
-anyway rather than a shadow written alongside them.
-
-The one thing that had to improve to lose it: the reap loop's single check
-became two, because a null `owner` and a foreign `owner` are different
-failures — a stale or duplicate completion against a fiber that moved with
-work in flight — and one branch reporting "owned elsewhere" was misleading
-whenever `owner` was null.
-
-**No `default` in the dispatch switch.** With one, a kind added later would
-fall silently into the "fiber suspended without a request" panic. Without one,
-`-Wswitch -Werror` makes adding a kind a build failure until every dispatch
-site handles it. Verified twice: adding `RT_REQUEST_PARK`, and later
-`RT_REQUEST_SPAWN`, each failed the build at the dispatch switch until handled.
-Under a policy with no regression net, a compile error is worth more than a
-runtime one.
-
-**The local check forces this choice rather than expressing it.** `make check`
-runs `-Weverything`, which contains both `-Wswitch-default` (demands a default
-label) and `-Wcovered-switch-default` (rejects a default that covers every
-enumeration value). A fully-covered enum switch satisfies neither together, so
-one has to be suppressed, and which one is the whole decision. The Makefile
-suppresses `switch-default` and keeps `covered-switch-default`, which is the
-check that actively enforces the style above.
-
-Worth knowing if the flags are ever revisited: a `default` label does **not**
-have to cost exhaustiveness, because `-Weverything` also carries
-`-Wswitch-enum`, which fires on a missing enumerator even when a default is
-present. Measured, not assumed. That path was rejected anyway — the container
-build runs `-Wall -Wextra`, which has `-Wswitch` but not `-Wswitch-enum`, so a
-default would hold the guarantee locally and quietly drop it in the build that
-ships. Keeping no default holds it in both under flags they already have.
-
-**Dispatch is not part of resume.** Entering a fiber and filing it afterwards
-are separable; queue policy belongs to the loop, and `main.c`'s RT-004 driver
-resumes a fiber by hand and must not acquire queue side effects. That driver
-loops on `request.kind != RT_REQUEST_EXIT` rather than on state, because
-standing in for the loop means reading what the fiber said, not what a
-scheduler would have concluded.
-
-## Buffer lifetime, and what will break it
-
-Every address a fiber puts in a request must stay valid until `rt_fiber_await_io`
-returns. C cannot type that, and the guarantee does not come from the pointer
-— it comes from the protocol: **the fiber cannot run again until the reap loop
-has seen its CQE**, so it cannot return past the frame holding the buffer, and
-cannot reuse or overwrite it.
-
-**Validity is necessary and not sufficient; the requirement is exclusive
-access.** For the whole window the memory must not be read or written by
-anyone — not just not freed. The kernel may write a receive buffer at any
-point until the CQE, so its contents are indeterminate throughout, and a read
-of even the untouched tail is a read of an in-flight destination.
-
-The protocol argument covers the suspending fiber and **stops there**, which
-is the hole worth naming: it says nothing about any *other* fiber, and those
-are running. It holds today only because of where addresses come from —
-a fiber's own stack, which no other fiber can name, or static storage that
-happens not to be shared. The second half of that is a convention, not a
-mechanism: two fibers sharing one static buffer is ordinary C, compiles
-silently, and breaks this immediately. It is the same aliasing gap that makes
-the Rust model untranslatable, arriving from the other direction.
-
-Stated at `rt_fiber_await_io` in `fiber.c`, which is the only place a
-pointer-bearing request is published, and the reason all nine operations route
-through one function rather than each calling suspend for itself.
-
-**The window is wider than "the kernel has it."** A request sits in
-the scheduler's submit queue — waiting for SQ space, `owner` still null,
-nothing told to the kernel — before it is staged. The buffer must survive the
-whole
-call, not just the kernel's part of it.
-
-Two things break the argument, and neither announces itself:
-
-- **Cancellation.** The continuation model says an outstanding loan prevents
-  reclamation; io_uring says when that loan ends. `IORING_OP_ASYNC_CANCEL` does
-  not make completion of the cancel request release the original request's
-  addresses: `out/src/io_uring/cancel.c:476` queues the original to fail with
-  `-ECANCELED`. So the sequence is always **cancel → reap the original CQE →
-  reclaim**, never cancel and free. Freeing on the cancel *request* is a
-  use-after-free with the kernel holding the pointer.
-- **An allocator.** Today every address is on the suspending fiber's own stack
-  or in static storage, because nothing else exists to point at. Once there is
-  a heap, a buffer can be freed by a fiber that *can* run, and "this one
-  cannot" stops covering it. This is the closer of the two.
-
-**A dividend from separating "queued to submit" from "staged"**, which was
-done for backpressure reasons: it is also the cancellation boundary.
-Cancelling a request still on the submit queue is free — dequeue it, mark the
-fiber ready, no CQE ever exists, because the kernel was never told. Only a
-staged request needs the
-cancel-reap-reclaim dance. `owner != nullptr` is exactly the test for which
-regime applies.
-
-## The completion key, later
-
-`sqe->user_data = fiber` works because one fiber has at most one operation
-outstanding. Three things end that, and all three want the same answer:
-
-- cancellation, where a CQE can arrive for an operation the fiber has stopped
-  waiting on;
-- multishot, where one request produces many CQEs;
-- several concurrent operations per fiber.
-
-At that point the completion key must identify an **operation record**, not a
-fiber — scheduler-owned, with a generation, living until the final CQE for that
-operation. `fiber.h`'s request field notes the same thing from the fiber side: a
-bigger fiber struct is the wrong answer, scheduler-owned records are the right
-one.
-
-The lifetime rule that falls out: **a fiber's stack may be reclaimed only when
-it has zero operations in flight**, which is `owner == nullptr` today and a
-per-fiber in-flight count once one fiber can have several.
-
-Not built. `libuc.md` already sketches generation-plus-slot encoding; what
-matters now is that nothing in the current design assumes the key will stay a
-bare fiber pointer.
-
-## Rejected: an Operation abstraction in C
-
-The Rust port (`/tmp/rt-rs`) sketches a private `Operation` trait —
-`prepare(&mut self, sqe)` and `complete(self, result)` — where the operation
-struct holds the buffer borrow, so the lifetime is proven by the type system.
-
-That does not translate. Recreating it in C with callbacks and `void *` state
-adds machinery and buys no lifetime proof, because C has no aliasing
-guarantee: `const` restricts one access path, not every alias to the same
-memory. The C version is an auditable protocol, never a safe API, and
-pretending otherwise with structure would obscure that.
-
-Two parts of it were worth taking, and one was already true:
-
-- **Already true.** The trait's "no raw SQE pointer escapes" goal is satisfied
-  structurally by the request descriptor — `rt_ring_sqe` has one runtime call
-  site, in the scheduler's staging loop. There is no SQ borrow left to
-  constrain.
-- **Taken.** One executor rather than per-operation staging: `rt_fiber_await_io`.
-- **Deferred.** A `complete` step. In C it collapses to translation, but it is
-  the seam where two things will land: the libc `res < 0 → errno = -res;
-  return -1` boundary, and `read`/`recv` into uninitialized memory, where only
-  the first `cqe.res` bytes may be treated as written.
-
-## Migration
-
-`fiber->owner` is not "the scheduler this fiber belongs to" — it is **the ring
-that owes this fiber a completion, or null.** Set when the scheduler stages the
-fiber's request into an SQE, cleared when the CQE is reaped, read only by the
+An in-flight operation already makes movement impossible without forwarding,
+because its CQE returns to the issuing ring and the kernel may retain pointers
+into the fiber's memory. A ready fiber without an operation is still immobile
+because scheduler-owned allocation, stack pools, TLS storage, provided buffers,
+wait queues, and future arenas all assume creation and reclamation on one
 scheduler.
 
-`owner == nullptr` is therefore **necessary for migration eligibility and not
-sufficient** — a correction to the first statement of this, which claimed the
-field was the whole rule. A fiber that owes no completion may still be linked
-into a scheduler's ready or submit queue, and one parked on a wait queue is
-waiting on a condition that scheduler's own fibers signal. Migration is a
-dequeue and a handoff at an explicit point; the field tells you only that the
-kernel is not holding a pointer into the fiber.
-
-That is a property of the descriptor design, not a promise bolted onto it. A
-fiber describes an operation into its own `req` and suspends; it never touches
-a ring and never names a scheduler, so a *ready* fiber is not bound to anything
-in the first place. `suspend_to` is rewritten on every entry, so a fiber resumed
-by a different scheduler switches back to that one with nothing to correct.
-
-What actually gates migration, none of it in this struct:
-
-1. **Completion routing.** A CQE arrives at the ring that issued it. Handled
-   structurally rather than left open: a fiber that owes a completion has a
-   non-null owner and is therefore not eligible to move. Forwarding would only
-   be needed to make migration legal *during* an in-flight operation, which
-   nothing wants.
-2. **The per-scheduler arena.** `libuc.md` is explicit that the allocator forces
-   the design: allocate on one, free on another, and invariant 3 breaks on
-   the first `free`. This is the wall, and it stands even for two schedulers
-   sharing a CPU, since each owns its own allocator.
-3. **Provided buffer rings.** `transport.md`'s core-owned receive buffers — a
-   migrated fiber holding one must return it to the scheduler it came from.
-4. **Per-fiber TLS.** Fine if the fiber carries its own TCB; broken the moment
-   anything per-*scheduler* is cached into a fiber's TLS image.
+The code should avoid accidentally foreclosing a different design, but that is
+not permission to implement it. Any handoff of a fiber record, stack, or
+continuation to another scheduler requires the invariant discussion in
+AGENTS.md before code changes.

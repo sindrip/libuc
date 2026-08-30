@@ -18,8 +18,8 @@ struct __libuc_thread_local_layout {
 [[nodiscard]] const struct __libuc_thread_local_layout *
 __libuc_thread_local_layout(void);
 
-/* The runtime-owned storage for one execution context.  The thread pointer
- * is not installed by UC-004-min; that belongs to the next ticket. */
+/* The runtime-owned storage for one execution context. The recorded thread
+ * pointer is installed whenever the owning fiber resumes. */
 struct __libuc_thread_local_block {
   void *mapping;
   size_t mapping_length;

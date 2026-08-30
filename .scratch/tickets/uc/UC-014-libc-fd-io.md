@@ -17,6 +17,10 @@ declarations, and pinned UAPI constants these calls need. `errno` is a
 per-fiber `_Thread_local int` lvalue. Kernel constants are included, never
 retyped.
 
+Staged prerequisite, already landed: `<errno.h>` and the compiler-visible
+per-fiber `errno` object. This ticket remains open until the descriptor calls,
+the rest of their headers, and the acceptance probe land.
+
 Each wrapper leaves a zeroed SQE template with UC-013's await operation; only
 the scheduler copies it into the SQ and stamps `user_data`.
 
@@ -29,14 +33,25 @@ the scheduler copies it into the SQ and stamps `user_data`.
 | `close(fd)` | `IORING_OP_CLOSE` |
 
 `read` and `write` use `sqe.off == -1` for the open-file position
-(`out/src/io_uring/rw.c:479-493`) and must not silently narrow `count` into
-`sqe.len`. A negative CQE result becomes `-1` plus per-fiber `errno`; success
-leaves `errno` unchanged. The suspended call frame keeps buffers live through
-completion.
+(`out/src/io_uring/rw.c:479-493`). `sqe.len` is 32-bit while `size_t` is
+64-bit, so a larger `count` is explicitly clamped to `INT32_MAX`; the kernel's
+`import_ubuf` then applies Linux's normal `MAX_RW_COUNT` ceiling
+(`out/src/lib/iov_iter.c:1445-1450`). This matches a direct Linux read/write's
+partial-transfer behavior without narrowing modulo 2^32 or retyping the
+kernel-private `MAX_RW_COUNT` constant.
+
+A negative CQE result becomes `-1` plus per-fiber `errno`; success leaves
+`errno` unchanged. The suspended call frame keeps the SQE and buffers live
+through completion. As in ordinary C, aliases in other fibers are outside what
+the type system can protect and must not access an in-flight destination.
 
 One operation per fiber, the kernel fd table, and unregistered resources are
-enough here. No fd registry, allocator, stdio, pathname operation,
-cancellation, multishot operation, or direct syscall implementation lands.
+enough here. The acceptance path is deliberately pipe-only: pollable pipe I/O
+does not establish a no-io-wq claim for arbitrary descriptors. The public
+symbols retain their normal descriptor-generic signatures; regular-file and
+`close` paths that may punt are measured and governed by a later io-wq ticket.
+No fd registry, allocator, stdio, pathname operation, cancellation, multishot
+operation, or direct syscall implementation lands.
 
 ## Files
 
@@ -62,6 +77,10 @@ ring. The loop returns empty with nothing in flight.
 An invalid descriptor returns `-1` with `EBADF`; a second fiber's seeded
 `errno` remains unchanged, as does `errno` after success. No public call
 returns raw `-errno`.
+
+A `count` greater than `INT32_MAX` is prepared with `sqe.len == INT32_MAX`, not
+the low 32 bits of `count`; this is checked at the preparation seam without
+requiring an allocation of that size.
 
 Both architectures build cleanly under the project warnings and UBSan
 configuration. The aarch64 probe passes in the unconfined container and VM;

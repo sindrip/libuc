@@ -1,26 +1,28 @@
 # BPF directions
 
-Status: **ideation, 2026-08-18; partially verified against `out/src/` same
-day** (RESTRICTIONS, sched_ext config, IO_URING_BPF config — cites inline).
+Status: **ideation, reviewed 2026-08-30; partially verified against `out/src/`**
+(RESTRICTIONS, sched_ext config, IO_URING_BPF config — cites inline).
 Everything not carrying a cite must still be confirmed in the pinned tree —
 file and line, per AGENTS.md — before it becomes a ticket.
 
-Related: plan.md lists the in-kernel BPF loop (`io_uring/loop.c`,
-`io_uring/bpf-ops.c`) as "not now, but stay reachable", and Clang was chosen as
-the runtime compiler partly to keep it reachable.
+Related: `plan.md` defers the in-kernel BPF loop (`io_uring/loop.c`,
+`io_uring/bpf-ops.c`) until the ordinary operation-lifetime work in UC-016 and
+UC-017 is complete. Clang keeps this direction reachable.
 
 **Invariant 1 amendment required before any of this ships**: `bpf(2)` (and for
 direction 1, `seccomp(2)`/`prctl(2)`) have no ring opcodes, so they belong on
 invariant 1's enumerated direct-syscall list — a list amendment, not a
-purity-exception registry entry (the registry is for opcode-exists-but-
-bypassed cases like `raw_write`). AGENTS.md edit, pending discussion.
+purity-exception registry entry (the registry is for an opcode-backed operation
+that is deliberately bypassed). `AGENTS.md` amendment remains pending
+discussion.
 
 ## Why BPF is unusually cheap for this project
 
 BPF's dominant cost everywhere else is kernel portability: CO-RE relocations,
 version skew, verifier behaviour drifting release to release. The pinned kernel
 deletes all of it. Programs compile against the exact BTF of the exact tree in
-`out/src/`, forever. BPF here is BPF with its worst problem removed.
+`out/src/` for the pinned VM build. A hosted build would need an explicit BPF
+portability policy before making the same promise.
 
 ## Directions, ranked by how much they change
 
@@ -29,8 +31,8 @@ deletes all of it. Programs compile against the exact BTF of the exact tree in
 Invariant 1 and the exception registry are prose enforced by review. Generate a
 seccomp (or BPF-LSM) policy *from the registry*: the direct-syscall allowlist
 becomes the only permitted syscall numbers; anything else kills the process. A
-purity violation stops being a review miss and becomes a crash with a
-backtrace. Under libuc with vendored C code this doubles as the security story:
+purity violation stops being a review miss and becomes a targeted failure.
+Under libuc with vendored C code this doubles as the security story:
 guest code physically cannot bypass the ring.
 
 seccomp only closes half the boundary: it polices *syscalls*, and a
@@ -55,9 +57,9 @@ number list.
 
 ### 2. `bpf fn` — kernel offload as a language dialect
 
-The future language already needs a `bare fn` dialect (no alloc, no suspend) so
-the runtime can be written in it. A `bpf fn` dialect is the same move aimed at
-the verifier: bounded loops, no alloc, restricted calls — and the compiler
+If the future language adopts a restricted runtime dialect, a `bpf fn` dialect
+could make the same move for the verifier: bounded loops, no alloc, restricted
+calls — and the compiler
 emits BPF bytecode. "Wake my fiber only when the payload matches X" compiles to
 a socket filter or a hook in the in-kernel loop, attached by the runtime
 automatically. Rust and Zig can emit BPF but have zero integration with their
@@ -65,24 +67,25 @@ runtimes' event loops; a language whose effect system spans user/`bare`/`bpf`
 and auto-splits programs across the boundary is unclaimed territory. Biggest
 single idea in this file; furthest out (needs the language to exist).
 
-### 3. XDP flow steering — shared-nothing enforced at the NIC
+### 3. XDP flow steering — align network work with scheduler placement
 
-An XDP program hashes flows to cores so a connection's packets always arrive
-where its task lives: no cross-scheduler socket state, softirq work lands on the
-owning core. A BPF arena/map that userspace updates with per-core load lets
-*new* connections steer to the least-loaded ring — work distribution without
-work stealing, upholding invariant 3 instead of negotiating with it.
-Needs virtio-net (milestone 2) and multi-core (milestone 3) first.
+An XDP/reuseport program can hash flows toward the CPU on which a pinned
+scheduler runs, reducing cross-CPU wakeups and preserving connection affinity.
+It does not by itself establish scheduler ownership: IRQ/RSS placement, socket
+selection, scheduler pinning, and the userspace connection registry must agree.
+A BPF map updated with per-scheduler load could steer *new* connections without
+moving existing fibers. This waits on networking and multiple schedulers.
 
 Verify: XDP on virtio-net in this config; arena availability on 7.2.
 
 ### 4. sched_ext — the runtime ships its own CPU scheduler
 
-As PID 1 the runtime owns the machine, so it can install a BPF scheduler whose
-whole policy is: worker threads own their cores; every kthread, softirq, and
-io-wq stray is shepherded to core 0. Replaces `isolcpus` boot-arg folklore with
-policy-as-code the runtime installs about itself. This is the answer to the
-io-wq threat itself, not just a better tripwire.
+As PID 1 the runtime owns the machine, so it could install a BPF scheduler whose
+policy reserves selected CPUs for pinned scheduler tasks and shepherds kernel
+threads and io-wq work elsewhere. This would replace boot-argument placement
+with policy the runtime installs about itself. It remains topology policy, not
+part of scheduler identity, and must account for configurations with multiple
+schedulers sharing a CPU.
 
 Verified: `CONFIG_SCHED_CLASS_EXT is not set` in `out/kernel.config` — as
 predicted, this direction costs a fragment addition and a kernel rebuild
@@ -110,12 +113,12 @@ console inspection stops scaling (Testing section names the revisit
 conditions), this is where the tooling comes from — not from reintroducing a
 userland.
 
-### 7. In-kernel loop — promoted to `.scratch/bpf-loop.md`
+### 7. In-kernel loop — promoted to `bpf-loop.md`
 
-The interface has been read and verified (loop.c, bpf-ops.c, register.c) and
-the reap-loop lowering mapped in detail, including a program sketch, the
-user_data encoding change it wants, and the real cost (a freestanding
-struct_ops loader). See bpf-loop.md.
+The interface has been read and verified (`loop.c`, `bpf-ops.c`,
+`register.c`). `bpf-loop.md` records the operation-slab encoding it must share
+with UC-016, the validation still missing, and the real cost: a freestanding
+struct_ops loader.
 
 ### 8. sockmap/sk_msg splice — the proxy fast path
 
@@ -127,10 +130,11 @@ application exists.
 ## The meta-observation
 
 Items 1, 3, 4, 5 share a shape: **invariants stop being documentation and
-become installed kernel policy.** A hosted runtime cannot seal the kernel
-around itself; a portable one cannot afford to. This position can do both, and
-it is the same move this repo already makes with documents — the registry
-compiling to an enforced policy is AGENTS.md compiling to enforcement.
+become installed kernel policy.** The pinned PID-1 environment can tailor that
+policy to one known kernel and control machine-wide placement. A hosted build
+could still self-sandbox, but needs explicit capability and deployment policy.
+The registry compiling to an enforced policy is AGENTS.md compiling to
+enforcement.
 
 ## Rules for promoting anything above to a ticket
 

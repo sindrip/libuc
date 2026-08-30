@@ -27,14 +27,15 @@ reverses UC-009's expectation that in-flight accounting would be needed
 for the ring anyway; it never was (submission uses the ring's own
 batch_count).
 
-The loop becomes the reactor: sweep the ready queue to empty; if no fiber
-is live, return; otherwise `submit(min_complete = 1)` — one syscall
-flushing every SQE the sweep batched and waiting until at least one fiber
-can run — then reap all completions, store each `res` on its fiber, and
-enqueue it. A batch reaching `sq_entries` mid-sweep flushes early with
-`submit(0)`. Pure-yield iterations never enter the kernel.
+The loop becomes the reactor. UC-013 initially swept the ready queue to empty;
+UC-015 now snapshots one ready generation so a persistent yielder cannot starve
+completions. If no fiber remains, return; otherwise submit the batch, waiting
+for one completion only when the ready queue drained, then reap all available
+completions, store each `res` on its fiber, and enqueue it. A batch reaching
+`sq_entries` mid-generation flushes early with `submit(0)`. Pure-yield
+iterations never enter the kernel.
 
-Fibers reach their scheduler through their resumer: WAIT rides the request
+Fibers reach their scheduler through their resumer: AWAIT rides the request
 channel YIELD and EXIT already use, so fiber-land stores no scheduler
 reference and the SQ keeps one writer, the loop. Decided 2026-08-30 over
 the birth-binding pointer; the enqueue-time migration tripwire goes with
@@ -58,8 +59,8 @@ completions — which is UC-015.
    fiber-land never learns the SQE layout.
 2. The reactor tail with the acceptance probe: the live count, the copy
    through `await_sqe` into the SQ, park, submit, reap, result delivery,
-   wake. The step's question is how `res` reaches the fiber; the BPF
-   direction leans it toward a header-shaped slot (`.scratch/bpf-loop.md`).
+   wake. The scheduler writes `res` into the parked fiber before resuming it;
+   UC-016 later moves completion identity and delivery into operation records.
 3. Batch-overflow flush with its own forcing probe (~70 parked fibers):
    untested overflow handling is the silent-drop class again.
 
@@ -76,11 +77,8 @@ dead state.
 ## Acceptance
 
 Fiber A records a turn then NOP-waits, three turns; fiber B records three
-yielding turns then exits. The order is exactly `A0 B0 B1 B2 A1 A2`: B runs
-while A is parked, A wakes only through CQEs, and the loop returns with the
-queue empty and nothing in flight. Each wake delivers `res == 0` to A. Both
-architectures build clean.
-
-UC-015's generation bound (landed the same day) interleaves the wake one
-generation after the park; the order the probe checks is now
-`A0 B0 B1 A1 B2 A2`.
+yielding turns then exits. With UC-015's generation bound, the exact order is
+`A0 B0 B1 A1 B2 A2`: B runs while A is parked, each wake arrives through a
+CQE one generation after its park, and the loop returns with the queue empty
+and nothing parked. Each wake delivers `res == 0` to A. Both architectures
+build clean; behavioral execution follows UC-012's architecture policy.

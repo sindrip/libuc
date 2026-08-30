@@ -17,43 +17,53 @@ Two independent state machines, never conflated. The fiber machine —
 ready, running, parked, dead — changes once per block or wake, is counted
 by `ready`/`parked`, and never double-enqueues. The operation machine —
 staged, active, terminal, free — changes per CQE and is counted by
-`active_ops`, decremented only at the operation's terminal event.
+`live_ops` from allocation until terminal processing and slot release. Its
+state distinguishes SQEs not yet submitted from requests held by the kernel;
+the count keeps the scheduler alive in either case.
 
 The completion key stops being a fiber. `user_data` encodes
 {generation, slot, tag}: the slot indexes a per-scheduler operation slab
 (shared-nothing, no atomics), the generation detects a CQE aimed at a
 recycled slot, and the tag separates ordinary operations, cancellation,
-linked timeouts, notifications, and transport. `.scratch/scheduler.md`
-("The completion key, later") already commits to exactly this — a
+linked timeouts, notifications, and transport. `../../scheduler.md`
+("Completion identity") records the same seam — a
 scheduler-owned, generation-bearing record living until the final CQE.
 The operation slab is its own identity space: a record may reference a
-task-header slot, never be one, since a fiber owns several operations the
-moment cancellation or concurrency exists. `.scratch/bpf-loop.md`'s
-offset-plus-tag encoding then addresses this slab — one encoding,
-BPF-bounds-checkable, decided once.
+fiber, never be embedded in one, since a fiber owns several operations the
+moment cancellation or concurrency exists. `../../bpf-loop.md` uses this same
+slab — one encoding, BPF-bounds-checkable, decided once.
 
-The record: owner, generation, kind, state, and a bounded delivery queue
+The record: owner, current waiter (if any), generation, kind, state, and a
+bounded delivery queue
 with an explicit capacity and an overflow policy — one `{res, cqe_flags}`
 slot is not enough, since a stream posts several CQEs before its consumer
-runs. The wake rule is edge-triggered: one ready-queue insertion on the
-queue's empty-to-nonempty transition, never one per CQE.
+runs. The wake rule is edge-triggered: an empty-to-nonempty transition wakes
+the owner only when that fiber is parked waiting on this operation. An owner
+that is ready, running, or parked on a different operation only accumulates
+delivery; it is never enqueued twice and never spuriously woken.
 
-Reap decodes identity first (`F_SKIP` gap fillers carry `user_data = 0`
-and are ignored before decoding), then dispatches on kind, and terminal
-detection is kind-specific. SINGLE: the one CQE finishes it. STREAM:
-`F_MORE` clear finishes it — delivery never retires a live stream
-(uapi cqe->flags block). ZC_SEND is a two-phase protocol on one
-record: the primary completion carries `F_MORE` (`net.c:1598`) and the
+Reap validates ring-format flags first. `F_SKIP` gap fillers carry
+`user_data = 0` and are ignored before identity decoding only when
+`IORING_SETUP_CQE_MIXED` is enabled; on today's ring they remain a fatal
+configuration-drift signal. Reap then decodes identity, dispatches on kind,
+and performs kind-specific terminal detection. SINGLE: the one CQE finishes
+it. STREAM: `F_MORE` clear means this CQE is the terminal event, not that it
+has no payload; deliver its result according to the opcode and then finish the
+operation. Delivery never retires a stream while `F_MORE` remains set
+(`out/src/include/uapi/linux/io_uring.h:515-533`). ZC_SEND is a two-phase
+protocol on one record once the kernel allocates its notification: the primary
+completion carries `F_MORE` (`out/src/io_uring/net.c:1598,1609-1611`) and the
 later notification carries `F_NOTIF`, addressed by `sqe->addr3`
-(`net.c:1398`) as {same slot, same generation, NOTIF tag} against the
-primary's PRIMARY tag — a separate record would leave the primary's
-`F_MORE` half with no terminal transition and leak `active_ops`; the
-record retires when both phases have landed. CANCEL and LINK_TIMEOUT:
-bookkeeping, no wake.
+(`out/src/io_uring/net.c:1398-1404`) as {same slot, same generation, NOTIF tag}
+against the primary's PRIMARY tag. A preparation failure before notification
+allocation is an ordinary one-CQE terminal error. A separate record for the
+two-phase case would leave the primary's `F_MORE` half with no terminal
+transition and leak `live_ops`; the record retires when both phases have
+landed. CANCEL and LINK_TIMEOUT are bookkeeping, not automatic wakes.
 
 Rules that hold the seam: waking is a fiber-state transition, never a
 per-CQE action — an already-ready owner buffers without a second enqueue.
-`parked` counts blocked fibers, `active_ops` counts kernel-held records.
+`parked` counts blocked fibers; `live_ops` counts allocated operation records.
 A fiber's stack reclaims only at zero owned operations (scheduler.md's
 lifetime rule). Cancellation is cancel, reap the terminal CQE, then
 recycle the slot — never immediate release.
@@ -82,7 +92,8 @@ notification probe waits for the ticket that brings sockets and
   insertion, two results delivered in order.
 - A CQE arrives while the owner is ready: buffered, no duplicate enqueue.
 - The owner is parked on a different operation: no wake.
-- A terminal CQE retires its operation exactly once, no counter underflow.
+- A terminal CQE may carry a final delivered result and retires its operation
+  exactly once, with no counter underflow.
 - Delivery-queue capacity exhausted: the chosen backpressure policy is
   observed, not a drop.
 - A stream cancelled and drained through its terminal CQE; its slot

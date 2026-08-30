@@ -14,14 +14,26 @@ survive an owner that is already gone.
 
 ## Spec
 
-Open. The load-bearing kernel fact: a cancel CQE does not prove the
-original operation is dead — the kernel separately queues the original
-request to complete with `-ECANCELED` (`out/src/io_uring/cancel.c:476`),
-so releasing the slot on the cancel CQE recycles it while a CQE is still
-inbound. The zombie path: fiber exits → mark ZOMBIE → submit cancellation
-→ reap the cancel CQE → reap the original's terminal CQE or notification
-→ `active_ops` reaches zero → reclaim stack, thread-local block, and
-operation slots.
+Open. The load-bearing kernel fact: a cancel CQE reports the cancel request's
+result, not the original request's terminal event
+(`out/src/io_uring/cancel.c:210-244`). A cancelled poll request is separately
+kicked through its own completion path (`out/src/io_uring/poll.c:382-386`),
+and queued io-wq work is separately failed with `-ECANCELED`
+(`out/src/io_uring/io_uring.c:1489-1493`). Therefore releasing the original's
+slot merely because the cancel CQE arrived can recycle it while its terminal
+CQE is still inbound.
+
+The two CQEs have no assumed arrival order. The original may finish before the
+cancel request, and the cancel may consequently report `-ENOENT`; or the cancel
+may succeed before the original posts `-ECANCELED`. The operation state machine
+must accept both and retire each record exactly once.
+
+The zombie path: fiber exits → mark ZOMBIE → submit cancellation for every
+active owned operation → observe each original operation's terminal CQE (and
+every required notification) → `live_ops` reaches zero → reclaim stack,
+thread-local block, and operation slots. Cancel-operation records have their
+own ordinary terminal CQEs and lifetime; they are bookkeeping, never proof that
+the target record is reclaimable.
 
 Two structural consequences. The scheduler must stay alive while zombies
 or active operations exist: `ready + parked == 0` stops being a valid
@@ -32,7 +44,7 @@ than address the slot's next tenant.
 ## Acceptance
 
 - Fiber exit cancels and drains the original operation before any
-  reclamation.
+  reclamation, under both cancel-first and original-first CQE orderings.
 - A CQE arriving after the zombie drain cannot address the slot's next
   tenant.
 - The loop does not return while a zombie holds operations.

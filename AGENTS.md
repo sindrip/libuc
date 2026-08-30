@@ -94,18 +94,20 @@ These are the design. Code that breaks one is wrong even if it works.
    manufactures a class of silent layout and semantic bugs for no benefit. Read
    the headers; do not copy them.
 5. **Do not add liburing.** Ring mechanics are hand-written on purpose.
-6. **PID 1 must never return.** The kernel panics with `Attempted to kill init`.
-   `rt_main` ends in a loop or a deliberate reboot.
+6. **Resident PID 1 must never exit.** The kernel panics with `Attempted to
+   kill init`. Today's acceptance probes deliberately return through
+   `exit_group`; the eventual resident runtime ends in a loop or a deliberate
+   reboot.
 7. **Cooperative scheduling only.** No preemption. Fibers yield at I/O points
-   or via `rt_fiber_yield()`.
-8. **One purity exception exists.** See below. Do not add a second without
-   recording it there.
+   or via `__libuc_fiber_yield()` inside the private implementation.
+8. **One purity exception is approved for the future diagnostic path.** See
+   below. Do not implement it, or add another, without recording that status.
 
 ## The purity exception registry
 
-| symbol | what | why it is allowed |
-|---|---|---|
-| `raw_write()` | direct `write(2)` to console | Needed before the ring exists, to report `io_uring_setup` failure, and from the crash handler when the ring may be corrupt. |
+| symbol | status | what | why it is allowed |
+|---|---|---|---|
+| `raw_write()` | approved, not implemented | direct `write(2)` to console | Reserved for diagnostics before the ring exists and from a future crash handler when the ring may be corrupt. |
 
 That is the complete list. If you believe you need another, say so explicitly
 rather than adding it quietly.
@@ -146,7 +148,7 @@ src/                      the implementation
   string/                 <string.h>: memcpy, memset, memmove, memcmp
   sys/auxv/               <sys/auxv.h>: the parsed auxiliary vector, getauxval
   arch/<arch>/            everything that knows the instruction set
-    start.S               _start
+    start.c               _start
     syscall_arch.h        the trap sequence and register assignment
     thread_local_arch.h   the TLS variant the ABI fixes for the arch
     string/               the vectorised memcmp block
@@ -193,7 +195,7 @@ out/src/                  whole pinned kernel tree, read-only ground truth
 .cache/meson-<arch>/      meson build directories; compile_commands.json symlinks
                           into the aarch64 one for clangd
 .scratch/plan.md          design decisions and rationale
-.scratch/tickets/         RT-00N (closed) and uc/UC-00N (active)
+.scratch/tickets/uc/      UC-00N work items and acceptance criteria
 ```
 
 Dockerfile stages: `linux-tarball` → `toolchain` → `kernel-tree` → `kconfig` →
@@ -361,8 +363,9 @@ checks stop fitting in one console screen.
 ## Where work is tracked
 
 `.scratch/plan.md` for decisions and rationale; `.scratch/tickets/uc/UC-00N-*.md`
-for the active work items with acceptance criteria (the `RT-00N` tickets
-belonged to the retired spike, closed). Read the plan before proposing
+for the work items and acceptance criteria. The retired `RT-00N` spike tickets
+were removed after their durable findings were folded into the current docs.
+Read the plan before proposing
 architecture — most of it
 has already been argued through, and the rationale for rejected alternatives
 is recorded there.
