@@ -24,8 +24,6 @@ const struct __libuc_thread_local_layout *__libuc_thread_local_layout(void) {
     return layout;
   }
 
-  /* Read the final executable layout from auxv. PT_TLS is the
-   * thread-local metadata ABI. */
   uintptr_t address;
   uintptr_t entry_size;
   uintptr_t entry_count;
@@ -50,8 +48,7 @@ const struct __libuc_thread_local_layout *__libuc_thread_local_layout(void) {
 
   const auto headers = (const Elf64_Phdr *)address;
 
-  /* Find the executable's sole PT_TLS segment. Absence is valid; a second
-   * segment makes the image ambiguous. */
+  /* Absence is valid; a second PT_TLS segment makes the image ambiguous. */
   const Elf64_Phdr *segment = nullptr;
   for (size_t index = 0; index < header_count; index++) {
     const auto header = &headers[index];
@@ -64,7 +61,6 @@ const struct __libuc_thread_local_layout *__libuc_thread_local_layout(void) {
     segment = header;
   }
 
-  /* Decode the absent segment explicitly as the canonical empty layout. */
   if (segment == nullptr) {
     process_layout = (struct __libuc_thread_local_layout){
         .image = nullptr,
@@ -73,7 +69,6 @@ const struct __libuc_thread_local_layout *__libuc_thread_local_layout(void) {
         .alignment = 1,
     };
   } else {
-    /* Validate the image dimensions, mapped range, and effective alignment. */
     Elf64_Addr segment_end;
     if (segment->p_filesz > segment->p_memsz ||
         ckd_add(&segment_end, segment->p_vaddr, segment->p_memsz)) {
@@ -97,7 +92,6 @@ const struct __libuc_thread_local_layout *__libuc_thread_local_layout(void) {
     };
   }
 
-  /* Make the decoded layout available. */
   layout = &process_layout;
   return layout;
 }
