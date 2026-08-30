@@ -15,16 +15,17 @@ on:
     paths-ignore: ['.scratch/**']
   workflow_dispatch:
 
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
 
 jobs:
   libuc:
     runs-on: ubuntu-latest
+    # A superseded build is cancelled here and its dependent jobs skipped.
+    # Run-level cancellation would also kill a `latest` job mid-update.
+    concurrency:
+      group: ci-libuc-${{ github.ref }}
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v7
 
@@ -68,19 +69,20 @@ jobs:
       - name: Stage assets
         run: (cd dist && mv -- */*.tar.gz . && rmdir -- */ && sha256sum -- * > SHA256SUMS)
 
-      # No action moves an existing tag; this line is the whole trick.
+      # gh cannot move an existing tag; this push is the whole trick.
       - name: Float the latest tag to head
         run: git push --force origin "${GITHUB_SHA}:refs/tags/latest"
 
-      - uses: softprops/action-gh-release@v3
-        with:
-          tag_name: latest
-          prerelease: true
-          fail_on_unmatched_files: true
-          body: >-
-            Rolling build of main at ${{ github.sha }}. For stable checksums
-            use a versioned release.
-          files: dist/*
+      # gh has no upsert; edit in place, falling back to the first-run create.
+      - name: Refresh the rolling release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="Rolling build of main at ${GITHUB_SHA}. \
+          For stable checksums use a versioned release."
+          gh release edit latest --prerelease --notes "$notes" ||
+            gh release create latest --prerelease --notes "$notes"
+          gh release upload latest dist/* --clobber
 
   release:
     needs: libuc
@@ -97,10 +99,12 @@ jobs:
       - name: Stage assets
         run: (cd dist && mv -- */*.tar.gz . && rmdir -- */ && sha256sum -- * > SHA256SUMS)
 
-      - uses: softprops/action-gh-release@v3
-        with:
-          fail_on_unmatched_files: true
-          body: >-
-            include/ and lib/libc.a per architecture, plain -O2, Clang/LLD
-            from the digest-pinned Alpine.
-          files: dist/*
+      # No checkout in this job, so name the repo for gh explicitly.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --notes
+          "include/ and lib/libc.a per architecture, plain -O2, Clang/LLD
+          from the digest-pinned Alpine."
