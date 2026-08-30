@@ -25,7 +25,13 @@ calls consume, with values verified against
 `out/src/include/linux/socket.h:203-215` and
 `out/src/include/linux/net.h:68-92`; do the same for
 `socklen_t` (`unsigned int`, the musl/glibc ABI; the kernel reads an `int`)
-and the generic `struct sockaddr`. Landing this amends invariant 4's source
+and the generic `struct sockaddr`. Authored constants use uapi's own idiom
+(`IPPROTO_*` in `<linux/in.h>`): a fixed-underlying-type enum for the typed
+value plus a self-`#define` for preprocessor visibility. `#ifdef` works;
+`#if` value arithmetic sees 0, glibc's identical trade. Feature detection
+only matters for optional constants (`SOCK_CLOEXEC`, `MSG_NOSIGNAL` class);
+the mandatory pair adopts the idiom now so later additions stay uniform.
+Landing this amends invariant 4's source
 list with the third case: libc-authored ABI constants where uapi has none,
 verified against the pinned tree rather than included. uapi supplies the
 rest (`__kernel_sa_family_t`, `struct sockaddr_in`).

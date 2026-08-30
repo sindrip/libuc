@@ -26,7 +26,7 @@ IncludeCategories:
     Priority: 1
   - Regex: '^<(asm|asm-generic|linux)/'
     Priority: 2
-  - Regex: '^<(errno|fcntl|string|sys/auxv|sys/types|unistd)\.h>$'
+  - Regex: '^<(errno|fcntl|netinet/in|string|sys/auxv|sys/socket|sys/types|unistd)\.h>$'
     Priority: 4
   - Regex: '^<'
     Priority: 3

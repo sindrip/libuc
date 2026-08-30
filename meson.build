@@ -155,7 +155,9 @@ install_headers('include/errno.h')
 install_headers('include/fcntl.h')
 install_headers('include/string.h')
 install_headers('include/unistd.h')
+install_headers('include/netinet/in.h', subdir: 'netinet')
 install_headers('include/sys/auxv.h', subdir: 'sys')
+install_headers('include/sys/socket.h', subdir: 'sys')
 install_headers('include/sys/types.h', subdir: 'sys')
 
 summary(
@@ -566,4 +568,44 @@ if get_option('tests')
   )
 
   alias_target('initramfs-sweep-generation', sweep_generation_initramfs)
+
+  exit_status_initramfs = custom_target(
+    'exit-status-initramfs',
+    build_by_default: false,
+    command: [sh, mkinitramfs, '@INPUT@', '@OUTPUT@'],
+    input: exit_status_probe,
+    output: 'exit-status.initramfs.cpio.gz',
+  )
+
+  alias_target('initramfs-exit-status', exit_status_initramfs)
+
+  fiber_initramfs = custom_target(
+    'fiber-initramfs',
+    build_by_default: false,
+    command: [sh, mkinitramfs, '@INPUT@', '@OUTPUT@'],
+    input: fiber_probe,
+    output: 'fiber.initramfs.cpio.gz',
+  )
+
+  alias_target('initramfs-fiber', fiber_initramfs)
+
+  alias_target(
+    'initramfs-all',
+    start_initramfs,
+    start_no_thread_local_initramfs,
+    libc_io_initramfs,
+    pipe_initramfs,
+    close_initramfs,
+    getauxval_initramfs,
+    thread_local_block_initramfs,
+    thread_local_install_initramfs,
+    fiber_thread_local_initramfs,
+    ring_initramfs,
+    scheduler_initramfs,
+    fiber_io_initramfs,
+    fiber_io_flood_initramfs,
+    sweep_generation_initramfs,
+    exit_status_initramfs,
+    fiber_initramfs,
+  )
 endif
