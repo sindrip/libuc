@@ -70,6 +70,9 @@ int __libuc_start(void *initial_stack) {
   if (!__libuc_fiber_create(&root, root_stack_length, root_entry, &arguments)) {
     return 127;
   }
-  __libuc_fiber_run(&root);
+  if (__libuc_fiber_resume(&root) != __LIBUC_FIBER_REQUEST_EXIT) {
+    return 127;
+  }
+
   return arguments.status;
 }

@@ -11,10 +11,19 @@ struct report {
 
 static void entry(void *opaque) {
   struct report *report = opaque;
-  report->ok = __libuc_fiber_current() == report->fiber && value == 7;
+  int local = 1;
 
+  report->ok = __libuc_fiber_current() == report->fiber && value == 7;
   value = report->write;
-  report->ok = report->ok && value == report->write;
+  __libuc_fiber_yield();
+
+  report->ok = report->ok && __libuc_fiber_current() == report->fiber &&
+               value == report->write && local == 1;
+  value = report->write + 1;
+  local = 2;
+  __libuc_fiber_yield();
+
+  report->ok = report->ok && value == report->write + 1 && local == 2;
 }
 
 int main(void) {
@@ -22,6 +31,7 @@ int main(void) {
   if (!__libuc_thread_local_install_available()) {
     return 125;
   }
+
   struct __libuc_fiber *root = __libuc_fiber_current();
   if (root == nullptr) {
     return 124;
@@ -37,24 +47,21 @@ int main(void) {
     return 123;
   }
 
-  const auto first_tcb = (const struct __libuc_thread_local_tcb *)
-                             first.thread_local_block.thread_pointer;
-  const auto second_tcb = (const struct __libuc_thread_local_tcb *)
-                              second.thread_local_block.thread_pointer;
-  if (first_tcb->fiber != &first || second_tcb->fiber != &second) {
-    return 122;
+  /* A suspended fiber's thread-local value must survive the sibling's
+   * turns. */
+  for (int turn = 0; turn < 2; turn++) {
+    if (__libuc_fiber_resume(&first) != __LIBUC_FIBER_REQUEST_YIELD ||
+        __libuc_fiber_current() != root ||
+        __libuc_fiber_resume(&second) != __LIBUC_FIBER_REQUEST_YIELD) {
+      return 122;
+    }
   }
-
-  __libuc_fiber_run(&first);
-  if (__libuc_fiber_current() != root) {
-    return 121;
-  }
-  __libuc_fiber_run(&second);
-  if (__libuc_fiber_current() != root) {
+  if (__libuc_fiber_resume(&first) != __LIBUC_FIBER_REQUEST_EXIT ||
+      __libuc_fiber_resume(&second) != __LIBUC_FIBER_REQUEST_EXIT ||
+      __libuc_fiber_current() != root) {
     return 121;
   }
 
-  /* second saw 7, not first's 11: the blocks are per fiber. */
   if (!first_report.ok || !second_report.ok) {
     return 120;
   }

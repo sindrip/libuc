@@ -10,6 +10,8 @@
 [[noreturn]] static void run_fiber(void *opaque) {
   struct __libuc_fiber *fiber = opaque;
   fiber->entry(fiber->argument);
+
+  fiber->request = __LIBUC_FIBER_REQUEST_EXIT;
   fiber_switch(&fiber->context, fiber->return_to);
   __builtin_trap();
 }
@@ -54,18 +56,30 @@
   return block_destroyed && stack_released;
 }
 
-void __libuc_fiber_run(struct __libuc_fiber *fiber) {
-  struct fiber_context home;
-  fiber->return_to = &home;
+[[nodiscard]] enum __libuc_fiber_request
+__libuc_fiber_resume(struct __libuc_fiber *fiber) {
+  struct fiber_context here;
+  fiber->return_to = &here;
+  fiber->request = __LIBUC_FIBER_REQUEST_NONE;
 
   void *caller_thread_pointer = thread_local_read();
   thread_local_install(fiber->thread_local_block.thread_pointer);
-  fiber_switch(&home, &fiber->context);
+  fiber_switch(&here, &fiber->context);
   thread_local_install(caller_thread_pointer);
 
-  /* We are back on the caller's stack. Poison the completed context. */
-  fiber->context = (struct fiber_context){0};
+  if (fiber->request == __LIBUC_FIBER_REQUEST_EXIT) {
+    fiber->context = (struct fiber_context){0};
+  }
   fiber->return_to = nullptr;
+
+  return fiber->request;
+}
+
+void __libuc_fiber_yield(void) {
+  struct __libuc_fiber *fiber = __libuc_fiber_current();
+  fiber->request = __LIBUC_FIBER_REQUEST_YIELD;
+
+  fiber_switch(&fiber->context, fiber->return_to);
 }
 
 [[nodiscard]] struct __libuc_fiber *__libuc_fiber_current(void) {

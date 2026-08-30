@@ -1,20 +1,23 @@
 #ifndef LIBUC_TEST_ARCH_AARCH64_REGISTER_PROBE_H
 #define LIBUC_TEST_ARCH_AARCH64_REGISTER_PROBE_H
 
-#include <stddef.h>
-
 #include "fiber/fiber.h"
 
-/* Trash every callee-saved register, then complete the fiber directly: the
- * final switch is taken from here, so no returning frame can restore what
- * this destroyed, and the sentinels can only come back through the home
- * context. */
-[[gnu::naked]] [[maybe_unused, noreturn]] static void
-dirty_registers_and_finish(
-    struct __libuc_fiber *fiber,
-    void (*switch_contexts)(struct fiber_context *,
-                            const struct fiber_context *)) {
-  __asm__ volatile("mov x19, #0xdead\n"
+/* Trash every callee-saved register and suspend before any epilogue can
+ * repair them. */
+[[gnu::naked]] [[maybe_unused]] static void dirty_registers_and_yield(void) {
+  __asm__ volatile("stp x29, x30, [sp, #-0xa0]!\n"
+                   "stp x19, x20, [sp, #0x10]\n"
+                   "stp x21, x22, [sp, #0x20]\n"
+                   "stp x23, x24, [sp, #0x30]\n"
+                   "stp x25, x26, [sp, #0x40]\n"
+                   "stp x27, x28, [sp, #0x50]\n"
+                   "stp d8, d9, [sp, #0x60]\n"
+                   "stp d10, d11, [sp, #0x70]\n"
+                   "stp d12, d13, [sp, #0x80]\n"
+                   "stp d14, d15, [sp, #0x90]\n"
+
+                   "mov x19, #0xdead\n"
                    "mov x20, #0xdead\n"
                    "mov x21, #0xdead\n"
                    "mov x22, #0xdead\n"
@@ -32,18 +35,25 @@ dirty_registers_and_finish(
                    "fmov d13, x19\n"
                    "fmov d14, x19\n"
                    "fmov d15, x19\n"
-                   "mov x9, x1\n"
-                   "ldr x1, [x0, #%c[return_to]]\n"
-                   "add x0, x0, #%c[context]\n"
-                   "br x9\n"
-                   :
-                   : [return_to] "i"(offsetof(struct __libuc_fiber, return_to)),
-                     [context] "i"(offsetof(struct __libuc_fiber, context)));
+                   "bl __libuc_fiber_yield\n"
+
+                   "ldp x19, x20, [sp, #0x10]\n"
+                   "ldp x21, x22, [sp, #0x20]\n"
+                   "ldp x23, x24, [sp, #0x30]\n"
+                   "ldp x25, x26, [sp, #0x40]\n"
+                   "ldp x27, x28, [sp, #0x50]\n"
+                   "ldp d8, d9, [sp, #0x60]\n"
+                   "ldp d10, d11, [sp, #0x70]\n"
+                   "ldp d12, d13, [sp, #0x80]\n"
+                   "ldp d14, d15, [sp, #0x90]\n"
+                   "ldp x29, x30, [sp], #0xa0\n"
+                   "ret\n");
 }
 
-/* Load a distinct sentinel into every callee-saved register, run the fiber,
- * and report the first register that came back changed: 1..10 for x19..x28,
- * 11..18 for d8..d15, 0 when all survived. */
+/* Load a distinct sentinel into every callee-saved register, resume the
+ * fiber through one suspension, and report the first register that came
+ * back changed: 1..10 for x19..x28, 11..18 for d8..d15, 0 when all
+ * survived. */
 [[gnu::naked]] [[maybe_unused]] static unsigned long
 run_probing_registers(struct __libuc_fiber *fiber) {
   __asm__ volatile("stp x29, x30, [sp, #-0xb0]!\n"
@@ -87,7 +97,7 @@ run_probing_registers(struct __libuc_fiber *fiber) {
                    "fmov d15, x9\n"
 
                    "ldr x0, [sp, #0xa0]\n"
-                   "bl __libuc_fiber_run\n"
+                   "bl __libuc_fiber_resume\n"
 
                    "mov x0, #1\n"
                    "mov x9, #0xb001\n"

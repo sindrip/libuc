@@ -80,6 +80,20 @@ works nor traps cleanly there); emulated x86-64 behavioral runs are retired,
 compile-and-link stays. The decision and its cost are recorded in the
 UC-006 ticket.
 
+## UC-007 (2026-08-30)
+
+Landed: resume/yield replace the one-shot run. `__libuc_fiber_resume`
+plants NONE, switches with the thread pointer carried, poisons the context
+on EXIT, and returns the request; `__libuc_fiber_yield` writes YIELD through
+the current-fiber TCB word and switches to `return_to`. `start.c` resumes
+the root fiber once and treats anything but EXIT as broken. The request
+enum sets the house idiom: lowercase tag, SCREAMING members, width fixed to
+the struct slot.
+
+Acceptance green on aarch64: all seven probes exit clean in containers and
+VM, exit-status still carries 42. The register harness now saves and
+restores callee-saved registers around its yield — a fiber that suspends
+and later completes owes its C frames the ABI.
+
 Next: finish full UC-006 — retire the no-`_Thread_local` invariant, assert
-constructor/main-visible TLS in `test/main.c` — then UC-007 suspension,
-which `__libuc_fiber_current` now unblocks.
+constructor/main-visible TLS in `test/main.c` — then UC-008, the ring.

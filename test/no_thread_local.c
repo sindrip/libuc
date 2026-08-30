@@ -55,7 +55,9 @@ int main(int argc, char **argv, char **envp) {
       return 118;
     }
 
-    __libuc_fiber_run(&fiber);
+    if (__libuc_fiber_resume(&fiber) != __LIBUC_FIBER_REQUEST_EXIT) {
+      return 116;
+    }
     const bool carried =
         seen_current == &fiber && __libuc_fiber_current() == root;
 

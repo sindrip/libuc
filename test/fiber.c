@@ -9,11 +9,12 @@
 static unsigned long argument_witness;
 static unsigned long stack_witness;
 
-[[noreturn]] static void observe(void *argument) {
+static void observe(void *argument) {
   unsigned char local;
   argument_witness = (unsigned long)(uintptr_t)argument;
   stack_witness = (unsigned long)(uintptr_t)&local;
-  dirty_registers_and_finish(argument, fiber_switch);
+
+  dirty_registers_and_yield();
 }
 
 int main(void) {
@@ -44,6 +45,9 @@ int main(void) {
 
   if (fiber.return_to != nullptr) {
     return 121;
+  }
+  if (__libuc_fiber_resume(&fiber) != __LIBUC_FIBER_REQUEST_EXIT) {
+    return 119;
   }
   if (!__libuc_fiber_destroy(&fiber)) {
     return 120;

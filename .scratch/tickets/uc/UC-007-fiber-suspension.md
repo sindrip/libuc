@@ -1,7 +1,7 @@
 ---
 id: UC-007
 title: Suspend and resume a fiber
-status: todo
+status: done
 depends: [UC-006]
 ---
 
@@ -44,3 +44,12 @@ fiber's stack address, callee-saved registers, `_Thread_local` value, and curren
 fiber identity survive every suspension. Entry return produces EXIT, a second
 resume after EXIT is never attempted, and no scheduler symbol exists in
 `libc.a`.
+
+2026-08-30: met on aarch64 — `test/fiber_thread_local.c` interleaves three
+resumes across two fibers (exit 0, container and VM), the register harness
+suspends mid-wreckage and proves restoration through the resumer's context,
+and the no-scheduler-symbol test guards `libc.a`. x86-64 is compile-and-link
+only, per the UC-006 decision. The harness rework surfaced a real ABI rule:
+a fiber that suspends and later completes must leave callee-saved registers
+as its C frames expect — the dirty harness now saves and restores around its
+yield.
