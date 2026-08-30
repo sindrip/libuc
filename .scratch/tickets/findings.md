@@ -120,3 +120,57 @@ Static probes execute directly in containers: `docker run -v <builddir>:/p
 alpine /p/<probe>.elf` — natively for aarch64, `--platform linux/amd64` for
 the x86-64 build. Exit codes are the acceptance signal. This is the
 cross/runnable.ini story realized without a matching host.
+
+## 2026-08-30: review findings on the landed reactor
+
+Two correctness findings arrived by review the day UC-013 landed; both
+verified against `out/src/` before fixing.
+
+- **Short positive submissions lost SQEs.** `io_submit_sqes` breaks on
+  request-allocation failure with a positive short count
+  (`io_uring.c:2046, 2064-2068`); `SUBMIT_ALL` rides over per-SQE prep
+  errors only (`io_uring.c:2053-2059`). `__libuc_ring_submit` treated any
+  non-negative return as full consumption and zeroed the batch — the tail
+  SQEs vanished and their fibers waited forever. Fixed in the ring: on a
+  short count the remainder memmoves to slot zero (SQ_REWIND rereads from
+  there each enter, `io_uring.c:1969-1970`) and the enter retries; a short
+  that submitted nothing returns -EAGAIN, never zero, so each pass makes
+  progress. Waiting twice is harmless — the CQ wait is level-triggered.
+- **The unbounded sweep starved I/O.** Known and ticketed as UC-015, but
+  review sharpened it: under `DEFER_TASKRUN`, completions post only when
+  task work runs at enter, so a yield storm starves even already-submitted
+  operations — the NOP framing undersold it. UC-015 was pulled forward and
+  landed with the simple policy (one enter per generation while anything
+  is parked). Its counters churned twice in review conversation — in_flight
+  gave way to a live/queued pair, which read as arithmetic — and settled as
+  the structural pair `ready`/`parked`: name the places fibers stand, and
+  every branch tests its own counter. The pair sits where the padding slot
+  was, and UC-013's acceptance order moved to `A0 B0 B1 A1 B2 A2`.
+
+- **Multi-CQE operations reviewed as a follow-up P1; assessed as a
+  contract without a tripwire.** The mechanics are real — multishot accept
+  posts `IORING_CQE_F_MORE` streams (`net.c:1699`), and the wake path
+  treats every CQE as a wake — but nothing in the tree can form such an
+  SQE: probes are NOP-only and no wrapper requests multishot. The surface
+  cannot *prevent* one either, so the reap loop now traps on
+  `F_MORE | F_NOTIF | F_SKIP` until UC-016 designs the operation record
+  (the same object as bpf-loop.md's task header). `F_SKIP` is the
+  CQE32/CQE_MIXED gap filler with `user_data = 0`
+  (`io_uring.c:708-720`), unreachable on this ring config; if it appears,
+  the config drifted.
+
+- **The stopped background review's five candidates, re-verified and
+  landed.** (1) SQE-flags passthrough: `park` copied caller flags
+  verbatim, so `IOSQE_CQE_SKIP_SUCCESS` would silently drop the wake and
+  `IOSQE_IO_LINK` would chain unrelated fibers' SQEs in one batch; park
+  now traps on any flag. (2) `-EINTR` from enter now retries in
+  `ring_submit` instead of trapping the scheduler. (3) The submit-retry
+  progress claim is config-derived, now stated: NO_SQARRAY removes the
+  only zero-with-success path (`io_get_sqe` cannot fail without an
+  sq_array). (4) enter masks the wait leg's error behind any positive
+  submit count (`io_uring.c:2689-2701`), including `-EBADR` for dropped
+  CQEs; rather than design drop recovery, park bounds `parked` at
+  `cq_entries`, which makes overflow — and therefore drops and the
+  masking — unreachable until a ticket lifts the bound deliberately.
+  (5) `__libuc_fiber_await` now documents the same no-current-fiber
+  fault contract as yield.

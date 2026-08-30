@@ -32,7 +32,12 @@ no parking, it is a second source of truth over the queue, bought to enable
 an error check unreachable by construction — the ring_entries sin again.
 UC-010's parking tracks in-flight operations, which it needs for ring
 accounting anyway; "live" is then the derivable sum ready + in_flight, not
-a stored primitive.
+a stored primitive. Reversed at UC-013's landing (2026-08-30): the reactor
+read in_flight only for the termination test — submission uses the ring's
+own batch_count — so the stored primitives became the structural pair
+`ready`/`parked`, naming where a fiber stands rather than what the ring
+owes, which keeps CQE arithmetic out of the counters; the multi-CQE
+routing itself is UC-016's operation layer.
 
 The scheduler path runs with the bootstrap thread pointer restored and does not
 touch `_Thread_local` state. The ring is present but no fiber I/O request is
