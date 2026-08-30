@@ -1,7 +1,7 @@
 ---
 id: UC-018
 title: Single-shot sockets
-status: todo
+status: done
 depends: [UC-014]
 ---
 
