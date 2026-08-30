@@ -47,10 +47,9 @@ __libuc_fiber_resume(struct __libuc_fiber *fiber);
  * this faults. */
 void __libuc_fiber_yield(void);
 
-/* Park on one SQE built in the calling frame; the contract is exactly
- * one CQE, and the reap loop traps streams. The frame outlives the park,
- * so the pointee needs no copy. Returns the operation's res; with no
- * current fiber this faults. */
+/* Exactly one CQE; the reap loop traps streams. The suspended frame
+ * keeps the SQE and its buffers live through the CQE. Returns res; with
+ * no current fiber this faults. */
 [[nodiscard]] long __libuc_fiber_await(const struct io_uring_sqe *sqe);
 
 /* The running fiber; nullptr where no block is installed. */

@@ -47,14 +47,10 @@ Field mappings per the pinned prep functions (`out/src/io_uring/net.c`):
 | `accept(fd, addr, lenp)` | `IORING_OP_ACCEPT`: `addr`=addr, `addr2`=lenp |
 | `connect(fd, addr, len)` | `IORING_OP_CONNECT`: `addr`=addr, `addr2`=len |
 
-Liveness differs by direction and the wrappers must not assume one rule:
-`bind` and `connect` copy the sockaddr into kernel memory while the kernel
-prepares the submitted request
-(`move_addr_to_kernel` in `io_bind_prep`/`io_connect_prep`,
-`out/src/io_uring/net.c:1815-1831,1901-1922`); `accept`'s addr/lenp remain
-kernel-visible output storage until completion and the suspended frame keeps
-them live (`out/src/io_uring/net.c:1617-1676`). `accept`
-returns the new descriptor as the CQE result. `sqe->ioprio` stays zero:
+Buffer liveness follows `../findings.md` ("io_uring buffer liveness"): the
+prep-time sockaddr snapshot is the special case, `accept`'s out-params the
+default, and blocking wrappers are correct under both. `accept` returns the
+new descriptor as the CQE result. `sqe->ioprio` stays zero:
 that field carries `IORING_ACCEPT_MULTISHOT` (`io_accept_prep`), and this
 ticket keeps `__libuc_fiber_await`'s exactly-one-CQE contract everywhere.
 

@@ -7,4 +7,28 @@ socket_impls = [
     include_directories: [public_include, private_include, fiber_arch_include],
     pic: false,
   ),
+  static_library(
+    'uc-bind-internal',
+    'bind.c',
+    build_by_default: false,
+    c_args: common_c_args + ['-Wno-reserved-identifier'],
+    include_directories: [public_include, private_include, fiber_arch_include],
+    pic: false,
+  ),
+  static_library(
+    'uc-connect-internal',
+    'connect.c',
+    build_by_default: false,
+    c_args: common_c_args + ['-Wno-reserved-identifier'],
+    include_directories: [public_include, private_include, fiber_arch_include],
+    pic: false,
+  ),
+  static_library(
+    'uc-listen-internal',
+    'listen.c',
+    build_by_default: false,
+    c_args: common_c_args + ['-Wno-reserved-identifier'],
+    include_directories: [public_include, private_include, fiber_arch_include],
+    pic: false,
+  ),
 ]

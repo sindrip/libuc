@@ -91,6 +91,26 @@ per await. UC-016 replaces it with a generation-bearing operation record. The
 operation slab is its own identity space; it may refer to a fiber, never be
 embedded in a fiber slot merely to save an address calculation.
 
+## io_uring buffer liveness
+
+The default contract is pointer retention: READ/WRITE store the user address
+at prep and build the transfer iterator over user memory
+(`out/src/io_uring/rw.c:295,129`), so a submitted buffer stays live until its
+CQE. Address arguments are the special case: `bind` and `connect` prep
+snapshots the sockaddr through `move_addr_to_kernel` — a `copy_from_user`
+into kernel-owned async data (`out/src/io_uring/net.c:1917,1831`;
+`out/src/net/socket.c:249-258`) — and the issue path reads only the kernel
+copy (`io_bind`, `out/src/io_uring/net.c:1901-1922`), so the caller's
+sockaddr is dead to the kernel after submission; `sendmsg`'s address shares
+the exception (`net.c:372`). `accept`'s addr/lenp stay on the default as
+output storage until completion (`net.c:1617-1676`).
+
+Blocking wrappers park through completion and are correct under both rules.
+The distinction becomes load-bearing when submission decouples from
+completion: UC-016's operation records must keep pointer-retained buffers
+live until the terminal CQE, while address snapshots impose nothing past
+submission.
+
 ## Visibility policy
 
 Static libuc does not yet need a hidden/default symbol policy. If a shared
