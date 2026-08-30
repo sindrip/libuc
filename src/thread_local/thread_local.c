@@ -4,10 +4,15 @@
 #include <stdint.h>
 
 #include <linux/elf.h>
+#include <linux/mman.h>
+
+#include <string.h>
 
 #include <sys/auxv.h>
 
 #include "auxv.h"
+#include "syscall.h"
+#include "thread_local_arch.h"
 
 static_assert(sizeof(uintptr_t) == sizeof(Elf64_Addr));
 static_assert(sizeof(size_t) == sizeof(Elf64_Xword));
@@ -96,4 +101,67 @@ const struct __libuc_thread_local_layout *__libuc_thread_local_layout(void) {
   /* Make the decoded layout available. */
   layout = &process_layout;
   return layout;
+}
+
+[[nodiscard]] bool __libuc_thread_local_block_create(
+    struct __libuc_thread_local_block *block) {
+  const struct __libuc_thread_local_layout *layout =
+      __libuc_thread_local_layout();
+  if (layout == nullptr) {
+    return false;
+  }
+
+  struct thread_local_placement placement;
+  if (!thread_local_place(layout->block_size, layout->alignment, &placement)) {
+    return false;
+  }
+
+  size_t mapping_length;
+  if (ckd_add(&mapping_length, placement.length, layout->alignment - 1)) {
+    return false;
+  }
+
+  const long raw_mapping =
+      __libuc_sys_mmap(nullptr, mapping_length, PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (__libuc_syscall_failed(raw_mapping)) {
+    return false;
+  }
+
+  const uintptr_t raw_address = (uintptr_t)raw_mapping;
+  uintptr_t rounded_address;
+  if (ckd_add(&rounded_address, raw_address, layout->alignment - 1)) {
+    (void)__libuc_sys_munmap((void *)raw_address, mapping_length);
+    return false;
+  }
+  const uintptr_t address =
+      rounded_address & ~(uintptr_t)(layout->alignment - 1);
+  unsigned char *base = (unsigned char *)address;
+  unsigned char *thread_pointer = base + placement.tp_offset;
+  unsigned char *tls_block = base + placement.block_offset;
+  struct __libuc_thread_local_tcb *tcb =
+      (struct __libuc_thread_local_tcb *)(uintptr_t)thread_pointer;
+
+  if (layout->block_size != 0) {
+    memset(tls_block, 0, layout->block_size);
+    if (layout->image_size != 0) {
+      memcpy(tls_block, layout->image, layout->image_size);
+    }
+  }
+  tcb->self = tcb;
+  tcb->fiber = nullptr;
+
+  *block = (struct __libuc_thread_local_block){
+      .mapping = (void *)raw_address,
+      .mapping_length = mapping_length,
+      .block = tls_block,
+      .thread_pointer = thread_pointer,
+  };
+  return true;
+}
+
+[[nodiscard]] bool __libuc_thread_local_block_destroy(
+    const struct __libuc_thread_local_block *block) {
+  return !__libuc_syscall_failed(
+      __libuc_sys_munmap(block->mapping, block->mapping_length));
 }

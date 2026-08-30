@@ -5,6 +5,28 @@ status: next
 depends: [UC-001, UC-002]
 ---
 
+## Staged implementation
+
+UC-004-min establishes the runtime-owned block and TCB before compiler-visible
+`_Thread_local` installation is introduced. It allocates the architecture-
+correct mapping, copies and zero-fills the recorded image when present, and
+initializes the two runtime TCB words:
+
+```text
+self pointer -> TCB itself
+fiber pointer -> null
+```
+
+The block carries its raw mapping, mapping length, block address, and future
+thread-pointer value. Creation does not install the thread pointer; that
+belongs to UC-005. An executable without `PT_TLS` still receives a TCB-only
+block, which is the intended bridge to fiber suspension before compiler TLS is
+enabled.
+
+The original acceptance remains outstanding: the staged probe covers distinct
+live blocks, TCB initialization, image initialization, and destruction, but
+does not yet install either block or exercise `_Thread_local` accesses.
+
 ## Goal
 
 Make thread-local storage an owned object that can belong to a fiber.

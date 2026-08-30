@@ -6,9 +6,9 @@
 
 /* Variant 2 as the x86-64 psABI fixes it: compiled TP-relative accesses
  * assume the block ends block_size rounded up to its alignment below the
- * thread pointer, and the eight bytes at the thread pointer hold its own
- * value, read back for every address-of on a thread-local. */
-constexpr size_t thread_local_tcb_size = 8;
+ * thread pointer.  The self-pointer is at TP; libuc's second runtime word is
+ * immediately above it and is outside the compiler's negative offsets. */
+constexpr size_t thread_local_tcb_size = 16;
 
 /* A block's geometry within one mapping, measured from a base the caller has
  * placed on a boundary of both the block's alignment and the TCB's. */

@@ -3,6 +3,8 @@
 
 #include <stddef.h>
 
+struct __libuc_fiber;
+
 /* The executable's static thread-local image, as its PT_TLS segment declares
  * it. Every thread-local block begins life as image_size bytes copied from
  * image, then zeros up to block_size, placed at a multiple of alignment. */
@@ -15,5 +17,25 @@ struct __libuc_thread_local_layout {
 
 [[nodiscard]] const struct __libuc_thread_local_layout *
 __libuc_thread_local_layout(void);
+
+/* The runtime-owned storage for one execution context.  The thread pointer
+ * is not installed by UC-004-min; that belongs to the next ticket. */
+struct __libuc_thread_local_block {
+  void *mapping;
+  size_t mapping_length;
+  unsigned char *block;
+  void *thread_pointer;
+};
+
+struct __libuc_thread_local_tcb {
+  struct __libuc_thread_local_tcb *self;
+  struct __libuc_fiber *fiber;
+};
+
+[[nodiscard]] bool __libuc_thread_local_block_create(
+    struct __libuc_thread_local_block *block);
+
+[[nodiscard]] bool __libuc_thread_local_block_destroy(
+    const struct __libuc_thread_local_block *block);
 
 #endif

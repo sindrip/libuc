@@ -215,6 +215,17 @@ if get_option('tests')
     name_suffix: 'elf',
   )
 
+  thread_local_block_probe = executable(
+    'thread-local-block',
+    'test/thread_local_block.c',
+    c_args: common_c_args + ['-Wno-reserved-identifier'],
+    include_directories: [public_include, private_include],
+    link_args: probe_link_args,
+    link_depends: 'libuc.ld',
+    link_whole: [crt1_internal, libc],
+    name_suffix: 'elf',
+  )
+
   test_arch_include = include_directories('test/arch/' + arch)
 
   fiber_probe = executable(
@@ -258,6 +269,7 @@ if get_option('tests')
   if meson.can_run_host_binaries()
     test('startup contract with PT_TLS', start_probe)
     test('startup contract without PT_TLS', start_no_thread_local_probe)
+    test('thread-local block with PT_TLS', thread_local_block_probe)
     test('fiber bootstrap round trip', fiber_probe)
     test(
       'main status reaches exit_group',
