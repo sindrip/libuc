@@ -156,6 +156,7 @@ install_headers('include/fcntl.h')
 install_headers('include/string.h')
 install_headers('include/unistd.h')
 install_headers('include/sys/auxv.h', subdir: 'sys')
+install_headers('include/sys/types.h', subdir: 'sys')
 
 summary(
   {
@@ -228,6 +229,17 @@ if get_option('tests')
     link_args: probe_link_args,
     link_depends: 'libuc.ld',
     link_whole: [crt1_internal] + no_thread_local_impls,
+    name_suffix: 'elf',
+  )
+
+  libc_io_probe = executable(
+    'libc-io',
+    'test/libc_io.c',
+    c_args: common_c_args + ['-Wno-reserved-identifier'],
+    include_directories: [public_include, private_include, fiber_arch_include],
+    link_args: probe_link_args,
+    link_depends: 'libuc.ld',
+    link_whole: [crt1_internal, libc],
     name_suffix: 'elf',
   )
 
@@ -383,6 +395,7 @@ if get_option('tests')
     test('getauxval hit and ENOENT miss', getauxval_probe)
     test('close suspends on the ring', close_probe)
     test('pipe descriptors arrive through the ring', pipe_probe)
+    test('read suspends until write completes it', libc_io_probe)
     test('thread-local install alternation', thread_local_install_probe)
     test('fiber bootstrap round trip', fiber_probe)
     test('fiber thread-local binding', fiber_thread_local_probe)
@@ -424,6 +437,16 @@ if get_option('tests')
     'initramfs-no-thread-local',
     start_no_thread_local_initramfs,
   )
+
+  libc_io_initramfs = custom_target(
+    'libc-io-initramfs',
+    build_by_default: false,
+    command: [sh, mkinitramfs, '@INPUT@', '@OUTPUT@'],
+    input: libc_io_probe,
+    output: 'libc-io.initramfs.cpio.gz',
+  )
+
+  alias_target('initramfs-libc-io', libc_io_initramfs)
 
   pipe_initramfs = custom_target(
     'pipe-initramfs',

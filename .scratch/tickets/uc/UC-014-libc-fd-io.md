@@ -33,12 +33,15 @@ the scheduler copies it into the SQ and stamps `user_data`.
 | `close(fd)` | `IORING_OP_CLOSE` |
 
 `read` and `write` use `sqe.off == -1` for the open-file position
-(`out/src/io_uring/rw.c:479-493`). `sqe.len` is 32-bit while `size_t` is
-64-bit, so a larger `count` is explicitly clamped to `INT32_MAX`; the kernel's
-`import_ubuf` then applies Linux's normal `MAX_RW_COUNT` ceiling
-(`out/src/lib/iov_iter.c:1445-1450`). This matches a direct Linux read/write's
-partial-transfer behavior without narrowing modulo 2^32 or retyping the
-kernel-private `MAX_RW_COUNT` constant.
+(`out/src/io_uring/rw.c:479-493`). A `count` above `SSIZE_MAX` is rejected
+with `EINVAL` before any transfer, mirroring the syscall path's
+`rw_verify_area` (`out/src/fs/read_write.c`), which the ring path does not
+apply. Below that, `sqe.len` is 32-bit while `size_t` is 64-bit, so a larger
+`count` is explicitly clamped to `INT32_MAX`; the kernel's `import_ubuf` then
+applies Linux's normal `MAX_RW_COUNT` ceiling
+(`out/src/lib/iov_iter.c:1445-1450`). Together these match a direct Linux
+read/write exactly — `EINVAL` and partial-transfer cases both — without
+narrowing modulo 2^32 or retyping the kernel-private `MAX_RW_COUNT` constant.
 
 A negative CQE result becomes `-1` plus per-fiber `errno`; success leaves
 `errno` unchanged. The suspended call frame keeps the SQE and buffers live
@@ -81,7 +84,8 @@ returns raw `-errno`.
 
 A `count` greater than `INT32_MAX` is prepared with `sqe.len == INT32_MAX`, not
 the low 32 bits of `count`; this is checked at the preparation seam without
-requiring an allocation of that size.
+requiring an allocation of that size. A `count` above `SSIZE_MAX` returns `-1`
+with `EINVAL` and no transfer.
 
 Both architectures build cleanly under the project warnings and UBSan
 configuration. The aarch64 probe passes in the unconfined container and VM;
