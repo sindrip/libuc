@@ -95,5 +95,5 @@ VM, exit-status still carries 42. The register harness now saves and
 restores callee-saved registers around its yield — a fiber that suspends
 and later completes owes its C frames the ABI.
 
-Next: finish full UC-006 — retire the no-`_Thread_local` invariant, assert
-constructor/main-visible TLS in `test/main.c` — then UC-008, the ring.
+UC-006 is closed in full: `test/main.c` asserts constructor- and
+main-visible root-fiber TLS. Next: UC-008, the ring.

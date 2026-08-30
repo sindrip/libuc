@@ -1,7 +1,7 @@
 ---
 id: UC-006
 title: Bind thread-local state to a fiber
-status: todo
+status: done
 depends: [UC-002, UC-005]
 ---
 
@@ -63,3 +63,12 @@ each observing only its own value, and constructors and `main` observe
 initialized independent thread-local state on the root fiber. The private
 current-fiber lookup identifies each one while it runs, and the no-`PT_TLS`
 probe still has no `PT_TLS` program header.
+
+2026-08-30: done. UC-007's probe covers repeated-switch isolation and the
+current-fiber lookup; `test/main.c` now asserts constructors see the
+initialized image and `main` observes a constructor's write — the root
+block spans both. The no-`_Thread_local` invariant is retired for
+programs. It stays for libuc internals: one `_Thread_local` object in
+`libc.a` would drag a `PT_TLS` segment into every executable, and the
+no-PT_TLS probe's header check exists to catch exactly that; the TCB
+fiber word remains the internal mechanism.

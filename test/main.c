@@ -14,14 +14,8 @@
 static volatile int stage;
 static uintptr_t constructor_stack_witness;
 
-/* This function is emitted for ELF and machine-code inspection, but is not
- * called until libuc can establish the architecture's thread pointer. */
-[[gnu::used]] static _Thread_local volatile int tls_initialized = 42;
-[[gnu::used]] static _Thread_local volatile int tls_zeroed;
-
-[[gnu::used]] static int tls_contract_probe(void) {
-  return tls_initialized + tls_zeroed;
-}
+static _Thread_local volatile int tls_initialized = 42;
+static _Thread_local volatile int tls_zeroed;
 
 /* -Wglobal-constructors exists to flag initialization hiding before main;
  * proving that initialization runs is this file's entire purpose. */
@@ -55,7 +49,14 @@ static uintptr_t constructor_stack_witness;
           sizeof(tls_initialized) + sizeof(tls_zeroed) &&
       thread_local_layout->alignment == alignof(int);
 
-  stage = (stage == 0 && auxv_ready && thread_local_layout_ready) ? 1 : -1;
+  const bool thread_local_state_ready =
+      tls_initialized == 42 && tls_zeroed == 0;
+  tls_zeroed = 7;
+
+  stage = (stage == 0 && auxv_ready && thread_local_layout_ready &&
+           thread_local_state_ready)
+              ? 1
+              : -1;
 }
 
 [[gnu::constructor(202)]] static void init_second(void) {
@@ -71,6 +72,11 @@ static uintptr_t constructor_stack_witness;
 int main(int argc, char **argv, char **envp) {
   if (stage != 3) {
     return 125;
+  }
+
+  /* The constructor's block is main's block. */
+  if (tls_initialized != 42 || tls_zeroed != 7) {
+    return 123;
   }
 
   if (argc < 1 || argv == nullptr || argv[0] == nullptr || envp == nullptr) {
