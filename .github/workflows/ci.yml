@@ -1,8 +1,9 @@
 # Build and test libc.a on every push to main. Each push updates the
 # rolling `latest` prerelease in place, and a v* tag cuts an immutable
-# versioned release from the same build. Everything runs as one bake graph inside the
-# digest-pinned alpine toolchain, so CI's Clang/LLD are the versions
-# AGENTS.md records as verified. Probes are compiled and their ELF contract
+# versioned release from the same build. Everything runs as one bake graph
+# inside the toolchain nix realizes from the devshell's own flake.lock, so
+# CI's Clang/LLD are byte-for-byte the locally verified ones. Probes are
+# compiled and their ELF contract
 # checked, but never executed: the runner kernel is not the pinned 7.2, and
 # behaviour is checked in-VM.
 
@@ -107,4 +108,4 @@ jobs:
         run: >-
           gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --notes
           "include/ and lib/libc.a per architecture, plain -O2, Clang/LLD
-          from the digest-pinned Alpine."
+          pinned by the repo's flake.lock."

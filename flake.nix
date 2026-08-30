@@ -13,33 +13,48 @@
         "x86_64-linux"
       ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
+      # clang-unwrapped already bundles the raw clang-tools-extra binaries;
+      # clang-tools would collide with them in buildEnv, so only the
+      # devshell layers the wrapped ones on top for editor tooling.
+      toolchain =
+        pkgs:
+        let
+          llvm = pkgs.llvmPackages_22;
+        in
+        [
+          pkgs.cpio
+          pkgs.gawk
+          pkgs.gzip
+          pkgs.meson
+          pkgs.ninja
+          llvm.clang-unwrapped
+          llvm.lld
+          llvm.llvm
+        ];
     in
     {
-      packages.aarch64-darwin.llvm23-rc3 =
+      packages = forAllSystems (
+        system:
         let
-          pkgs = import nixpkgs { system = "aarch64-darwin"; };
+          pkgs = import nixpkgs { inherit system; };
         in
-        import ./llvm23-rc3.nix { inherit pkgs; };
+        {
+          toolchain = pkgs.buildEnv {
+            name = "libuc-toolchain";
+            paths = toolchain pkgs;
+          };
+        }
+      );
 
       devShells = forAllSystems (
         system:
         let
           pkgs = import nixpkgs { inherit system; };
-          llvm = pkgs.llvmPackages_22;
         in
         {
           default = pkgs.mkShellNoCC {
             name = "libuc";
-            packages = [
-              pkgs.cpio
-              pkgs.gzip
-              pkgs.meson
-              pkgs.ninja
-              llvm.clang-tools
-              llvm.clang-unwrapped
-              llvm.lld
-              llvm.llvm
-            ];
+            packages = [ pkgs.llvmPackages_22.clang-tools ] ++ toolchain pkgs;
           };
         }
       );

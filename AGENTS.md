@@ -142,7 +142,8 @@ ticket's in-VM console check. When shared startup, TLS, fiber, scheduler, ring,
 or architecture code changes, rerun every dependent ticket's probe.
 
 `docker buildx bake libuc` reproduces the CI build exactly: the same check
-and release meson runs for both platforms inside the digest-pinned toolchain
+and release meson runs plus clang-tidy for both platforms, inside the
+toolchain nix realizes from the devshell's own `flake.lock`
 (`build/libuc.Dockerfile`), exporting the release tarballs to
 `out/libuc/linux_<arch>/`. CI layers `docker-bake.gha-cache.hcl` on top for
 its per-target layer cache; local builds never need it.
