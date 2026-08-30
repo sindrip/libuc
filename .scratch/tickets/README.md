@@ -18,5 +18,8 @@ dispatched through it.
 |---|---|
 | UC-013 | nothing — park fibers on the ring, the reactor iteration |
 | UC-014 | UC-013 — expose pipe/read/write/close as libc |
+| UC-015 | UC-013 — bound the sweep to a generation |
+| UC-016 | UC-013, UC-014 — multi-CQE operations: identity and stream delivery |
+| UC-017 | UC-016 — cancellation, zombie lifetime, slot recycling |
 | UC-011 | UC-009 landed; wants spawn/recycle measurements |
 | UC-012 | FSGSBASE-capable x86-64 hardware |
