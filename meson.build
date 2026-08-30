@@ -226,6 +226,17 @@ if get_option('tests')
     name_suffix: 'elf',
   )
 
+  thread_local_install_probe = executable(
+    'thread-local-install',
+    'test/thread_local_install.c',
+    c_args: common_c_args + ['-Wno-reserved-identifier'],
+    include_directories: [public_include, private_include],
+    link_args: probe_link_args,
+    link_depends: 'libuc.ld',
+    link_whole: [crt1_internal, libc],
+    name_suffix: 'elf',
+  )
+
   test_arch_include = include_directories('test/arch/' + arch)
 
   fiber_probe = executable(
@@ -262,6 +273,7 @@ if get_option('tests')
       start_no_thread_local_probe,
       start_probe,
       thread_local_block_probe,
+      thread_local_install_probe,
     ],
   )
 
@@ -271,6 +283,7 @@ if get_option('tests')
     test('startup contract with PT_TLS', start_probe)
     test('startup contract without PT_TLS', start_no_thread_local_probe)
     test('thread-local block with PT_TLS', thread_local_block_probe)
+    test('thread-local install alternation', thread_local_install_probe)
     test('fiber bootstrap round trip', fiber_probe)
     test(
       'main status reaches exit_group',
@@ -317,5 +330,18 @@ if get_option('tests')
   alias_target(
     'initramfs-thread-local-block',
     thread_local_block_initramfs,
+  )
+
+  thread_local_install_initramfs = custom_target(
+    'thread-local-install-initramfs',
+    build_by_default: false,
+    command: [sh, mkinitramfs, '@INPUT@', '@OUTPUT@'],
+    input: thread_local_install_probe,
+    output: 'thread-local-install.initramfs.cpio.gz',
+  )
+
+  alias_target(
+    'initramfs-thread-local-install',
+    thread_local_install_initramfs,
   )
 endif

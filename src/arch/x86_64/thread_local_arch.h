@@ -3,6 +3,9 @@
 
 #include <stdckdint.h>
 #include <stddef.h>
+#include <stdint.h>
+
+#include <asm/hwcap2.h>
 
 /* Variant 2 as the x86-64 psABI fixes it: compiled TP-relative accesses
  * assume the block ends block_size rounded up to its alignment below the
@@ -49,6 +52,19 @@ thread_local_place(size_t block_size, size_t alignment,
       .tp_offset = tp_offset,
   };
   return true;
+}
+
+/* Writing the FS base from user mode takes the FSGSBASE instructions, which
+ * trap unless the kernel enabled CR4.FSGSBASE and said so via AT_HWCAP2. The
+ * syscall fallback would be arch_prctl, which the permitted direct-syscall
+ * list excludes. */
+[[nodiscard]] static inline bool
+thread_local_install_available(uintptr_t hwcap2) {
+  return (hwcap2 & HWCAP2_FSGSBASE) != 0;
+}
+
+static inline void thread_local_install(void *thread_pointer) {
+  __asm__ volatile("wrfsbase %0" : : "r"(thread_pointer));
 }
 
 #endif

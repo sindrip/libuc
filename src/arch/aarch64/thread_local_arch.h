@@ -3,6 +3,7 @@
 
 #include <stdckdint.h>
 #include <stddef.h>
+#include <stdint.h>
 
 /* Variant 1 as sysvabi64 fixes it: the thread pointer addresses the 16-byte
  * TCB, and compiled TP-relative accesses assume the block begins at tcb_size
@@ -39,6 +40,16 @@ thread_local_place(size_t block_size, size_t alignment,
       .tp_offset = 0,
   };
   return true;
+}
+
+/* tpidr_el0 is writable from EL0 unconditionally. */
+[[nodiscard]] static inline bool
+thread_local_install_available([[maybe_unused]] uintptr_t hwcap2) {
+  return true;
+}
+
+static inline void thread_local_install(void *thread_pointer) {
+  __asm__ volatile("msr tpidr_el0, %0" : : "r"(thread_pointer));
 }
 
 #endif

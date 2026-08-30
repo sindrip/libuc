@@ -172,3 +172,16 @@ const struct __libuc_thread_local_layout *__libuc_thread_local_layout(void) {
   return !__libuc_syscall_failed(
       __libuc_sys_munmap(block->mapping, block->mapping_length));
 }
+
+[[nodiscard]] bool __libuc_thread_local_install_available(void) {
+  uintptr_t hwcap2;
+  if (!__libuc_auxv_get(AT_HWCAP2, &hwcap2)) {
+    hwcap2 = 0;
+  }
+  return thread_local_install_available(hwcap2);
+}
+
+void __libuc_thread_local_block_install(
+    const struct __libuc_thread_local_block *block) {
+  thread_local_install(block->thread_pointer);
+}

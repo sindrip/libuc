@@ -1,7 +1,7 @@
 ---
 id: UC-004
 title: Create an independent thread-local block
-status: next
+status: done
 depends: [UC-001, UC-002]
 ---
 
@@ -23,9 +23,9 @@ belongs to UC-005. An executable without `PT_TLS` still receives a TCB-only
 block, which is the intended bridge to fiber suspension before compiler TLS is
 enabled.
 
-The original acceptance remains outstanding: the staged probe covers distinct
-live blocks, TCB initialization, image initialization, and destruction, but
-does not yet install either block or exercise `_Thread_local` accesses.
+2026-08-30: the original acceptance is now met in full — UC-005's probe
+installs both blocks and observes them through compiled `_Thread_local`
+accesses, closing the gap the staged probe left.
 
 ## Goal
 

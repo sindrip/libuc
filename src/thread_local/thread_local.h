@@ -38,4 +38,15 @@ struct __libuc_thread_local_tcb {
 [[nodiscard]] bool __libuc_thread_local_block_destroy(
     const struct __libuc_thread_local_block *block);
 
+/* Whether user mode can write the thread register — each architecture
+ * decides from the capability word. Ask at initialization, before the first
+ * install. */
+[[nodiscard]] bool __libuc_thread_local_install_available(void);
+
+/* Make the block's recorded thread pointer current. Installs only: no
+ * allocation, no copying, no ownership change. The caller has confirmed
+ * availability; without it the write traps. */
+void __libuc_thread_local_block_install(
+    const struct __libuc_thread_local_block *block);
+
 #endif

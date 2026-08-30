@@ -44,3 +44,26 @@ the program-header contract, which now includes this probe, and the
 The shared-code regression sweep AGENTS.md asks for is green: `start`,
 `start-no-thread-local`, and `fiber` boot to `exitcode=0x00000000`, and
 `exit-status` to `0x00002a00`.
+
+## UC-005 (2026-08-30)
+
+Landed: two operations. `__libuc_thread_local_install_available` is the
+init-time capability question — the AT_HWCAP2 walk and, on x86-64, the
+FSGSBASE test, failing closed rather than admitting arch_prctl to the
+direct-syscall whitelist. `__libuc_thread_local_block_install` takes the
+handle and is the bare register write (`msr tpidr_el0` / `wrfsbase`), zero
+checks: the caller confirmed availability at initialization, and violating
+that traps loudly. UC-006's switch path therefore calls install directly.
+The probe alternates two blocks under one `_Thread_local` variable through
+noinline accessors (within a frame the compiler may cache a TP-relative
+address across the installs).
+
+Acceptance: aarch64 exit 0 in container and VM; disassembly confirms
+compiled offsets meet the placement (TP+0x10 variant 1, %fs:-0x4 variant 2).
+x86-64 exits 125 under emulation — no `HWCAP2_FSGSBASE` — so the gate is
+verified and `wrfsbase` itself awaits real x86-64 hardware. Full regression
+sweep green on both architectures.
+
+Next is UC-006-min: bind blocks to fibers and install during switches —
+availability confirmed once per scheduler at init, `block_install` on every
+switch (noted in the ticket).

@@ -17,7 +17,11 @@ comes from `__libuc_thread_local_block_create` as a provisional owner: the
 create-versus-carve decision is deliberately deferred to the stack-pooling
 ticket, and `findings.md` records the constraints that keep the swap cheap.
 Switching to a fiber installs that block's thread pointer as part of the
-context transition. Destruction releases both the block and stack. This
+context transition — `__libuc_thread_local_block_install` is already the
+bare register write, so switches call it directly.
+`__libuc_thread_local_install_available` is init-time capability probing:
+asked once per scheduler, failing loudly there, never per switch.
+Destruction releases both the block and stack. This
 retires the no-`_Thread_local` invariant: from here, constructors and `main`
 run against the root fiber's own block.
 
