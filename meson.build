@@ -259,8 +259,9 @@ if get_option('tests')
     args: [
       program_headers_test,
       llvm_readelf.full_path(),
-      start_probe,
       start_no_thread_local_probe,
+      start_probe,
+      thread_local_block_probe,
     ],
   )
 
@@ -303,5 +304,18 @@ if get_option('tests')
   alias_target(
     'initramfs-no-thread-local',
     start_no_thread_local_initramfs,
+  )
+
+  thread_local_block_initramfs = custom_target(
+    'thread-local-block-initramfs',
+    build_by_default: false,
+    command: [sh, mkinitramfs, '@INPUT@', '@OUTPUT@'],
+    input: thread_local_block_probe,
+    output: 'thread-local-block.initramfs.cpio.gz',
+  )
+
+  alias_target(
+    'initramfs-thread-local-block',
+    thread_local_block_initramfs,
   )
 endif

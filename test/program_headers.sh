@@ -2,8 +2,8 @@
 set -eu
 
 readelf=$1
-with_thread_local=$2
-without_thread_local=$3
+without_thread_local=$2
+shift 2
 
 thread_local_count() {
   "$readelf" --program-headers --wide "$1" |
@@ -22,5 +22,9 @@ expect_thread_local_count() {
   fi
 }
 
-expect_thread_local_count "$with_thread_local" 1
 expect_thread_local_count "$without_thread_local" 0
+
+# Every remaining argument is a probe that declares thread-local data.
+for with_thread_local in "$@"; do
+  expect_thread_local_count "$with_thread_local" 1
+done

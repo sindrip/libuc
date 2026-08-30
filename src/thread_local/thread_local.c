@@ -116,8 +116,16 @@ const struct __libuc_thread_local_layout *__libuc_thread_local_layout(void) {
     return false;
   }
 
+  /* The placements measure their offsets from a base on a boundary of both
+   * the block's alignment and the TCB's, so the base carries whichever is
+   * coarser. Raising it keeps the block's alignment, which divides it. */
+  const size_t base_alignment =
+      layout->alignment < alignof(struct __libuc_thread_local_tcb)
+          ? alignof(struct __libuc_thread_local_tcb)
+          : layout->alignment;
+
   size_t mapping_length;
-  if (ckd_add(&mapping_length, placement.length, layout->alignment - 1)) {
+  if (ckd_add(&mapping_length, placement.length, base_alignment - 1)) {
     return false;
   }
 
@@ -130,17 +138,16 @@ const struct __libuc_thread_local_layout *__libuc_thread_local_layout(void) {
 
   const uintptr_t raw_address = (uintptr_t)raw_mapping;
   uintptr_t rounded_address;
-  if (ckd_add(&rounded_address, raw_address, layout->alignment - 1)) {
+  if (ckd_add(&rounded_address, raw_address, base_alignment - 1)) {
     (void)__libuc_sys_munmap((void *)raw_address, mapping_length);
     return false;
   }
   const uintptr_t address =
-      rounded_address & ~(uintptr_t)(layout->alignment - 1);
+      rounded_address & ~(uintptr_t)(base_alignment - 1);
   unsigned char *base = (unsigned char *)address;
-  unsigned char *thread_pointer = base + placement.tp_offset;
+  void *thread_pointer = base + placement.tp_offset;
   unsigned char *tls_block = base + placement.block_offset;
-  struct __libuc_thread_local_tcb *tcb =
-      (struct __libuc_thread_local_tcb *)(uintptr_t)thread_pointer;
+  struct __libuc_thread_local_tcb *tcb = thread_pointer;
 
   if (layout->block_size != 0) {
     memset(tls_block, 0, layout->block_size);
