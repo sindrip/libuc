@@ -122,8 +122,10 @@ auxv_impl = static_library(
 
 subdir('src/thread_local')
 subdir('src/fiber')
+subdir('src/ring')
 
-libc_impls = [startup_impl, auxv_impl, thread_local_impls, fiber_impls]
+libc_impls = [startup_impl, auxv_impl, thread_local_impls, fiber_impls,
+              ring_impls]
 
 if ubsan_args.length() != 0
   libc_impls += static_library(
@@ -248,6 +250,17 @@ if get_option('tests')
     name_suffix: 'elf',
   )
 
+  ring_probe = executable(
+    'ring',
+    'test/ring.c',
+    c_args: common_c_args + ['-Wno-reserved-identifier'],
+    include_directories: [public_include, private_include, fiber_arch_include],
+    link_args: probe_link_args,
+    link_depends: 'libuc.ld',
+    link_whole: [crt1_internal, libc],
+    name_suffix: 'elf',
+  )
+
   test_arch_include = include_directories('test/arch/' + arch)
 
   fiber_probe = executable(
@@ -298,6 +311,7 @@ if get_option('tests')
     test('thread-local install alternation', thread_local_install_probe)
     test('fiber bootstrap round trip', fiber_probe)
     test('fiber thread-local binding', fiber_thread_local_probe)
+    test('ring nop round trip', ring_probe)
     test(
       'main status reaches exit_group',
       sh,
@@ -370,4 +384,14 @@ if get_option('tests')
     'initramfs-fiber-thread-local',
     fiber_thread_local_initramfs,
   )
+
+  ring_initramfs = custom_target(
+    'ring-initramfs',
+    build_by_default: false,
+    command: [sh, mkinitramfs, '@INPUT@', '@OUTPUT@'],
+    input: ring_probe,
+    output: 'ring.initramfs.cpio.gz',
+  )
+
+  alias_target('initramfs-ring', ring_initramfs)
 endif

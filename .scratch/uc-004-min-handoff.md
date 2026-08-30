@@ -97,4 +97,14 @@ restores callee-saved registers around its yield — a fiber that suspends
 and later completes owes its C frames the ABI.
 
 UC-006 is closed in full: `test/main.c` asserts constructor- and
-main-visible root-fiber TLS. Next: UC-008, the ring.
+main-visible root-fiber TLS.
+
+## UC-008 (2026-08-30)
+
+Landed: `src/ring/` with create/append_sqe/submit/reap over five setup
+flags — the invariant three plus 7.2's SQ_REWIND and SUBMIT_ALL, adopted
+after auditing every bit of IORING_SETUP_FLAGS (ledger in the ticket).
+REWIND deletes the SQ head/tail protocol entirely: batches write from slot
+zero, enter consumes them synchronously, and the only memory ordering left
+is the CQ acquire/release pair. NOP acceptance green in container and VM.
+Next: UC-009, scheduler-become.
