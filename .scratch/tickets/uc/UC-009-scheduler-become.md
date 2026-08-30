@@ -1,7 +1,7 @@
 ---
 id: UC-009
 title: Make the current task a scheduler
-status: todo
+status: done
 depends: [UC-007, UC-008]
 ---
 
@@ -55,3 +55,13 @@ Each fiber observes its own thread-local value and current-fiber identity on
 every turn. Both exit, the loop returns with the ready queue empty, and their owners
 destroy them from the scheduler stack. The former `no scheduler symbol` test is
 retired by this ticket.
+
+2026-08-30: done on aarch64 — the probe's two fibers produce exactly
+`A0B0A1B1A2B2`, each turn checking its own thread-local value and identity;
+the loop returns with the queue empty and the owners destroy from the
+scheduler stack (container 0, VM `exitcode=0x00000000`). The surface is
+become/enqueue/run over an intrusive FIFO; dispatch reuses fiber_resume;
+live-fiber accounting and the entries parameter were questioned out (notes
+in spec and findings.md), double-enqueue stays an accepted unchecked
+contract until made illegal by construction. The no-scheduler-symbol test
+is retired. x86-64 is compile-and-link per UC-012.

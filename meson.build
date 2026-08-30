@@ -262,6 +262,17 @@ if get_option('tests')
     name_suffix: 'elf',
   )
 
+  scheduler_probe = executable(
+    'scheduler',
+    'test/scheduler.c',
+    c_args: common_c_args + ['-Wno-reserved-identifier'],
+    include_directories: [public_include, private_include, fiber_arch_include],
+    link_args: probe_link_args,
+    link_depends: 'libuc.ld',
+    link_whole: [crt1_internal, libc],
+    name_suffix: 'elf',
+  )
+
   test_arch_include = include_directories('test/arch/' + arch)
 
   fiber_probe = executable(
@@ -278,15 +289,7 @@ if get_option('tests')
 
   sh = find_program('sh', native: true)
   llvm_readelf = find_program('llvm-readelf', native: true)
-  llvm_nm = find_program('llvm-nm', native: true)
 
-  test(
-    'no scheduler symbol',
-    sh,
-    args: ['-c', 'symbols=$("$1" --defined-only "$2") || exit 1; ' +
-           '! printf %s "$symbols" | grep -qi sched', 'check',
-           llvm_nm, libc],
-  )
   program_headers_test = files('test/program_headers.sh')
 
   test(
@@ -313,6 +316,7 @@ if get_option('tests')
     test('fiber bootstrap round trip', fiber_probe)
     test('fiber thread-local binding', fiber_thread_local_probe)
     test('ring nop round trip', ring_probe)
+    test('scheduler round robin', scheduler_probe)
     test(
       'main status reaches exit_group',
       sh,
@@ -395,4 +399,14 @@ if get_option('tests')
   )
 
   alias_target('initramfs-ring', ring_initramfs)
+
+  scheduler_initramfs = custom_target(
+    'scheduler-initramfs',
+    build_by_default: false,
+    command: [sh, mkinitramfs, '@INPUT@', '@OUTPUT@'],
+    input: scheduler_probe,
+    output: 'scheduler.initramfs.cpio.gz',
+  )
+
+  alias_target('initramfs-scheduler', scheduler_initramfs)
 endif

@@ -107,4 +107,12 @@ after auditing every bit of IORING_SETUP_FLAGS (ledger in the ticket).
 REWIND deletes the SQ head/tail protocol entirely: batches write from slot
 zero, enter consumes them synchronously, and the only memory ordering left
 is the CQ acquire/release pair. NOP acceptance green in container and VM.
-Next: UC-009, scheduler-become.
+
+## UC-009 (2026-08-30)
+
+Landed: scheduler zero as become/enqueue/run — caller-owned storage, ring
+created inside (size an internal untuned constant), intrusive FIFO through
+the fiber's ready_next, dispatch via fiber_resume, NONE traps. Round-robin
+acceptance green in container and VM; the no-scheduler-symbol test retired.
+Next: UC-010, main on scheduler zero — where parking, the in-flight count,
+and the first fiber I/O arrive.

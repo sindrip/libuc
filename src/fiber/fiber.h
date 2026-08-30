@@ -22,6 +22,8 @@ struct __libuc_fiber {
   struct __libuc_thread_local_block thread_local_block;
   /* The pending resume's frame; dead between resumes. */
   struct fiber_context *return_to;
+  /* Scheduler-owned FIFO link; a fiber is in at most one queue. */
+  struct __libuc_fiber *ready_next;
   enum __libuc_fiber_request request;
 };
 

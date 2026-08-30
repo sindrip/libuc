@@ -99,8 +99,10 @@ the binary, `dmesg` prints pc/lr/registers; map the pc with llvm-objdump.
   inside the loop, where failure has no sane answer — the link makes requeue
   infallible, the array makes it a capacity crash. Costs accepted: fiber.h
   carries a scheduler-owned field; one link means one list, so a future
-  state not exclusive with readiness buys a second field. Revisit if that
-  state appears.
+  state not exclusive with readiness buys a second field; double-enqueue is
+  an unchecked contract violation (silent self-loop) — accepted for now,
+  to be made illegal by construction rather than trapped. Revisit when a
+  non-exclusive state appears or the constructive fix lands.
 - UC-009 dispatch (2026-08-30): the loop reuses `__libuc_fiber_resume`
   per turn. The documented alternative is a scheduler-owned switch path
   skipping resume's per-call here-context and TP save/restore — faster in

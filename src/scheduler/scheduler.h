@@ -13,4 +13,11 @@ struct __libuc_scheduler {
 [[nodiscard]] bool
 __libuc_scheduler_become(struct __libuc_scheduler *scheduler);
 
+void __libuc_scheduler_enqueue(struct __libuc_scheduler *scheduler,
+                               struct __libuc_fiber *fiber);
+
+/* Run until the ready queue empties. NONE from a resume is a broken
+ * transfer and traps. */
+void __libuc_scheduler_run(struct __libuc_scheduler *scheduler);
+
 #endif
