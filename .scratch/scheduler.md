@@ -1,9 +1,9 @@
 # The scheduler — destination public interface
 
-Status: conversation-derived, 2026-08-23. The internal `struct rt_scheduler`
-landed in `src/scheduler.h`; this file holds the part that has no
-implementation yet, so that no header in `src/` declares functions that cannot
-be written.
+Status: conversation-derived from the retired runtime spike, 2026-08-23. The
+current libuc tree has no scheduler implementation. UC-007 through UC-010 now
+stage its first landing; this file retains the later public-interface and
+request-protocol decisions that remain beyond those tickets.
 
 ## Why this is prose and not a header
 
@@ -11,13 +11,13 @@ Every header in `src/` documents code that exists. The `uc_scheduler_*`
 surface needs `clone`, a second ring, and a scheduler registry — milestone 3
 at the earliest — so a header carrying it would be a standing lie about what
 the runtime does. When the public/private include split happens
-(`include/uc/scheduler.h` against `src/scheduler.h`), this section is the spec
+(`include/uc/scheduler.h` against `src/scheduler/`), this section is the spec
 to write it from.
 
 The split's acceptance test is mechanical: the public header includes
-`<stdint.h>` and nothing else, project or kernel. `src/scheduler.h` includes
-`ring.h` today, which pulls `<linux/io_uring.h>`, so a public header derived
-from it by copying would drag the kernel's uapi into every consumer.
+`<stdint.h>` and nothing else, project or kernel. The future private scheduler
+header will include the ring layer and therefore the kernel UAPI; a public
+header derived from it by copying would drag that UAPI into every consumer.
 
 ## The interface
 
@@ -26,9 +26,9 @@ typedef uint64_t uc_scheduler_id;
 
 constexpr uc_scheduler_id UC_SCHEDULER_INVALID = {};
 
-/* Called by a thread, on itself. Returns UC_SCHEDULER_INVALID on failure.
-   cpu < 0 leaves placement to the kernel. */
-[[nodiscard]] uc_scheduler_id uc_scheduler_become(int cpu);
+/* Called by a thread, on itself. Preserves the task's existing affinity and
+   returns UC_SCHEDULER_INVALID on failure. */
+[[nodiscard]] uc_scheduler_id uc_scheduler_become(void);
 [[noreturn]] void uc_scheduler_run(void);
 
 /* Clone a thread that becomes a scheduler on itself. Suspends the calling
@@ -38,8 +38,10 @@ constexpr uc_scheduler_id UC_SCHEDULER_INVALID = {};
 [[nodiscard]] uc_scheduler_id uc_scheduler_current(void);
 ```
 
-`int cpu` rather than `unsigned`, so that "any cpu" is sayable. Pinning is the
-default, not part of a scheduler's identity — see below.
+`int cpu` belongs only to `spawn`: it creates a Linux task, so it owns that
+task's initial placement policy, and a negative value says to inherit the
+caller's affinity mask without narrowing it. `become` instead accepts the
+calling task as it is. Placement is not part of scheduler identity — see below.
 
 `{}` rather than `0` so the initializer survives the id becoming a struct
 (generation plus slot) without touching call sites.
@@ -47,6 +49,23 @@ default, not part of a scheduler's identity — see below.
 `[[nodiscard]]` throughout: `ring.h` states the convention, and a handle that
 is the only route to a scheduler is the strongest case for it — especially
 once the zero handle means failure.
+
+## The first landing
+
+UC-009 deliberately lands the mechanism before this public surface:
+
+```c
+[[nodiscard]] long
+__libuc_scheduler_become(struct __libuc_scheduler *scheduler);
+```
+
+The caller supplies storage and receives raw `-errno`. The function initializes
+scheduler-local state and creates the calling task's ring; it does not publish
+a scheduler id, allocate registry state, change affinity, or enter the loop.
+Startup can therefore use it before public errno and the scheduler registry
+exist. The eventual public `uc_scheduler_become()` allocates or otherwise owns
+that storage, translates failure, publishes the id, and delegates to the same
+mechanism.
 
 ## Reconsidered: create, layered over become
 
@@ -75,13 +94,20 @@ layered over `become` rather than replacing it:
   `libuc.md` declines for a cross-scheduler `thrd_create`, spent here on the
   one operation that genuinely spans two threads.
 
-What changed, stated plainly: **the library creates the thread.** The earlier
-text left that to the program and called it "the right place for it in a
-thread-per-core design" — an argument that assumed one scheduler per core. Once
-the program picks the topology, placement is an argument to a call rather than
-a reason to own thread creation.
+What changed, stated plainly: **the library creates the additional thread.**
+The earlier text left that to the program and called it "the right place for it
+in a thread-per-core design" — an argument that assumed one scheduler per core.
+Once the program picks the topology, placement is an argument to `spawn`; an
+already-existing task arrives at `become` with its placement established.
 
-## Why pinning is the default
+## Why spawned schedulers are normally pinned
+
+`become` deliberately does not pin. A task supplied by startup or a host may
+already have the exact affinity its owner intended, including a mask rather
+than one CPU; silently narrowing it would make scheduler construction a policy
+operation. A child created by `spawn` has no independent prior placement, so
+that construction path may narrow its inherited mask before the child calls
+`become`.
 
 Correctness does not need it. `SINGLE_ISSUER` stores `get_task_struct(current)`
 (`io_uring.c:3067`) and every enforcement site compares against `current`
@@ -183,20 +209,23 @@ Named so the interface above is not read as complete.
   scheduler can receive one.
 - **Failure detail has nowhere to go.** `become` returns
   `UC_SCHEDULER_INVALID` and the reason belongs in errno, which AGENTS.md
-  forbids and which does not exist. The internal `rt_scheduler_init` returns
-  raw `-errno` like everything else in the runtime; the public call joins the
-  queue behind per-fiber errno, a deliverable `libuc.md` already schedules.
-  Shaping the public call around today's constraint would buy nothing, since
-  none of this interface is implementable at the current milestone anyway.
-- **Nothing is pinned yet.** `struct rt_scheduler` has no cpu field either,
-  and `sched_setaffinity` is never called; there is one thread. Placement
-  returns as a parameter to `rt_scheduler_init`, which is where the become
-  model puts it — a thread pins *itself* at the moment it becomes a scheduler,
-  in the same call that binds its ring to it under `SINGLE_ISSUER`.
-- **Placement is a single cpu, not a mask.** `sched_setaffinity` takes a set.
-  A program that wants "any of these four" cannot say so. `cpu < 0` says "any
-  cpu at all", which is the kernel's default rather than a mask we chose. Kept
-  narrow deliberately; noted so the narrowness is a choice.
+  forbids and which does not exist. The private
+  `__libuc_scheduler_become` returns raw `-errno` like everything else in the
+  runtime. The public call joins the queue behind per-fiber errno, a deliverable
+  `libuc.md` already schedules. Shaping the public call around today's
+  constraint would buy nothing, since the public interface is not implementable
+  at the current milestone anyway.
+- **Nothing is pinned yet.** There is one existing task, `become` preserves its
+  inherited affinity, and `struct rt_scheduler` has no CPU field because
+  placement is not scheduler state. The future `spawn` child narrows its own
+  affinity, if requested, before calling `become` and binding its ring under
+  `SINGLE_ISSUER`.
+- **Spawn placement is a single CPU, not a mask.** `sched_setaffinity` takes a
+  set, but the first `spawn` surface names one CPU or uses a negative value to
+  retain the inherited mask. A program that wants a new scheduler on "any of
+  these four" cannot say so. Kept narrow deliberately; noted so the narrowness
+  is a choice. `become` has no such limitation because it preserves the full
+  mask the existing task already has.
 
 ## The request protocol
 

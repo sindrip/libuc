@@ -13,8 +13,20 @@ Make thread-local storage an owned object that can belong to a fiber.
 
 Add create and destroy operations. Creation yields an ABI-correct block: the
 recorded image copied in, the zero-fill tail zero, the TCB initialized where
-the architecture demands it (x86-64's self-pointer), and the thread-pointer
-value computed — without installing anything.
+the architecture demands it, and the thread-pointer value computed — without
+installing anything.
+
+The TCB has two pointer-sized runtime words: its own address followed by the
+fiber whose block this is. The self-pointer is required by x86-64 and retained
+on aarch64 as the common libuc shape. The fiber pointer begins null; binding it
+belongs to UC-006, once the block becomes part of a fiber. AArch64's ABI-fixed
+16-byte TCB already has room for both words. Libuc's x86-64 TCB grows from 8 to
+16 bytes above the thread pointer, which does not move the TLS block below it
+or alter any compiled negative offset.
+
+The current-fiber word is TCB metadata rather than an internal `_Thread_local`
+variable. An executable with no `PT_TLS` must therefore still get a useful TCB
+without libuc manufacturing a `PT_TLS` segment of its own.
 
 The per-architecture placement seams in `src/arch/*/thread_local_arch.h`
 already compute the geometry, measured against the toolchain; what remains is
@@ -36,4 +48,6 @@ whichever shape lands must still place the block at its declared alignment.
 ## Acceptance
 
 Two simultaneously live blocks have distinct storage and identical initial
-contents, and both can be destroyed.
+contents. Each thread pointer addresses a self-pointer followed by a null fiber
+pointer, including when the executable has no `PT_TLS`; both blocks can be
+destroyed.

@@ -55,8 +55,11 @@ the binary, `dmesg` prints pc/lr/registers; map the pc with llvm-objdump.
 
 ## Fiber-layer choices the sketch made; the real landing re-decides or confirms
 
-- `current_fiber` is a single global — correct while there is one kernel
-  thread; becomes per-kernel-thread state when threads arrive.
+- The sketch's `current_fiber` was a single global — correct only while there
+  was one kernel thread. The landing rejects it: UC-004 reserves a current-
+  fiber word in each TCB, and UC-006 binds and reads it through the installed
+  thread pointer. That scales to scheduler threads without shared mutable
+  lookup state or a libuc `_Thread_local` symbol that would force `PT_TLS`.
 - Resume installs the target's block; the return path reinstalls the
   resumer's. The bootstrap context has no block (previous == nullptr, no
   install), which makes an invariant: bootstrap code must never touch a
