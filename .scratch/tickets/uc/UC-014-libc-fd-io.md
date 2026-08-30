@@ -1,7 +1,7 @@
 ---
 id: UC-014
 title: Expose ring-backed descriptor I/O as libc
-status: todo
+status: done
 depends: [UC-013]
 ---
 

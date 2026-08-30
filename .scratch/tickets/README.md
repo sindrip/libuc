@@ -8,17 +8,17 @@ order. The old `RT-*` tickets were removed with the spike they tracked
 
 ## Done
 
-UC-000 through UC-010, UC-013, and UC-015: spike retired; thread-local image,
-blocks, install, and fiber binding; suspension; the task's ring; scheduler
-zero; main dispatched through it; fibers parked and woken through the ring;
-ready sweeps bounded to one generation.
+UC-000 through UC-010, UC-013, UC-014, and UC-015: spike retired;
+thread-local image, blocks, install, and fiber binding; suspension; the
+task's ring; scheduler zero; main dispatched through it; fibers parked and
+woken through the ring; ready sweeps bounded to one generation;
+pipe/read/write/close and per-fiber errno as the first public libc surface.
 
 ## Open
 
 | id | waits on |
 |---|---|
-| UC-014 | nothing — finish pipe/read/write/close; per-fiber `errno` has landed |
 | UC-011 | nothing — make scheduler ownership explicit, then pool stack/block storage |
-| UC-016 | UC-014 — multi-CQE operations: identity and stream delivery |
+| UC-016 | nothing — multi-CQE operations: identity and stream delivery |
 | UC-017 | UC-016 — cancellation, zombie lifetime, slot recycling |
 | UC-012 | FSGSBASE-capable x86-64 hardware |
