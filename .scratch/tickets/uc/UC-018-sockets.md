@@ -13,16 +13,17 @@ through the `read`/`write` that already exist.
 
 ## Spec
 
-Add `<sys/socket.h>` and `<netinet/in.h>`. `<netinet/in.h>` is uapi
-re-export only (`struct sockaddr_in`, `IPPROTO_*` from `<linux/in.h>`) —
-types and constants, no TU, no directory. `<sys/socket.h>` declares the five
-calls plus the types they need.
+Add `<sys/socket.h>` and `<netinet/in.h>`. `<netinet/in.h>` is a header-only
+uapi re-export (`struct sockaddr_in`, `IPPROTO_*` from `<linux/in.h>`).
+`<sys/socket.h>` declares the five calls plus the types they need.
 
 **This ticket authors libuc's first ABI constants.** `AF_*` and `SOCK_*`
 have no uapi source: they live in the kernel's internal
 `include/linux/socket.h` and `include/linux/net.h`, which are not a
 permitted include, and every libc defines them itself. Author only what the
-calls consume, values verified against `out/src` in review; do the same for
+calls consume, with values verified against
+`out/src/include/linux/socket.h:203-215` and
+`out/src/include/linux/net.h:68-92`; do the same for
 `socklen_t` (`unsigned int`, the musl/glibc ABI; the kernel reads an `int`)
 and the generic `struct sockaddr`. Landing this amends invariant 4's source
 list with the third case: libc-authored ABI constants where uapi has none,
@@ -41,16 +42,19 @@ Field mappings per the pinned prep functions (`out/src/io_uring/net.c`):
 | `connect(fd, addr, len)` | `IORING_OP_CONNECT`: `addr`=addr, `addr2`=len |
 
 Liveness differs by direction and the wrappers must not assume one rule:
-`bind` and `connect` copy the sockaddr into kernel memory at prep
+`bind` and `connect` copy the sockaddr into kernel memory while the kernel
+prepares the submitted request
 (`move_addr_to_kernel` in `io_bind_prep`/`io_connect_prep`,
-`out/src/io_uring/net.c`) — consumed at submission; `accept`'s addr/lenp
-are written at completion and the suspended frame keeps them live. `accept`
+`out/src/io_uring/net.c:1815-1831,1901-1922`); `accept`'s addr/lenp remain
+kernel-visible output storage until completion and the suspended frame keeps
+them live (`out/src/io_uring/net.c:1617-1676`). `accept`
 returns the new descriptor as the CQE result. `sqe->ioprio` stays zero:
 that field carries `IORING_ACCEPT_MULTISHOT` (`io_accept_prep`), and this
 ticket keeps `__libuc_fiber_await`'s exactly-one-CQE contract everywhere.
 
 Multishot accept/recv, `send`/`recv` with their `MSG_*` constants,
-`shutdown` (`REQ_F_FORCE_ASYNC` — the first deliberate io-wq operation),
+`shutdown` (`REQ_F_FORCE_ASYNC` at `out/src/io_uring/net.c:124-149` — the
+first deliberate io-wq operation),
 and `SEND_ZC` with its notification are all out: multishot and zero-copy
 belong to UC-016's operation records, and whichever of UC-016/UC-018 lands
 second carries the joint network probes. The acceptance path is TCP

@@ -2,8 +2,8 @@
 
 Status: **literature search performed 2026-08-18; reviewed and amended
 2026-08-30** (folded in: Silk, green-man, Junction, the .NET green-thread
-negative, helio). No
-decision here; this is dated evidence, not a continuously verified survey.
+negative, helio). No decision here; this is dated evidence, not a continuously
+verified survey.
 strategy.md's reading list is the *positioning* argument — who the neighbours
 are and what each concedes. This document is what was actually searched, what
 was found, and what that dated search did not find, with the citations that are
@@ -23,9 +23,11 @@ submissions on a shared-memory ring (FlexSC-Threads, 2010), syscall
 interception generated *at libc level* (Unikraft, 2021), and function-colour
 elimination via effect handlers (OCaml 5, 2021).
 
-What was not found, published or shipped, is anything that **is itself the
-libc**. Every close artifact stops at the same boundary, and the boundary is
-sharper than "nobody thought of this":
+What was not found, published or shipped, is a libc whose ordinary blocking
+calls **suspend stackful fibers over io_uring**. Ringmaster is a real
+libc-over-io_uring counterexample to the broader claim: its modified musl
+enqueues I/O and then synchronously polls a promise. The remaining boundary is
+the scheduler and suspension semantics:
 
 | artifact | mechanism | where it stops |
 |---|---|---|
@@ -37,6 +39,7 @@ sharper than "nobody thought of this":
 | Java Loom | JDK blocking calls unmount continuations | dies at the C FFI boundary — see below |
 | Zig `std.Io` | parametrise stdlib over blocking/async | needs Zig source; adds a parameter per call |
 | Junction (NSDI '24) | loader swaps in a modified glibc; syscalls suspend user threads | kernel-bypass dataplane; swaps a glibc rather than being one |
+| Ringmaster ('26) | modified musl dispatches I/O through io_uring | busy-polls promises; TrustZone split, no fiber scheduler |
 | Silk (ClickHouse '26) | C++ stackful fibers over per-CPU rings | library on glibc; own verbs; steals across CPUs |
 | green-man ('26) | C green threads over io_uring, one scheduler thread | hosted PoC; its own async wrappers, not the POSIX names |
 
@@ -45,8 +48,9 @@ search angles, but must be rechecked before publication.
 
 ## FlexSC is the ancestor — cite it
 
-**Soares & Stumm, "FlexSC: Flexible System Call Scheduling with Exception-Less
-System Calls", OSDI 2010.** Follow-up: "Exception-Less System Calls for
+**Soares & Stumm, ["FlexSC: Flexible System Call Scheduling with Exception-Less
+System Calls"](https://www.usenix.org/conference/osdi10/flexsc-flexible-system-call-scheduling-exception-less-system-calls),
+OSDI 2010.** Follow-up: "Exception-Less System Calls for
 Event-Driven Servers", USENIX ATC 2011 (`libflexsc`).
 
 Syscalls become entries in a shared-memory request/response ring polled by
@@ -85,8 +89,8 @@ Shenango/Caladan lineage that runs unmodified Linux binaries: its ELF loader
 transparently swaps in a modified glibc, so nearly every syscall calls into
 Junction's user-level scheduler instead of trapping — blocking calls suspend
 user threads, and whole managed runtimes (Go, Java, Node, Python) run on top
-unmodified. It is the only shipped system found that agrees the **libc is the
-right interception boundary** and puts a thread scheduler under it.
+unmodified. It agrees the **libc is the right interception boundary** and puts
+a thread scheduler under it.
 
 It stops short of the core claim on three counts: the dataplane is kernel
 bypass on dedicated cores, not io_uring on a stock kernel; it swaps a hosted
@@ -97,21 +101,20 @@ exact scope the vendored-static-libraries-first plan defers. Missed by the
 
 ## Three findings that are load-bearing for invariants
 
-**WG21 P1364R0 justifies invariant 3.** "Fibers under the magnifying glass"
-(2018) argues thread-local access is well-defined for stackless coroutines but
-breaks for *stackful* fibers, and that TLS support is a major challenge for
-fiber implementations. Its stated escape hatch is that the hazards are avoidable
-**if fibers never migrate between OS threads** — i.e. a 1:N model. Shared-nothing
-with no migration is not just an aesthetic preference from invariant 3; it is
-the published precondition under which per-fiber TLS is sound at all. That
-matters for libuc.md's TLS section, whose entire design rests on local-exec
-relaxation and a single `msr tpidr_el0`.
+**[WG21 P1364R0](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2018/p1364r0.pdf)
+supports invariant 3's no-migration pressure.** "Fibers under the magnifying
+glass" (2018) documents the TLS-address caching hazard in an N:M design: a
+stackful fiber can resume on a different OS thread after compiler-generated
+code has retained an address into the first thread's TLS. It identifies 1:N as
+avoiding that migration hazard, while also noting that an unadapted blocking
+call then blocks the sole OS thread. This supports no migration; it is not a
+blanket proof that every per-fiber TLS implementation is sound. libuc's own
+argument still depends on restoring each fiber's thread pointer and preserving
+compiler assumptions across the switch.
 
-*Caveat: the P1364R0 PDF would not text-extract during the search; this is from
-search extracts, not a full read. Verify before quoting.* The surrounding
-argument is real and multi-round — P0876 (`fiber_context`), P0866R0 (response),
-P1520 (response to the response) — which is itself evidence the question is open
-rather than settled.
+The surrounding argument is multi-round — P0876 (`fiber_context`), P0866R0
+(response), P1520 (response to the response) — which is itself evidence the
+question is open rather than settled.
 
 Corroborating, and directly relevant to the Clang build: MSVC ships `/GT`
 ("support fiber-safe thread-local storage") solely because TLS-address caching
@@ -121,41 +124,43 @@ to participate, not just the runtime. libuc now installs a fiber's TLS block on
 every switch; any optimization of that path must preserve the same semantics.
 
 **Loom's native-frame pinning is the strongest argument for the be-the-libc
-thesis, and it is a negative result.** JDK 24 fixed `synchronized` pinning by
-reimplementing monitors against virtual-thread identity. Native frames are
-**still unfixed through JDK 25 LTS**: a virtual thread with a JNI or Foreign
-Function & Memory frame on its stack cannot unmount, because the JVM cannot
-capture and restore the native frame.
+thesis, and it is a negative result.** [JDK 24 removed monitor
+pinning](https://openjdk.org/jeps/491), but
+[OpenJDK's virtual-thread design](https://openjdk.org/jeps/444) retains pinning
+while a thread runs native code or a foreign function because that frame cannot
+be unmounted. Later work is narrower rather than a blanket reversal: a
+[JDK 26 change](https://bugs.openjdk.org/browse/JDK-8369238) permits preemption
+at some VM-internal class-initialization waits.
 
 This is the precise failure mode of solving fiber suspension from *above* the C
-boundary, and it has resisted a decade of very well-funded engineering — in
-two runtimes, not one: .NET's green-thread experiment was cancelled at the
-same wall (dotnet/runtimelab#2398, 2023), with a minimal P/Invoke going from
-300ms to ~1800ms per 10⁸ calls on a green thread, alongside thread-local and
-shadow-stack breakage.
+boundary. [.NET's green-thread
+experiment](https://github.com/dotnet/runtimelab/issues/2398) provides adjacent
+evidence, not the same conclusion: it was put on hold primarily to avoid
+introducing another programming model, while its report also measured a minimal
+10⁸-call P/Invoke benchmark rising from 300ms to about 1800ms and recorded
+thread-local/native-state and shadow-stack problems.
 libuc.md's startup inversion — guest code runs on a fiber, so its blocking
 calls *are* the suspensions — is the structurally different answer, and this
-search found no C implementation attempting it. `stacks.md` reaches the same
-conclusion from the stack-layout side.
+search found no C libc implementation combining the pieces. `stacks.md`
+reaches the same conclusion from the stack-layout side.
 
-**Ringmaster independently derived invariant 1's exception list.**
-*Ringmaster: How to juggle high-throughput host OS system calls from TrustZone
-TEEs* (arXiv 2601.16448, Jan 2026) maps Normal-world io_uring SQ/CQ memory into
-a TrustZone enclave so the enclave can issue host syscalls through the ring. It
-is the only published system found that treats io_uring as a **system-call**
-conduit rather than an I/O API.
+**[Ringmaster](https://arxiv.org/abs/2601.16448) is the closest libc-over-ring
+counterexample.** *Ringmaster: How to juggle high-throughput host OS system
+calls from TrustZone TEEs* (Jan 2026) maps Normal-world io_uring SQ/CQ memory
+into a TrustZone enclave and provides a musl-based Ringmaster LibC whose I/O
+calls enqueue SQEs.
 
-The striking part is its Table 1. The calls it keeps *off* the ring —
-`mmap`/`munmap`/`mprotect`, scheduling, signal handling, futex/pthread
-primitives — are almost exactly this project's direct-syscall list, reached from
-a completely unrelated motivation. Two projects deriving the same cut from
-different premises is evidence the boundary is a property of the io_uring ABI
-rather than an arbitrary choice.
+Its Table 1 draws a related boundary: memory-management, scheduling, signals,
+and pthread primitives stay in the trusted Ringmaster OS, while I/O goes to
+Linux through the ring. The resemblance is evidence that io_uring naturally
+partitions a libc surface, but it is not invariant 1's exception list: the
+paper's boundary is a trust partition, and it keeps futex/pthread operations
+off-ring where pinned Linux 7.2 supplies a futex opcode.
 
-It differs where it counts: the split is a **trust partition**, not an ABI
-claim; the paper never argues io_uring is a general syscall interface; and it
-**polls promises** in a `while` loop rather than suspending anything. No
-scheduler, no libc, no per-scheduler ring discipline.
+The decisive difference is waiting. Ringmaster's synchronous API busy-polls a
+promise until the CQE arrives; it has no fiber scheduler, suspension, or
+per-scheduler ring discipline. It disproves "nobody built a libc over
+io_uring," but not libuc's narrower blocking-call-as-fiber-suspension claim.
 
 ## Not novel — do not claim it
 
@@ -189,8 +194,9 @@ rather than ignoring — a design is stronger for knowing who disagrees.
   libuc's whole bet is that the POSIX shape is retainable if the blocking is a
   fiber suspension. This is a direct, citable disagreement about the central
   premise.
-- **libfibre (Karsten & Barghi, POMACS 4(1) / SIGMETRICS '20, DOI
-  10.1145/3379483)** establishes the blocking-API-costs-nothing premise
+- **[libfibre](https://cs.uwaterloo.ca/~mkarsten/papers/sigmetrics2020.html)
+  (Karsten & Barghi, POMACS 4(1) / SIGMETRICS '20, DOI 10.1145/3379483)**
+  establishes the blocking-API-costs-nothing premise
   rigorously, with a real artifact — but its headline positive result is *load
   balancing across cores*, which invariant 3 forbids outright. It is the closest
   published counter-position to shared-nothing.
@@ -228,19 +234,16 @@ rather than ignoring — a design is stronger for knowing who disagrees.
 Each of these returned nothing across both search angles:
 
 - **A libc whose blocking calls are fiber suspensions over io_uring.** The core
-  claim. Nothing published; no serious unpublished project with a design
-  document. Junction (above) is the nearest miss, and it concedes both
-  halves: kernel bypass instead of the ring, a swapped glibc instead of being
-  the libc.
+  claim. Ringmaster reaches libc + ring but busy-polls; Junction reaches libc +
+  suspension but uses a kernel-bypass dataplane. Neither combines all three.
 - **Per-fiber allocator.** This search found no direct treatment, not even a
   problem statement. What breaks
   when a vendored library's `malloc` assumes per-thread arenas under a fiber
   scheduler is unwritten. Directly relevant to `libuc.md`'s allocator work.
-- **Per-fiber `errno` in a C library.** The search found standards-committee
-  argument
-  and compiler bugs, never as a paper. libuc has sidestepped the hard half by
-  having no `errno` at all internally (`src/syscall.h`), translating only at the
-  boundary.
+- **Per-fiber `errno` implemented by a C library.** Bojie names preservation of
+  per-fiber libc state as a requirement in an `LD_PRELOAD` runtime, but this
+  search found no libc implementation. libuc has no `errno` internally
+  (`src/syscall.h`) and translates only at the public boundary.
 - **The 7.2 BPF `struct_ops` in-kernel event loop** (`io_uring/loop.c`,
   `io_uring/bpf-ops.c`). LWN and LKML only — LWN Articles/1062286, /1046950,
   /1024361, /847951, plus Begunkov's RFC series. **Zero peer-reviewed work.**
@@ -269,7 +272,8 @@ Each of these returned nothing across both search angles:
   user-visible blocking-over-fiber semantics can ship. Read it for what the
   hook boundary cannot cover, which is the
   argument for owning the libc.
-- **Bojie Li, arXiv 2607.02630** (Jul 2026) — an `LD_PRELOAD` fiber runtime,
+- **[Bojie Li, arXiv 2607.02630](https://arxiv.org/abs/2607.02630)** (Jul 2026)
+  — an `LD_PRELOAD` fiber runtime,
   17.3x on an unmodified thread-per-connection binary. Two things earn it a
   read: it is the only paper found that names the **per-fiber libc state**
   problem out loud ("saving and restoring per-fiber libc state such as `errno`
@@ -295,25 +299,22 @@ artifact. The work lives at USENIX, SYSTOR, CHEOPS, PLOS, VLDB, and in
 engineering blogs. **Treat arxiv negatives as weak evidence**; the strong
 negatives above come from converging web searches, not an exhaustive index.
 
-Three coverage holes, recorded so a later search does not repeat them:
+Coverage notes, recorded so a later search does not repeat the same work:
 
 - **dblp's tokeniser rejects the underscore** — `q=io_uring` returns 0 while
   demonstrably indexing the papers. Do not trust dblp negatives here.
 - **Semantic Scholar returned HTTP 429 twice.** That axis is uncovered.
-- **No PDF text extraction available** (`pdftotext`, `qpdf`, `mutool`, `pypdf`
-  all absent). **P1364R0 remains unverified** on that account and is flagged
-  inline above. The libfibre claims were since confirmed directly from the
-  author's paper page and the repository source, and no longer rest on
-  extracts.
+- The initial local toolset had no PDF text extractor. The 2026-08-30 review
+  read P1364R0 and Ringmaster from their primary publications; their claims no
+  longer rest on search snippets. The libfibre claims were likewise confirmed
+  from the author's paper page and repository source.
 
 One item could not be verified at all: *"Dreaming of Syscall-less I/O with
 io_uring"* (dl.gi.de, apparently BTW 2025 / LNI). The PDF endpoint returned a
 login page. Snippets suggest a tutorial rather than an architectural proposal,
 but it is unconfirmed.
 
-**Recency.** The literature is not merely young, it is largely absent, and what
-exists is written against 5.x kernels. `IORING_OP_BIND`/`LISTEN` are untouched,
-so "socket setup through the ring" has no coverage at all; likewise
-`IORING_SETUP_SQ_REWIND`, `query.c` capability probing, and the BPF loop. The
-newest kernel any paper engages with is 6.17 (uringscope). **Nothing in the
-literature is written against 7.2.**
+**Recency.** The reviewed work does not cover Linux 7.2-specific behavior.
+`IORING_OP_BIND`/`LISTEN`, `IORING_SETUP_SQ_REWIND`, `query.c` capability
+probing, and the BPF loop are untouched in these papers. That is a bounded
+claim about this dated corpus, not a claim that no later artifact exists.

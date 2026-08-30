@@ -53,11 +53,12 @@ stack, thread-local block, request, and scheduler paths as later fibers.
 Scheduler zero's control frame stays on the kernel-provided initial stack and
 runs without a compiler-visible thread-local block installed.
 
-The archive currently provides startup, auxiliary-vector storage, thread-local
-geometry and installation, per-fiber `errno`, fibers, the single-CQE reactor,
-and the four compiler-required memory functions. Installed public headers are
-`<errno.h>`, `<string.h>`, and `<sys/auxv.h>`. UC-014 still owes the first
-public blocking descriptor calls.
+The archive currently provides startup, auxiliary-vector storage and
+`getauxval`, thread-local geometry and installation, per-fiber `errno`, fibers,
+the single-CQE reactor, the four compiler-required memory functions, and public
+`pipe2`/`pipe`/`read`/`write`/`close` over the ring. Installed public headers
+are `<errno.h>`, `<fcntl.h>`, `<string.h>`, `<unistd.h>`, `<sys/auxv.h>`, and
+`<sys/types.h>`.
 
 ## ABI layers
 
@@ -88,8 +89,8 @@ current-fiber variable or an internal `_Thread_local` object.
 
 Public `errno` is a compiler-visible `_Thread_local int`, so its address and
 value follow the fiber. Private raw kernel wrappers continue returning negative
-errors and never consult it; UC-014's public descriptor wrappers translate at
-their boundary.
+errors and never consult it; public descriptor wrappers translate at their
+boundary.
 
 Thread-pointer installation is unconditional at the switch site. Capability is
 checked once before the scheduler begins: AArch64 can write `tpidr_el0`; x86-64
@@ -169,11 +170,11 @@ infrastructure, not a substitute for this allocator.
 
 ### Descriptor and pathname I/O
 
-UC-014 establishes pipe/read/write/close on top of the already-landed per-fiber
-`errno`. Filesystem
-metadata, path operations, descriptor tables, registered resources, io-wq
-policy, and stdio remain separate deliverables. An opcode's absence does not
-weaken the direct-syscall registry.
+UC-014 established pipe/read/write/close on top of per-fiber `errno`. UC-018
+adds the single-shot socket connection lifecycle. Filesystem metadata, path
+operations, descriptor tables, registered resources, io-wq policy, and stdio
+remain separate deliverables. An opcode's absence does not weaken the
+direct-syscall registry.
 
 ### Formatted I/O
 

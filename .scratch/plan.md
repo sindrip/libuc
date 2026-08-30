@@ -54,6 +54,7 @@ The landed layers are:
 | reactor | one SQE and exactly one CQE per await; CQE `user_data` is the parked fiber pointer |
 | fairness | one ready generation per reactor iteration; pure yield generations do not enter the kernel |
 | public `errno` | compiler-visible `_Thread_local int`; therefore per-fiber after thread-pointer installation |
+| descriptor I/O | public `pipe2`, `pipe`, `read`, `write`, and `close`; completion errors translate to `errno` |
 
 The single-CQE restriction is enforced, not implicit: the current reap path
 traps on `IORING_CQE_F_MORE`, `IORING_CQE_F_NOTIF`, and `IORING_CQE_F_SKIP`.
@@ -82,10 +83,11 @@ UC-016 replaces that boundary with operation records.
 
 The ticket index is `tickets/README.md`. The useful dependency order is:
 
-1. **UC-014 — libc descriptor I/O.** Per-fiber `errno` and its header have
-   landed. The ticket still owes `pipe2`, `pipe`, `read`, `write`, and `close`,
-   their remaining public headers, and exactly one CQE per call.
-2. **UC-011 — scheduler-owned stack/block recycling.** Independent of UC-014,
+1. **UC-018 — single-shot sockets.** Add the public connection lifecycle over
+   the ring and exercise it with a loopback echo. This remains within the
+   exactly-one-CQE reactor contract; multishot receive and accept wait for
+   UC-016.
+2. **UC-011 — scheduler-owned stack/block recycling.** Independent of sockets,
    but required before a public fiber-spawn surface or large fiber counts. It
    first makes the scheduler ownership seam explicit, then measures separate
    versus carved TLS storage.

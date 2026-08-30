@@ -17,9 +17,9 @@ declarations, and pinned UAPI constants these calls need. `errno` is a
 per-fiber `_Thread_local int` lvalue. Kernel constants are included, never
 retyped.
 
-Staged prerequisite, already landed: `<errno.h>` and the compiler-visible
-per-fiber `errno` object. This ticket remains open until the descriptor calls,
-the rest of their headers, and the acceptance probe land.
+`<errno.h>` and the compiler-visible per-fiber `errno` object landed as a
+staged prerequisite. The ticket closed when the descriptor calls, remaining
+headers, and acceptance probe followed.
 
 Each wrapper leaves a zeroed SQE template with UC-013's await operation; only
 the scheduler copies it into the SQ and stamps `user_data`.
@@ -34,14 +34,17 @@ the scheduler copies it into the SQ and stamps `user_data`.
 
 `read` and `write` use `sqe.off == -1` for the open-file position
 (`out/src/io_uring/rw.c:479-493`). A `count` above `SSIZE_MAX` is rejected
-with `EINVAL` before any transfer, mirroring the syscall path's
-`rw_verify_area` (`out/src/fs/read_write.c`), which the ring path does not
-apply. Below that, `sqe.len` is 32-bit while `size_t` is 64-bit, so a larger
-`count` is explicitly clamped to `INT32_MAX`; the kernel's `import_ubuf` then
-applies Linux's normal `MAX_RW_COUNT` ceiling
-(`out/src/lib/iov_iter.c:1445-1450`). Together these match a direct Linux
-read/write exactly — `EINVAL` and partial-transfer cases both — without
-narrowing modulo 2^32 or retyping the kernel-private `MAX_RW_COUNT` constant.
+with `EINVAL` before any transfer, preserving the direct syscall path's check
+of the original `size_t` (`out/src/fs/read_write.c:453-459`). The ring path
+also calls `rw_verify_area` (`out/src/io_uring/rw.c:951-955,1171-1175`), but
+only after `sqe.len` has narrowed the request and `import_ubuf` has applied
+Linux's `MAX_RW_COUNT` ceiling (`out/src/lib/iov_iter.c:1445-1450`), so it
+cannot recover that original oversized value. For counts at or below
+`SSIZE_MAX`, libuc explicitly clamps the 64-bit `size_t` to `INT32_MAX` before
+assigning the 32-bit `sqe.len`; the kernel then applies `MAX_RW_COUNT`.
+Together these match a direct Linux read/write — both `EINVAL` and
+partial-transfer cases — without narrowing modulo 2^32 or retyping the
+kernel-private `MAX_RW_COUNT` constant.
 
 A negative CQE result becomes `-1` plus per-fiber `errno`; success leaves
 `errno` unchanged. The suspended call frame keeps the SQE and buffers live
