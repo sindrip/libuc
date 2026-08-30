@@ -21,4 +21,5 @@ pipe/read/write/close and per-fiber errno as the first public libc surface.
 | UC-011 | nothing — make scheduler ownership explicit, then pool stack/block storage |
 | UC-016 | nothing — multi-CQE operations: identity and stream delivery |
 | UC-017 | UC-016 — cancellation, zombie lifetime, slot recycling |
+| UC-018 | nothing — single-shot sockets: the connection calls over the ring |
 | UC-012 | FSGSBASE-capable x86-64 hardware |
