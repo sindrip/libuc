@@ -10,6 +10,7 @@ enum __libuc_fiber_request : unsigned long {
   __LIBUC_FIBER_REQUEST_NONE,
   __LIBUC_FIBER_REQUEST_YIELD,
   __LIBUC_FIBER_REQUEST_EXIT,
+  __LIBUC_FIBER_REQUEST_AWAIT,
 };
 
 struct __libuc_fiber {
@@ -24,6 +25,10 @@ struct __libuc_fiber {
   struct fiber_context *return_to;
   /* Scheduler-owned FIFO link; a fiber is in at most one queue. */
   struct __libuc_fiber *ready_next;
+  /* The parked frame's SQE; the AWAIT arm consumes it before any resume. */
+  const struct io_uring_sqe *await_sqe;
+  /* The completion's res; the reactor stores it before the wake. */
+  long await_res;
   enum __libuc_fiber_request request;
 };
 
@@ -41,6 +46,12 @@ __libuc_fiber_resume(struct __libuc_fiber *fiber);
 /* Suspend the running fiber back to its resumer; with no current fiber
  * this faults. */
 void __libuc_fiber_yield(void);
+
+/* Park on one SQE built in the calling frame; the contract is exactly
+ * one CQE, and the reap loop traps streams. The frame outlives the park,
+ * so the pointee needs no copy. Returns the operation's res; with no
+ * current fiber this faults. */
+[[nodiscard]] long __libuc_fiber_await(const struct io_uring_sqe *sqe);
 
 /* The running fiber; nullptr where no block is installed. */
 [[nodiscard]] struct __libuc_fiber *__libuc_fiber_current(void);

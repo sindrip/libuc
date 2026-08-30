@@ -273,6 +273,39 @@ if get_option('tests')
     name_suffix: 'elf',
   )
 
+  fiber_io_probe = executable(
+    'fiber-io',
+    'test/fiber_io.c',
+    c_args: common_c_args + ['-Wno-reserved-identifier'],
+    include_directories: [public_include, private_include, fiber_arch_include],
+    link_args: probe_link_args,
+    link_depends: 'libuc.ld',
+    link_whole: [crt1_internal, libc],
+    name_suffix: 'elf',
+  )
+
+  fiber_io_flood_probe = executable(
+    'fiber-io-flood',
+    'test/fiber_io_flood.c',
+    c_args: common_c_args + ['-Wno-reserved-identifier'],
+    include_directories: [public_include, private_include, fiber_arch_include],
+    link_args: probe_link_args,
+    link_depends: 'libuc.ld',
+    link_whole: [crt1_internal, libc],
+    name_suffix: 'elf',
+  )
+
+  sweep_generation_probe = executable(
+    'sweep-generation',
+    'test/sweep_generation.c',
+    c_args: common_c_args + ['-Wno-reserved-identifier'],
+    include_directories: [public_include, private_include, fiber_arch_include],
+    link_args: probe_link_args,
+    link_depends: 'libuc.ld',
+    link_whole: [crt1_internal, libc],
+    name_suffix: 'elf',
+  )
+
   test_arch_include = include_directories('test/arch/' + arch)
 
   fiber_probe = executable(
@@ -317,6 +350,9 @@ if get_option('tests')
     test('fiber thread-local binding', fiber_thread_local_probe)
     test('ring nop round trip', ring_probe)
     test('scheduler round robin', scheduler_probe)
+    test('fiber parks on the ring', fiber_io_probe)
+    test('ring batch overflows the sweep', fiber_io_flood_probe)
+    test('yielders do not starve completions', sweep_generation_probe)
     test(
       'main status reaches exit_group',
       sh,
@@ -409,4 +445,34 @@ if get_option('tests')
   )
 
   alias_target('initramfs-scheduler', scheduler_initramfs)
+
+  fiber_io_initramfs = custom_target(
+    'fiber-io-initramfs',
+    build_by_default: false,
+    command: [sh, mkinitramfs, '@INPUT@', '@OUTPUT@'],
+    input: fiber_io_probe,
+    output: 'fiber-io.initramfs.cpio.gz',
+  )
+
+  alias_target('initramfs-fiber-io', fiber_io_initramfs)
+
+  fiber_io_flood_initramfs = custom_target(
+    'fiber-io-flood-initramfs',
+    build_by_default: false,
+    command: [sh, mkinitramfs, '@INPUT@', '@OUTPUT@'],
+    input: fiber_io_flood_probe,
+    output: 'fiber-io-flood.initramfs.cpio.gz',
+  )
+
+  alias_target('initramfs-fiber-io-flood', fiber_io_flood_initramfs)
+
+  sweep_generation_initramfs = custom_target(
+    'sweep-generation-initramfs',
+    build_by_default: false,
+    command: [sh, mkinitramfs, '@INPUT@', '@OUTPUT@'],
+    input: sweep_generation_probe,
+    output: 'sweep-generation.initramfs.cpio.gz',
+  )
+
+  alias_target('initramfs-sweep-generation', sweep_generation_initramfs)
 endif

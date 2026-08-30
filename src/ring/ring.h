@@ -26,7 +26,7 @@ struct __libuc_ring {
   /* SQEs written since the last enter; SQ_REWIND consumes them from index
    * zero, so this is both count and next slot. */
   uint32_t batch_count;
-  uint32_t padding;
+  uint32_t : 32;
 };
 
 [[nodiscard]] bool __libuc_ring_create(struct __libuc_ring *ring,
@@ -37,8 +37,9 @@ struct __libuc_ring {
 __libuc_ring_append_sqe(struct __libuc_ring *ring);
 
 /* Submit the batch and wait for min_complete completions. Success consumes
- * the whole batch, per SUBMIT_ALL; failure keeps it, and the entries still
- * begin at slot zero, so retrying is submitting again. */
+ * the whole batch: a short kernel submission retries after the remainder
+ * moves to slot zero, where SQ_REWIND rereads. Failure keeps the remainder
+ * at slot zero, so retrying is submitting again. */
 [[nodiscard]] long __libuc_ring_submit(struct __libuc_ring *ring,
                                        uint32_t min_complete);
 

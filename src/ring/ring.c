@@ -2,7 +2,9 @@
 
 #include <stdatomic.h>
 #include <stdckdint.h>
+#include <string.h>
 
+#include <linux/errno.h>
 #include <linux/io_uring.h>
 #include <linux/mman.h>
 
@@ -80,7 +82,6 @@ static void *ring_at(void *base, uint32_t offset) {
       .cq_entries = params.cq_entries,
       .cq_mask = cq_mask,
       .batch_count = 0,
-      .padding = 0,
   };
   return true;
 }
@@ -99,14 +100,34 @@ __libuc_ring_append_sqe(struct __libuc_ring *ring) {
 
 [[nodiscard]] long __libuc_ring_submit(struct __libuc_ring *ring,
                                        uint32_t min_complete) {
-  const long result =
-      __libuc_sys_io_uring_enter(ring->descriptor, ring->batch_count,
-                                 min_complete, IORING_ENTER_GETEVENTS,
-                                 nullptr, 0);
-  if (!__libuc_syscall_failed(result)) {
-    ring->batch_count = 0;
+  while (true) {
+    const long result =
+        __libuc_sys_io_uring_enter(ring->descriptor, ring->batch_count,
+                                   min_complete, IORING_ENTER_GETEVENTS,
+                                   nullptr, 0);
+    if (result == -EINTR) {
+      continue;
+    }
+    if (__libuc_syscall_failed(result)) {
+      return result;
+    }
+
+    const uint32_t submitted = (uint32_t)result;
+    if (submitted == ring->batch_count) {
+      ring->batch_count = 0;
+      return result;
+    }
+
+    /* A short count is a mid-batch allocation failure; the next enter
+     * rereads from slot zero under SQ_REWIND, so the remainder moves down.
+     * A short that submitted nothing comes back -EAGAIN, never zero:
+     * NO_SQARRAY removes the only dropped-SQE path, and an allocation
+     * failure with nothing submitted implies the request cache was
+     * empty. Every pass here shrinks the batch. */
+    memmove(ring->sqes, &ring->sqes[submitted],
+            (ring->batch_count - submitted) * sizeof(*ring->sqes));
+    ring->batch_count -= submitted;
   }
-  return result;
 }
 
 [[nodiscard]] bool __libuc_ring_reap(struct __libuc_ring *ring,

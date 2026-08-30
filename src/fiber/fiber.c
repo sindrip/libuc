@@ -82,6 +82,16 @@ void __libuc_fiber_yield(void) {
   fiber_switch(&fiber->context, fiber->return_to);
 }
 
+[[nodiscard]] long __libuc_fiber_await(const struct io_uring_sqe *sqe) {
+  struct __libuc_fiber *fiber = __libuc_fiber_current();
+  fiber->await_sqe = sqe;
+  fiber->request = __LIBUC_FIBER_REQUEST_AWAIT;
+
+  fiber_switch(&fiber->context, fiber->return_to);
+
+  return fiber->await_res;
+}
+
 [[nodiscard]] struct __libuc_fiber *__libuc_fiber_current(void) {
   void *thread_pointer = thread_local_read();
   if (thread_pointer == nullptr) {
