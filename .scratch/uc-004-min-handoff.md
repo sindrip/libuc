@@ -125,6 +125,5 @@ green in containers and VM.
 
 The runnable queue is empty. Open: UC-011 (stack pool + block ownership,
 wants measurements), UC-012 (x86-64 acceptance, wants FSGSBASE hardware).
-Parking, the in-flight count, and the first fiber I/O opcode are the next
-planning conversation — the scheduler loop and ring are both in place and
-still unconnected.
+Parking, the in-flight count, and the first fiber I/O opcode are drafted
+as UC-013 — the reactor iteration connecting the loop to the ring.
