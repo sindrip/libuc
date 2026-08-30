@@ -17,5 +17,6 @@ dispatched through it.
 | id | waits on |
 |---|---|
 | UC-013 | nothing — park fibers on the ring, the reactor iteration |
+| UC-014 | UC-013 — expose pipe/read/write/close as libc |
 | UC-011 | UC-009 landed; wants spawn/recycle measurements |
 | UC-012 | FSGSBASE-capable x86-64 hardware |
