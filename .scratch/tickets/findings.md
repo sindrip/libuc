@@ -94,6 +94,18 @@ the binary, `dmesg` prints pc/lr/registers; map the pc with llvm-objdump.
 - The handle is the transparent four-field struct {mapping, length, block,
   thread_pointer}: write down what destroy, install, and the acceptance
   probe need rather than re-deriving any of it.
+- UC-009 ready queue (2026-08-30): intrusive link in the fiber, chosen for
+  now over a caller-sized array. The decisive point: YIELD requeues from
+  inside the loop, where failure has no sane answer — the link makes requeue
+  infallible, the array makes it a capacity crash. Costs accepted: fiber.h
+  carries a scheduler-owned field; one link means one list, so a future
+  state not exclusive with readiness buys a second field. Revisit if that
+  state appears.
+- UC-009 dispatch (2026-08-30): the loop reuses `__libuc_fiber_resume`
+  per turn. The documented alternative is a scheduler-owned switch path
+  skipping resume's per-call here-context and TP save/restore — faster in
+  principle, duplicates the protocol; adopt only if dispatch shows up in a
+  measurement.
 - Internal-symbol visibility for a shared libuc: deferred. When it lands,
   the lean is fail-closed — `-fvisibility=hidden` globally with the public
   surface marked default — over musl-style hidden annotations, because a
