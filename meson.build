@@ -108,23 +108,12 @@ startup_impl = static_library(
   pic: false,
 )
 
-auxv_impl = static_library(
-  'uc-auxv-internal',
-  'src/auxv.c',
-  build_by_default: false,
-  c_args: common_c_args + [
-    '-Wno-missing-noreturn',
-    '-Wno-reserved-identifier',
-  ],
-  include_directories: [public_include, private_include],
-  pic: false,
-)
-
 subdir('src/thread_local')
 subdir('src/fiber')
 subdir('src/ring')
 subdir('src/scheduler')
 subdir('src/errno')
+subdir('src/sys/auxv')
 
 libc_impls = [startup_impl, auxv_impl, thread_local_impls, fiber_impls,
               ring_impls, scheduler_impls]
@@ -148,9 +137,10 @@ subdir('src/string')
 # errno is the only thread-local datum the libc itself contributes. Probes
 # that assert an exact PT_TLS layout — their own TU's, or its absence —
 # link these archives; linking the installed libc means inheriting errno.
+# TUs that set errno, getauxval today, ride with it.
 no_thread_local_impls = libc_impls + string_impls
 
-libc_impls += [errno_impls]
+libc_impls += [errno_impls, getauxval_impl]
 
 libc = static_library(
   'c',
@@ -235,6 +225,17 @@ if get_option('tests')
     link_args: probe_link_args,
     link_depends: 'libuc.ld',
     link_whole: [crt1_internal] + no_thread_local_impls,
+    name_suffix: 'elf',
+  )
+
+  getauxval_probe = executable(
+    'getauxval',
+    'test/getauxval.c',
+    c_args: common_c_args + ['-Wno-reserved-identifier'],
+    include_directories: [public_include, private_include],
+    link_args: probe_link_args,
+    link_depends: 'libuc.ld',
+    link_whole: [crt1_internal, libc],
     name_suffix: 'elf',
   )
 
@@ -354,6 +355,7 @@ if get_option('tests')
     test('startup contract with PT_TLS', start_probe)
     test('startup contract without PT_TLS', start_no_thread_local_probe)
     test('thread-local block with PT_TLS', thread_local_block_probe)
+    test('getauxval hit and ENOENT miss', getauxval_probe)
     test('thread-local install alternation', thread_local_install_probe)
     test('fiber bootstrap round trip', fiber_probe)
     test('fiber thread-local binding', fiber_thread_local_probe)
@@ -395,6 +397,16 @@ if get_option('tests')
     'initramfs-no-thread-local',
     start_no_thread_local_initramfs,
   )
+
+  getauxval_initramfs = custom_target(
+    'getauxval-initramfs',
+    build_by_default: false,
+    command: [sh, mkinitramfs, '@INPUT@', '@OUTPUT@'],
+    input: getauxval_probe,
+    output: 'getauxval.initramfs.cpio.gz',
+  )
+
+  alias_target('initramfs-getauxval', getauxval_initramfs)
 
   thread_local_block_initramfs = custom_target(
     'thread-local-block-initramfs',

@@ -1,5 +1,5 @@
-#ifndef LIBUC_SRC_AUXV_H
-#define LIBUC_SRC_AUXV_H
+#ifndef LIBUC_SRC_SYS_AUXV_AUXV_H
+#define LIBUC_SRC_SYS_AUXV_AUXV_H
 
 #include <stdint.h>
 

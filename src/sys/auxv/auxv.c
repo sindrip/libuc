@@ -1,6 +1,8 @@
 #include "auxv.h"
 
-#include <sys/auxv.h>
+#include <stdint.h>
+
+#include <linux/auxvec.h>
 
 static const uintptr_t *auxiliary_vector;
 
@@ -16,9 +18,4 @@ bool __libuc_auxv_get(uintptr_t type, uintptr_t *value) {
   }
 
   return false;
-}
-
-unsigned long getauxval(unsigned long type) {
-  (void)type;
-  __builtin_trap();
 }

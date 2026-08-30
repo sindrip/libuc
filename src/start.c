@@ -1,8 +1,8 @@
 #include <stdint.h>
 
-#include "auxv.h"
 #include "fiber/fiber.h"
 #include "scheduler/scheduler.h"
+#include "sys/auxv/auxv.h"
 #include "thread_local/thread_local.h"
 
 [[gnu::visibility("hidden")]] extern void (*const __libuc_init_array_start[])(

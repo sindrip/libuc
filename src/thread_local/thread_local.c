@@ -3,14 +3,13 @@
 #include <stdckdint.h>
 #include <stdint.h>
 
+#include <linux/auxvec.h>
 #include <linux/elf.h>
 #include <linux/mman.h>
 
 #include <string.h>
 
-#include <sys/auxv.h>
-
-#include "auxv.h"
+#include "sys/auxv/auxv.h"
 #include "syscall.h"
 #include "thread_local_arch.h"
 
@@ -103,8 +102,8 @@ const struct __libuc_thread_local_layout *__libuc_thread_local_layout(void) {
   return layout;
 }
 
-[[nodiscard]] bool __libuc_thread_local_block_create(
-    struct __libuc_thread_local_block *block) {
+[[nodiscard]] bool
+__libuc_thread_local_block_create(struct __libuc_thread_local_block *block) {
   const struct __libuc_thread_local_layout *layout =
       __libuc_thread_local_layout();
   if (layout == nullptr) {
@@ -142,8 +141,7 @@ const struct __libuc_thread_local_layout *__libuc_thread_local_layout(void) {
     (void)__libuc_sys_munmap((void *)raw_address, mapping_length);
     return false;
   }
-  const uintptr_t address =
-      rounded_address & ~(uintptr_t)(base_alignment - 1);
+  const uintptr_t address = rounded_address & ~(uintptr_t)(base_alignment - 1);
   unsigned char *base = (unsigned char *)address;
   void *thread_pointer = base + placement.tp_offset;
   unsigned char *tls_block = base + placement.block_offset;

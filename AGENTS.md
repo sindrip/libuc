@@ -136,14 +136,15 @@ whose whole job is being accurate.
 ```
 meson.build               libuc — the deliverable; Clang + LLD, one static libc.a
 meson.options             tests / ubsan toggles
-include/                  the headers libuc installs: <string.h>, <sys/auxv.h>
+include/                  the headers libuc installs; the install manifest
 src/                      the implementation
   start.c                 _start's C half
-  auxv.h/.c               the auxiliary vector, parsed once at entry
   syscall.h               raw syscall wrappers; -errno in -1..-4095
   ubsan.c                 the minimal-runtime UBSan handlers
   thread_local/           the PT_TLS image and the per-block lifetime
-  string/                 memcpy, memset, memmove, memcmp
+  errno/                  <errno.h>: the per-fiber errno datum
+  string/                 <string.h>: memcpy, memset, memmove, memcmp
+  sys/auxv/               <sys/auxv.h>: the parsed auxiliary vector, getauxval
   arch/<arch>/            everything that knows the instruction set
     start.S               _start
     syscall_arch.h        the trap sequence and register assignment
@@ -160,6 +161,14 @@ run.sh                    boot under QEMU (hvf; ACCEL/SMP/INITRD overridable)
 debug.sh                  same boot, halted, gdbstub on :1234
 src.sh                    export the pinned kernel tree -> out/src/
 ```
+
+**A `src/` directory mirrors the installed header it implements** — the
+header's path minus `.h`, so `<string.h>` is `src/string/` and
+`<sys/auxv.h>` is `src/sys/auxv/`; every other directory is runtime
+machinery with no installed surface. The mapping is mechanical on purpose:
+no topical grouping, no `misc/`, and basename twins like a future
+`<time.h>` / `<sys/time.h>` get distinct homes. A header that installs
+only types or constants has no TU and therefore no directory.
 
 **The architecture is chosen by the include path, never by generic code.**
 Each consuming meson target adds `src/arch/` + the host `cpu_family` to its

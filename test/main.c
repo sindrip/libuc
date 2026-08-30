@@ -1,10 +1,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <string.h>
-#include <sys/auxv.h>
+#include <linux/auxvec.h>
 
-#include "auxv.h"
+#include <string.h>
+
+#include "sys/auxv/auxv.h"
 #include "thread_local/thread_local.h"
 
 /* Initializers must run before main, in priority order: numbered slots
