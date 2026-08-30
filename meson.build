@@ -208,7 +208,7 @@ if get_option('tests')
     'start-no-thread-local',
     'test/no_thread_local.c',
     c_args: common_c_args + ['-Wno-reserved-identifier'],
-    include_directories: [public_include, private_include],
+    include_directories: [public_include, private_include, fiber_arch_include],
     link_args: probe_link_args,
     link_depends: 'libuc.ld',
     link_whole: [crt1_internal, libc],
@@ -231,6 +231,17 @@ if get_option('tests')
     'test/thread_local_install.c',
     c_args: common_c_args + ['-Wno-reserved-identifier'],
     include_directories: [public_include, private_include],
+    link_args: probe_link_args,
+    link_depends: 'libuc.ld',
+    link_whole: [crt1_internal, libc],
+    name_suffix: 'elf',
+  )
+
+  fiber_thread_local_probe = executable(
+    'fiber-thread-local',
+    'test/fiber_thread_local.c',
+    c_args: common_c_args + ['-Wno-reserved-identifier'],
+    include_directories: [public_include, private_include, fiber_arch_include],
     link_args: probe_link_args,
     link_depends: 'libuc.ld',
     link_whole: [crt1_internal, libc],
@@ -274,6 +285,7 @@ if get_option('tests')
       start_probe,
       thread_local_block_probe,
       thread_local_install_probe,
+      fiber_thread_local_probe,
     ],
   )
 
@@ -285,6 +297,7 @@ if get_option('tests')
     test('thread-local block with PT_TLS', thread_local_block_probe)
     test('thread-local install alternation', thread_local_install_probe)
     test('fiber bootstrap round trip', fiber_probe)
+    test('fiber thread-local binding', fiber_thread_local_probe)
     test(
       'main status reaches exit_group',
       sh,
@@ -343,5 +356,18 @@ if get_option('tests')
   alias_target(
     'initramfs-thread-local-install',
     thread_local_install_initramfs,
+  )
+
+  fiber_thread_local_initramfs = custom_target(
+    'fiber-thread-local-initramfs',
+    build_by_default: false,
+    command: [sh, mkinitramfs, '@INPUT@', '@OUTPUT@'],
+    input: fiber_thread_local_probe,
+    output: 'fiber-thread-local.initramfs.cpio.gz',
+  )
+
+  alias_target(
+    'initramfs-fiber-thread-local',
+    fiber_thread_local_initramfs,
   )
 endif

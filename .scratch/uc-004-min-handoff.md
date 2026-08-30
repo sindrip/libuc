@@ -64,6 +64,22 @@ x86-64 exits 125 under emulation — no `HWCAP2_FSGSBASE` — so the gate is
 verified and `wrfsbase` itself awaits real x86-64 hardware. Full regression
 sweep green on both architectures.
 
-Next is UC-006-min: bind blocks to fibers and install during switches —
-availability confirmed once per scheduler at init, `block_install` on every
-switch (noted in the ticket).
+## UC-006-min (2026-08-30)
+
+Landed: the fiber owns `thread_local_block` by value; create binds
+`tcb->fiber`, run saves/installs/restores the thread pointer around the
+switch, `__libuc_fiber_current` reads the fiber out of the installed TCB.
+UC-003's root fiber means `main` already runs with its own block installed —
+most of full UC-006 arrived with the embedding.
+
+Acceptance: aarch64 green everywhere — fiber-thread-local, fiber,
+no-thread-local, install, start all exit 0 in containers, and the three
+fiber-affected probes boot to `exitcode=0x00000000`. x86-64: startup now
+installs before any gate, so probes hang under Rosetta (wrfsbase neither
+works nor traps cleanly there); emulated x86-64 behavioral runs are retired,
+compile-and-link stays. The decision and its cost are recorded in the
+UC-006 ticket.
+
+Next: finish full UC-006 — retire the no-`_Thread_local` invariant, assert
+constructor/main-visible TLS in `test/main.c` — then UC-007 suspension,
+which `__libuc_fiber_current` now unblocks.

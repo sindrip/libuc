@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "register_probe.h"
+#include "thread_local/thread_local.h"
 
 static unsigned long argument_witness;
 static unsigned long stack_witness;
@@ -16,6 +17,12 @@ static unsigned long stack_witness;
 }
 
 int main(void) {
+  /* 126: running a fiber installs its thread pointer, which this
+   * environment's user mode cannot do. */
+  if (!__libuc_thread_local_install_available()) {
+    return 126;
+  }
+
   struct __libuc_fiber fiber;
   if (!__libuc_fiber_create(&fiber, (size_t)256 * 1024, observe, &fiber)) {
     return 125;

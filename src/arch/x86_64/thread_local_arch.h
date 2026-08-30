@@ -67,4 +67,10 @@ static inline void thread_local_install(void *thread_pointer) {
   __asm__ volatile("wrfsbase %0" : : "r"(thread_pointer));
 }
 
+[[nodiscard]] static inline void *thread_local_read(void) {
+  void *thread_pointer;
+  __asm__ volatile("rdfsbase %0" : "=r"(thread_pointer));
+  return thread_pointer;
+}
+
 #endif

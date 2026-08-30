@@ -4,6 +4,7 @@
 #include <stddef.h>
 
 #include "fiber_arch.h"
+#include "thread_local/thread_local.h"
 
 struct __libuc_fiber {
   struct fiber_context context; /* where the fiber stopped */
@@ -11,6 +12,7 @@ struct __libuc_fiber {
   void *argument;
   unsigned char *stack;
   size_t stack_length;
+  struct __libuc_thread_local_block thread_local_block;
   /* Where completion lands: the pending run's own frame. Set by run, dead
    * between runs. */
   struct fiber_context *return_to;
@@ -26,5 +28,9 @@ struct __libuc_fiber {
  * exactly once: completion poisons the context, and a second run faults on
  * its first instruction. */
 void __libuc_fiber_run(struct __libuc_fiber *fiber);
+
+/* The fiber whose thread-local block is installed, read through its TCB;
+ * nullptr on the bootstrap context, whose thread pointer stays absent. */
+[[nodiscard]] struct __libuc_fiber *__libuc_fiber_current(void);
 
 #endif

@@ -39,6 +39,23 @@ unable to use `_Thread_local` state.
 - `src/start.c`
 - `test/main.c`
 
+## Landed so far (2026-08-30, UC-006-min)
+
+Fibers own their block by value; creation binds the TCB's fiber word,
+`fiber_run` saves the caller's thread pointer, installs the fiber's, and
+restores on return; `__libuc_fiber_current` reads the TCB through the
+installed pointer, nullptr when the register is zero. Because UC-003 already
+enters `main` on the root fiber, the root block and installed-TLS `main`
+landed with it — what remains here is retiring the no-`_Thread_local`
+invariant formally and asserting constructors/main see initialized state in
+`test/main.c`.
+
+Cost, accepted deliberately: startup now installs before any gate can run,
+so x86-64 without FSGSBASE cannot boot any libuc program — under Rosetta the
+probes hang rather than trap. Emulated x86-64 behavioral acceptance is
+retired; the x86-64 build tier remains compile-and-link. Behavioral
+acceptance needs FSGSBASE hardware.
+
 ## Acceptance
 
 Two fibers mutate the same `_Thread_local` variable across repeated switches,

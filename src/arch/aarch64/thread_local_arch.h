@@ -52,4 +52,10 @@ static inline void thread_local_install(void *thread_pointer) {
   __asm__ volatile("msr tpidr_el0, %0" : : "r"(thread_pointer));
 }
 
+[[nodiscard]] static inline void *thread_local_read(void) {
+  void *thread_pointer;
+  __asm__ volatile("mrs %0, tpidr_el0" : "=r"(thread_pointer));
+  return thread_pointer;
+}
+
 #endif
