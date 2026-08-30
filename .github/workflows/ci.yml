@@ -1,6 +1,6 @@
-# Build and test libc.a on every push to main — the tarballs land as the
-# `libuc` workflow artifact — and cut an immutable release from the same
-# build when a v* tag is pushed. Everything runs as one bake graph inside the
+# Build and test libc.a on every push to main. Each push updates the
+# rolling `latest` prerelease in place, and a v* tag cuts an immutable
+# versioned release from the same build. Everything runs as one bake graph inside the
 # digest-pinned alpine toolchain, so CI's Clang/LLD are the versions
 # AGENTS.md records as verified. Probes are compiled and their ELF contract
 # checked, but never executed: the runner kernel is not the pinned 7.2, and
@@ -46,6 +46,42 @@ jobs:
           name: libuc
           path: out/libuc/*/*.tar.gz
 
+  # Never cancelled mid-update: a superseding push queues behind the group,
+  # so the tag and the assets it floats with cannot be left torn.
+  latest:
+    needs: libuc
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: ci-latest-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: libuc
+          path: dist
+
+      - name: Stage assets
+        run: (cd dist && mv -- */*.tar.gz . && rmdir -- */ && sha256sum -- * > SHA256SUMS)
+
+      # No action moves an existing tag; this line is the whole trick.
+      - name: Float the latest tag to head
+        run: git push --force origin "${GITHUB_SHA}:refs/tags/latest"
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: latest
+          prerelease: true
+          fail_on_unmatched_files: true
+          body: >-
+            Rolling build of main at ${{ github.sha }}. For stable checksums
+            use a versioned release.
+          files: dist/*
+
   release:
     needs: libuc
     if: startsWith(github.ref, 'refs/tags/v')
@@ -58,12 +94,13 @@ jobs:
           name: libuc
           path: dist
 
-      - name: Cut the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          (cd dist && mv -- */*.tar.gz . && rmdir -- */ && sha256sum -- * > SHA256SUMS)
-          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag \
-            --title "$GITHUB_REF_NAME" \
-            --notes "include/ and lib/libc.a per architecture, plain -O2, Clang/LLD from the digest-pinned Alpine."
+      - name: Stage assets
+        run: (cd dist && mv -- */*.tar.gz . && rmdir -- */ && sha256sum -- * > SHA256SUMS)
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          fail_on_unmatched_files: true
+          body: >-
+            include/ and lib/libc.a per architecture, plain -O2, Clang/LLD
+            from the digest-pinned Alpine.
+          files: dist/*
