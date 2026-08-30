@@ -38,6 +38,19 @@ record storage. Guard pages, pool refill size, high-water retention, and release
 at scheduler teardown are part of the recorded decision; dense language-only
 stacks are not.
 
+The seam's intended public face is `<threads.h>`: `thrd_t` is a fiber, and
+`thrd_create` is the standard name for spawn-on-the-current-scheduler — design
+the ownership API with it as the consumer rather than inventing a private
+spawn surface to replace later. `thrd_create` needs the pool (no caller-owned
+fiber struct in a public signature) plus an ambient-scheduler accessor (the
+TCB already carries the current fiber; the scheduler can ride alongside);
+`thrd_join` additionally needs exit tracking and reclaim rules, UC-017's
+territory, so create/join may split. `thrd_yield`, `thrd_sleep`
+(`IORING_OP_TIMEOUT`), and `thrd_current` are separable cheap slices. When
+`thrd_*` goes public, record the progress caveat: cooperative fibers satisfy
+C11's loose forward-progress only because blocking calls suspend — vendored
+code that spin-waits without a blocking call livelocks.
+
 ## Acceptance
 
 A probe reports first-create and recycle syscall counts for both shapes. The
