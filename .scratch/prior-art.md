@@ -1,6 +1,8 @@
 # Prior art — has someone already built libuc?
 
-Status: **literature search performed 2026-08-18; reviewed 2026-08-30.** No
+Status: **literature search performed 2026-08-18; reviewed and amended
+2026-08-30** (folded in: Silk, green-man, Junction, the .NET green-thread
+negative, helio). No
 decision here; this is dated evidence, not a continuously verified survey.
 strategy.md's reading list is the *positioning* argument — who the neighbours
 are and what each concedes. This document is what was actually searched, what
@@ -34,6 +36,9 @@ sharper than "nobody thought of this":
 | Photon (Alibaba) | C++ stackful coroutines over io_uring | C++ library on glibc; no libc ambition |
 | Java Loom | JDK blocking calls unmount continuations | dies at the C FFI boundary — see below |
 | Zig `std.Io` | parametrise stdlib over blocking/async | needs Zig source; adds a parameter per call |
+| Junction (NSDI '24) | loader swaps in a modified glibc; syscalls suspend user threads | kernel-bypass dataplane; swaps a glibc rather than being one |
+| Silk (ClickHouse '26) | C++ stackful fibers over per-CPU rings | library on glibc; own verbs; steals across CPUs |
+| green-man ('26) | C green threads over io_uring, one scheduler thread | hosted PoC; its own async wrappers, not the POSIX names |
 
 That column is the working novelty claim from this search. It survived both
 search angles, but must be rechecked before publication.
@@ -72,6 +77,24 @@ Runner-up ancestor: **Capriccio (von Behren et al., SOSP 2003)**, which
 call stub functions". The thesis in one sentence, 23 years old — and the reason
 libuc's version is different is entirely the word *overriding*.
 
+## Junction is the nearest modern miss
+
+**Fried et al., "Making Kernel Bypass Practical for the Cloud with Junction",
+NSDI 2024** (`github.com/JunctionOS/junction`). A libOS in the
+Shenango/Caladan lineage that runs unmodified Linux binaries: its ELF loader
+transparently swaps in a modified glibc, so nearly every syscall calls into
+Junction's user-level scheduler instead of trapping — blocking calls suspend
+user threads, and whole managed runtimes (Go, Java, Node, Python) run on top
+unmodified. It is the only shipped system found that agrees the **libc is the
+right interception boundary** and puts a thread scheduler under it.
+
+It stops short of the core claim on three counts: the dataplane is kernel
+bypass on dedicated cores, not io_uring on a stock kernel; it swaps a hosted
+glibc at load time rather than being the platform libc; and binary
+compatibility with the whole POSIX surface is its headline constraint — the
+exact scope the vendored-static-libraries-first plan defers. Missed by the
+2026-08-18 search; found in the 2026-08-30 amendment.
+
 ## Three findings that are load-bearing for invariants
 
 **WG21 P1364R0 justifies invariant 3.** "Fibers under the magnifying glass"
@@ -105,7 +128,11 @@ Function & Memory frame on its stack cannot unmount, because the JVM cannot
 capture and restore the native frame.
 
 This is the precise failure mode of solving fiber suspension from *above* the C
-boundary, and it has resisted a decade of very well-funded engineering.
+boundary, and it has resisted a decade of very well-funded engineering — in
+two runtimes, not one: .NET's green-thread experiment was cancelled at the
+same wall (dotnet/runtimelab#2398, 2023), with a minimal P/Invoke going from
+300ms to ~1800ms per 10⁸ calls on a green thread, alongside thread-local and
+shadow-stack breakage.
 libuc.md's startup inversion — guest code runs on a fiber, so its blocking
 calls *are* the suspensions — is the structurally different answer, and this
 search found no C implementation attempting it. `stacks.md` reaches the same
@@ -133,17 +160,24 @@ scheduler, no libc, no per-scheduler ring discipline.
 ## Not novel — do not claim it
 
 **Pinned executors, shared-nothing, and private rings.** Standard practice:
-Seastar/ScyllaDB, Glommio, monoio, compio, Redpanda, Apache Iggy. The substrate
-is conventional and there is no academic evaluation of it either — it lives
-entirely in industrial blog posts.
+Seastar/ScyllaDB, Glommio, monoio, compio, Redpanda, Apache Iggy,
+helio/DragonflyDB (whose `fb2` fibers are reworked Boost.Fiber over an
+io_uring loop), plus a long tail of C++20-coroutine io_uring wrappers
+(co_context, liburing4cpp, zedio, …). The substrate is conventional and there
+is no academic evaluation of it either — it lives entirely in industrial blog
+posts.
 
 libuc's unit is the scheduler task/thread, not the CPU: a placement policy may
 put one or more schedulers on a CPU, while each ring remains owned by its single
 issuer.
 
-The novelty is not the substrate. It is **refusing to colour the API on top of
-it**: every one of those keeps `async fn` or futures/continuations. That is the
-sentence to use when describing this project to someone who knows Seastar.
+The novelty is not the substrate — and, after Photon, helio and Silk, not
+uncoloured stackful blocking over io_uring either: that trio already lets
+plain functions block on fibers. What none of them touches is **whose names do
+the blocking**: each ships its own verb set as a library over glibc, where
+libuc's claim is that the uncoloured blocking surface is the POSIX surface
+itself, because the runtime is the libc. That is the sentence to use when
+describing this project to someone who knows Seastar.
 
 ## Citable disagreements
 
@@ -173,13 +207,31 @@ rather than ignoring — a design is stronger for knowing who disagrees.
   usable (5.1, May 2019), which is the whole reason the axis is open.
   **GPLv3: read for ideas, cannot be vendored.**
 
+- **Silk (ClickHouse, 2026 — `github.com/ClickHouse/silk`,
+  `clickhouse.com/blog/silk`)** is that counter-position rebuilt on io_uring,
+  and current: C++ stackful fibers, one pinned scheduler thread per CPU each
+  owning its own ring, and **topology-aware work stealing** (hyperthread
+  sibling, then socket, then cross-socket) as the headline feature —
+  invariant 3's exact opposite, argued on this project's own substrate with
+  reproducible benchmarks (~3.6ns yield, ~7.6µs ring ping-pong, 5.9M file
+  IOPS). It agrees on much else: cooperative yields, io_uring "as the I/O
+  ground truth rather than a backend", zero steady-state heap allocation,
+  synchronization primitives carrying their queue nodes inline in the fiber.
+  One finding transfers directly: it rebuts Photon's measured 13%
+  stackful-fiber penalty by attributing the overhead to slab-allocated stacks
+  aliasing in the cache — page-aligned `mmap`'d stacks with guard pages avoid
+  it — which bears on the per-scheduler stack pool. Repo created 2026-05-05,
+  Apache-2.0: readable *and* vendorable, unlike libfibre.
+
 ## Not found in the dated search — open ground
 
 Each of these returned nothing across both search angles:
 
 - **A libc whose blocking calls are fiber suspensions over io_uring.** The core
   claim. Nothing published; no serious unpublished project with a design
-  document.
+  document. Junction (above) is the nearest miss, and it concedes both
+  halves: kernel bypass instead of the ring, a swapped glibc instead of being
+  the libc.
 - **Per-fiber allocator.** This search found no direct treatment, not even a
   problem statement. What breaks
   when a vendored library's `malloc` assumes per-thread arenas under a fiber
