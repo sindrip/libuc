@@ -114,5 +114,17 @@ Landed: scheduler zero as become/enqueue/run — caller-owned storage, ring
 created inside (size an internal untuned constant), intrusive FIFO through
 the fiber's ready_next, dispatch via fiber_resume, NONE traps. Round-robin
 acceptance green in container and VM; the no-scheduler-symbol test retired.
-Next: UC-010, main on scheduler zero — where parking, the in-flight count,
-and the first fiber I/O arrive.
+
+## UC-010 (2026-08-30)
+
+Landed: startup is become -> create root -> enqueue -> run -> destroy ->
+exit_group. Main is a fiber in scheduler zero's loop; a yielding main is a
+legal single-fiber round-robin. Every executable now requires io_uring at
+boot (accepted; containers need seccomp=unconfined). Full nine-probe sweep
+green in containers and VM.
+
+The runnable queue is empty. Open: UC-011 (stack pool + block ownership,
+wants measurements), UC-012 (x86-64 acceptance, wants FSGSBASE hardware).
+Parking, the in-flight count, and the first fiber I/O opcode are the next
+planning conversation — the scheduler loop and ring are both in place and
+still unconnected.

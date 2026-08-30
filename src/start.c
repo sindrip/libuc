@@ -2,6 +2,7 @@
 
 #include "auxv.h"
 #include "fiber/fiber.h"
+#include "scheduler/scheduler.h"
 #include "thread_local/thread_local.h"
 
 [[gnu::visibility("hidden")]] extern void (*const __libuc_init_array_start[])(
@@ -60,6 +61,11 @@ int __libuc_start(void *initial_stack) {
     return 127;
   }
 
+  struct __libuc_scheduler scheduler;
+  if (!__libuc_scheduler_become(&scheduler)) {
+    return 127;
+  }
+
   struct root_arguments arguments = {
       .argv = argv,
       .envp = envp,
@@ -70,9 +76,12 @@ int __libuc_start(void *initial_stack) {
   if (!__libuc_fiber_create(&root, root_stack_length, root_entry, &arguments)) {
     return 127;
   }
-  if (__libuc_fiber_resume(&root) != __LIBUC_FIBER_REQUEST_EXIT) {
+
+  __libuc_scheduler_enqueue(&scheduler, &root);
+  __libuc_scheduler_run(&scheduler);
+
+  if (!__libuc_fiber_destroy(&root)) {
     return 127;
   }
-
   return arguments.status;
 }

@@ -1,7 +1,7 @@
 ---
 id: UC-010
 title: Run main on scheduler zero
-status: todo
+status: done
 depends: [UC-003, UC-006, UC-009]
 ---
 
@@ -47,3 +47,13 @@ program header while running with a TCB-backed root fiber. Scheduler zero's
 ring belongs to the startup task, the root fiber exits through scheduler
 dispatch, and its stack and thread-local block are destroyed only after control
 has returned to the scheduler stack.
+
+2026-08-30: done on aarch64 — every probe boots through scheduler zero:
+become on the startup frame, root fiber enqueued and dispatched by the
+loop, destroyed after it returns, status to exit_group. Full sweep green
+(nine probes, containers and VM; exit-status carries 42); constructors and
+main keep the root block, the no-PT_TLS header contract holds. Accepted
+with sign-off: every libuc executable now requires io_uring_setup at boot,
+so container runs need seccomp=unconfined — Docker's default denies
+io_uring since 2023 because opcodes bypass syscall filtering, which is the
+ring-as-syscall-ABI property itself. x86-64 is compile-and-link per UC-012.
