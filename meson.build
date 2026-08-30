@@ -114,6 +114,7 @@ subdir('src/ring')
 subdir('src/scheduler')
 subdir('src/errno')
 subdir('src/sys/auxv')
+subdir('src/unistd')
 
 libc_impls = [startup_impl, auxv_impl, thread_local_impls, fiber_impls,
               ring_impls, scheduler_impls]
@@ -137,10 +138,10 @@ subdir('src/string')
 # errno is the only thread-local datum the libc itself contributes. Probes
 # that assert an exact PT_TLS layout — their own TU's, or its absence —
 # link these archives; linking the installed libc means inheriting errno.
-# TUs that set errno, getauxval today, ride with it.
+# TUs that set errno ride with it.
 no_thread_local_impls = libc_impls + string_impls
 
-libc_impls += [errno_impls, getauxval_impl]
+libc_impls += [errno_impls, getauxval_impl] + unistd_impls
 
 libc = static_library(
   'c',
@@ -152,6 +153,7 @@ libc = static_library(
 
 install_headers('include/errno.h')
 install_headers('include/string.h')
+install_headers('include/unistd.h')
 install_headers('include/sys/auxv.h', subdir: 'sys')
 
 summary(
@@ -225,6 +227,17 @@ if get_option('tests')
     link_args: probe_link_args,
     link_depends: 'libuc.ld',
     link_whole: [crt1_internal] + no_thread_local_impls,
+    name_suffix: 'elf',
+  )
+
+  close_probe = executable(
+    'close',
+    'test/close.c',
+    c_args: common_c_args + ['-Wno-reserved-identifier'],
+    include_directories: [public_include, private_include, fiber_arch_include],
+    link_args: probe_link_args,
+    link_depends: 'libuc.ld',
+    link_whole: [crt1_internal, libc],
     name_suffix: 'elf',
   )
 
@@ -356,6 +369,7 @@ if get_option('tests')
     test('startup contract without PT_TLS', start_no_thread_local_probe)
     test('thread-local block with PT_TLS', thread_local_block_probe)
     test('getauxval hit and ENOENT miss', getauxval_probe)
+    test('close suspends on the ring', close_probe)
     test('thread-local install alternation', thread_local_install_probe)
     test('fiber bootstrap round trip', fiber_probe)
     test('fiber thread-local binding', fiber_thread_local_probe)
@@ -397,6 +411,16 @@ if get_option('tests')
     'initramfs-no-thread-local',
     start_no_thread_local_initramfs,
   )
+
+  close_initramfs = custom_target(
+    'close-initramfs',
+    build_by_default: false,
+    command: [sh, mkinitramfs, '@INPUT@', '@OUTPUT@'],
+    input: close_probe,
+    output: 'close.initramfs.cpio.gz',
+  )
+
+  alias_target('initramfs-close', close_initramfs)
 
   getauxval_initramfs = custom_target(
     'getauxval-initramfs',

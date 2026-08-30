@@ -60,7 +60,8 @@ operation, or direct syscall implementation lands.
 - `include/errno.h`
 - `include/fcntl.h`
 - `src/thread_local/`
-- `src/io/`
+- `src/errno/`
+- `src/unistd/`
 - `src/fiber/`
 - `src/scheduler/`
 - `test/libc_io.c`

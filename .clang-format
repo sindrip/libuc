@@ -26,7 +26,7 @@ IncludeCategories:
     Priority: 1
   - Regex: '^<(asm|asm-generic|linux)/'
     Priority: 2
-  - Regex: '^<(errno|string|sys/auxv)\.h>$'
+  - Regex: '^<(errno|string|sys/auxv|unistd)\.h>$'
     Priority: 4
   - Regex: '^<'
     Priority: 3
