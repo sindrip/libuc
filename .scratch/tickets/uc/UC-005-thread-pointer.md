@@ -30,4 +30,4 @@ container and VM. Availability is a separate init-time question
 register write, so the normal case pays zero checks. x86-64 exits 125:
 neither emulator advertises `HWCAP2_FSGSBASE`, so the fail-closed
 availability probe is what is verified there; the `wrfsbase` path itself
-needs x86-64 hardware or a guest with FSGSBASE.
+is UC-012.

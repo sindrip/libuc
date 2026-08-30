@@ -14,8 +14,7 @@ state.
 
 Each fiber owns one thread-local block — the root fiber included. The block
 comes from `__libuc_thread_local_block_create` as a provisional owner: the
-create-versus-carve decision is deliberately deferred to the stack-pooling
-ticket, and `findings.md` records the constraints that keep the swap cheap.
+create-versus-carve decision is deliberately deferred to UC-011, and `findings.md` records the constraints that keep the swap cheap.
 Switching to a fiber installs that block's thread pointer as part of the
 context transition — `__libuc_thread_local_block_install` is already the
 bare register write, so switches call it directly.
@@ -54,7 +53,7 @@ Cost, accepted deliberately: startup now installs before any gate can run,
 so x86-64 without FSGSBASE cannot boot any libuc program — under Rosetta the
 probes hang rather than trap. Emulated x86-64 behavioral acceptance is
 retired; the x86-64 build tier remains compile-and-link. Behavioral
-acceptance needs FSGSBASE hardware.
+acceptance returns with UC-012.
 
 ## Acceptance
 

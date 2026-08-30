@@ -83,7 +83,7 @@ the binary, `dmesg` prints pc/lr/registers; map the pc with llvm-objdump.
 
   2026-08-30, deliberately still open: UC-006 builds on the committed
   create/destroy surface as a provisional owner, and the real decision moves
-  to the stack-pooling ticket, made against measured spawn and recycle
+  to UC-011, made against measured spawn and recycle
   numbers rather than the projections in `../stacks.md` (per spawn, carve
   saves one mmap and its mmap_lock hit, plus one VMA per fiber; create-owns
   keeps the TCB fault-isolated in its own mapping and the stack scheme

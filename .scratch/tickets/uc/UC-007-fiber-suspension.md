@@ -49,7 +49,7 @@ resume after EXIT is never attempted, and no scheduler symbol exists in
 resumes across two fibers (exit 0, container and VM), the register harness
 suspends mid-wreckage and proves restoration through the resumer's context,
 and the no-scheduler-symbol test guards `libc.a`. x86-64 is compile-and-link
-only, per the UC-006 decision. The harness rework surfaced a real ABI rule:
+only, per the UC-006 decision; UC-012 restores it. The harness rework surfaced a real ABI rule:
 a fiber that suspends and later completes must leave callee-saved registers
 as its C frames expect — the dirty harness now saves and restores around its
 yield.
