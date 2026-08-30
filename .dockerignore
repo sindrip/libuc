@@ -1,0 +1,6 @@
+.cache/
+.direnv/
+.git/
+.github/
+.scratch/
+out/

@@ -112,8 +112,12 @@ Do not violate these without explicit discussion.
 Generate the UAPI exports when missing:
 
 ```sh
-docker buildx bake uapi uapi-x86_64
+docker buildx bake uapi
 ```
+
+`uapi` and `libuc` build both platforms in one bake, which the default
+docker driver refuses; once per machine, create the container-driver
+builder: `docker buildx create --use`.
 
 Configure the two development builds when missing:
 
@@ -136,6 +140,12 @@ ninja -C .cache/meson-aarch64 clang-tidy
 where the host/cross configuration permits it. Behavioral acceptance is the
 ticket's in-VM console check. When shared startup, TLS, fiber, scheduler, ring,
 or architecture code changes, rerun every dependent ticket's probe.
+
+`docker buildx bake libuc` reproduces the CI build exactly: the same check
+and release meson runs for both platforms inside the digest-pinned toolchain
+(`build/libuc.Dockerfile`), exporting the release tarballs to
+`out/libuc/linux_<arch>/`. CI layers `docker-bake.gha-cache.hcl` on top for
+its per-target layer cache; local builds never need it.
 
 A kernel bake does not validate libuc. Use `out/kernel.config`, not the fragment,
 when answering configuration questions.

@@ -16,29 +16,33 @@ COPY --from=linux-tarball /linux-*/ /linux/
 WORKDIR /linux
 
 FROM kernel-tree AS kconfig
+ARG ARCH=arm64
 COPY build/kernel.config /tmp/kernel.config
-RUN make ARCH=arm64 tinyconfig \
+RUN make ARCH="${ARCH}" tinyconfig \
     && ./scripts/kconfig/merge_config.sh -m -O . .config \
         kernel/configs/kvm_guest.config /tmp/kernel.config \
-    && make ARCH=arm64 olddefconfig
+    && make ARCH="${ARCH}" olddefconfig
 
+# KERNEL_IMAGE rides along because the arches disagree on both the make
+# target and its path: arm64 makes Image, x86_64 makes bzImage.
 FROM kconfig AS kernel-build
-RUN make ARCH=arm64 -j"$(nproc)" Image && cp arch/arm64/boot/Image /vmlinuz
+ARG ARCH=arm64
+ARG KERNEL_IMAGE=arch/arm64/boot/Image
+RUN make ARCH="${ARCH}" -j"$(nproc)" "$(basename "${KERNEL_IMAGE}")" \
+    && cp "${KERNEL_IMAGE}" /vmlinuz
 
-FROM kernel-tree AS uapi-build
-RUN make ARCH=arm64 headers
-
-FROM kernel-tree AS uapi-x86_64-build
-RUN make ARCH=x86_64 headers
+# Pinned to the build platform: installing headers needs no cross toolchain,
+# so both target platforms share one native run of everything above.
+FROM --platform=$BUILDPLATFORM kernel-tree AS uapi-build
+ARG TARGETARCH
+RUN case "${TARGETARCH}" in arm64) arch=arm64 ;; amd64) arch=x86_64 ;; *) exit 1 ;; esac \
+    && make ARCH="${arch}" headers
 
 FROM scratch AS linux-src
 COPY --from=linux-tarball /linux-*/ /
 
 FROM scratch AS uapi
 COPY --from=uapi-build /linux/usr/include /include
-
-FROM scratch AS uapi-x86_64
-COPY --from=uapi-x86_64-build /linux/usr/include /include
 
 FROM scratch AS config
 COPY --from=kconfig /linux/.config /kernel.config
