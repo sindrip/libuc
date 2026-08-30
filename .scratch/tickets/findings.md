@@ -116,9 +116,13 @@ the binary, `dmesg` prints pc/lr/registers; map the pc with llvm-objdump.
 
 ## Running acceptance without the VM
 
-Static probes execute directly in containers: `docker run -v <builddir>:/p
-alpine /p/<probe>.elf` — natively for aarch64, `--platform linux/amd64` for
-the x86-64 build. Exit codes are the acceptance signal. This is the
+Static probes execute directly in containers: `docker run --security-opt
+seccomp=unconfined -v <builddir>:/p alpine /p/<probe>.elf` — with
+`--platform linux/arm64` or `linux/amd64` pinned explicitly, since a
+cached image of the other architecture fails as a bare 127. Exit codes
+are the acceptance signal. Docker's default seccomp profile denies
+`io_uring_setup` with EPERM (measured: strace shows the probe exiting 127
+at ring creation), so unconfined is mandatory, not hygiene. This is the
 cross/runnable.ini story realized without a matching host.
 
 ## 2026-08-30: review findings on the landed reactor

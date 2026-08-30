@@ -124,6 +124,7 @@ subdir('src/thread_local')
 subdir('src/fiber')
 subdir('src/ring')
 subdir('src/scheduler')
+subdir('src/errno')
 
 libc_impls = [startup_impl, auxv_impl, thread_local_impls, fiber_impls,
               ring_impls, scheduler_impls]
@@ -144,6 +145,13 @@ endif
 
 subdir('src/string')
 
+# errno is the only thread-local datum the libc itself contributes. Probes
+# that assert an exact PT_TLS layout — their own TU's, or its absence —
+# link these archives; linking the installed libc means inheriting errno.
+no_thread_local_impls = libc_impls + string_impls
+
+libc_impls += [errno_impls]
+
 libc = static_library(
   'c',
   build_by_default: true,
@@ -152,6 +160,7 @@ libc = static_library(
   pic: false,
 )
 
+install_headers('include/errno.h')
 install_headers('include/string.h')
 install_headers('include/sys/auxv.h', subdir: 'sys')
 
@@ -192,7 +201,7 @@ if get_option('tests')
     include_directories: [public_include, private_include],
     link_args: probe_link_args,
     link_depends: 'libuc.ld',
-    link_whole: [crt1_internal, libc],
+    link_whole: [crt1_internal] + no_thread_local_impls,
     name_suffix: 'elf',
   )
 
@@ -214,7 +223,7 @@ if get_option('tests')
     include_directories: [public_include, private_include, fiber_arch_include],
     link_args: probe_link_args,
     link_depends: 'libuc.ld',
-    link_whole: [crt1_internal, libc],
+    link_whole: [crt1_internal] + no_thread_local_impls,
     name_suffix: 'elf',
   )
 
@@ -225,7 +234,7 @@ if get_option('tests')
     include_directories: [public_include, private_include],
     link_args: probe_link_args,
     link_depends: 'libuc.ld',
-    link_whole: [crt1_internal, libc],
+    link_whole: [crt1_internal] + no_thread_local_impls,
     name_suffix: 'elf',
   )
 
