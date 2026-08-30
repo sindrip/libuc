@@ -1,13 +1,16 @@
 # libuc — the minimal deliverable
 
-Status: **active libuc design record.** Small implementation steps are tracked
-under `.scratch/tickets/uc/`.
+Status: **design record; the "src/ is the spike" framing below is
+historical.** The spike was retired (UC-000) and libuc was promoted to the
+top level — today's `src/` IS libuc. Read the rest as the design intent
+that produced it, tracked to completion under `.scratch/tickets/uc/`.
 
-## Where this sits
+## Where this sits (historical)
 
-`src/` is the frozen viability probe. Its product is knowledge, not code libuc
-links against. **libuc is the goal**, and it is a fresh tree: no shared build,
-no compatibility obligation, and no retrofit work in `src/`.
+`src/` was the frozen viability probe. Its product was knowledge, not code
+libuc links against. **libuc is the goal**, and it was a fresh tree: no
+shared build, no compatibility obligation, and no retrofit work in the
+spike.
 
 Two consequences, both cutting against normal instincts:
 
