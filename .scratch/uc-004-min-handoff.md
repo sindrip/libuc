@@ -3,11 +3,12 @@
 The staged path keeps the TCB while deferring compiler-visible TLS:
 
 ```text
-UC-004-min: TCB-only block allocation/destruction
-UC-005:     thread-pointer installation
-UC-006-min: TCB/fiber binding during switches
-UC-007:     suspension/resumption
-later:      PT_TLS image and _Thread_local data
+UC-004-min: TCB-only block allocation/destruction      [done]
+UC-005:     thread-pointer installation                [done]
+UC-006-min: TCB/fiber binding during switches          [done]
+UC-007:     suspension/resumption                      [done]
+later:      PT_TLS image and _Thread_local data        [absorbed: image by
+            UC-004-min, _Thread_local by UC-005..007 and the UC-006 close]
 ```
 
 This preserves the important design—the TCB is present and fiber-owned—while
