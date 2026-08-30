@@ -12,11 +12,14 @@ state.
 
 ## Spec
 
-Each fiber owns one thread-local block — the root fiber included. Switching
-to a fiber installs that block's thread pointer as part of the context
-transition. Destruction releases both the block and stack. This retires the
-no-`_Thread_local` invariant: from here, constructors and `main` run against
-the root fiber's own block.
+Each fiber owns one thread-local block — the root fiber included. The block
+comes from `__libuc_thread_local_block_create` as a provisional owner: the
+create-versus-carve decision is deliberately deferred to the stack-pooling
+ticket, and `findings.md` records the constraints that keep the swap cheap.
+Switching to a fiber installs that block's thread pointer as part of the
+context transition. Destruction releases both the block and stack. This
+retires the no-`_Thread_local` invariant: from here, constructors and `main`
+run against the root fiber's own block.
 
 Fiber creation binds the TCB's runtime-owned fiber word to its owner. A private
 current-fiber lookup reads that word through the installed thread pointer;

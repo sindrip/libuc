@@ -80,6 +80,17 @@ the binary, `dmesg` prints pc/lr/registers; map the pc with llvm-objdump.
   layer so stack and TLS share one mapping. Both libcs ended there; we get
   to arrive with evidence. The handle lives in a src/-private header either
   way, so nothing about the choice is ABI.
+
+  2026-08-30, deliberately still open: UC-006 builds on the committed
+  create/destroy surface as a provisional owner, and the real decision moves
+  to the stack-pooling ticket, made against measured spawn and recycle
+  numbers rather than the projections in `../stacks.md` (per spawn, carve
+  saves one mmap and its mmap_lock hit, plus one VMA per fiber; create-owns
+  keeps the TCB fault-isolated in its own mapping and the stack scheme
+  orthogonal). What keeps the swap an internal refactor in either direction:
+  fiber code reaches the block only through the handle and the thread
+  pointer, never through layout arithmetic; `thread_local_place` stays the
+  sole geometry authority; `block_create` stays a thin wrapper over it.
 - The handle is the transparent four-field struct {mapping, length, block,
   thread_pointer}: write down what destroy, install, and the acceptance
   probe need rather than re-deriving any of it.
