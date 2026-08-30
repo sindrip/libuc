@@ -114,6 +114,7 @@ subdir('src/ring')
 subdir('src/scheduler')
 subdir('src/errno')
 subdir('src/sys/auxv')
+subdir('src/sys/socket')
 subdir('src/unistd')
 
 libc_impls = [startup_impl, auxv_impl, thread_local_impls, fiber_impls,
@@ -141,7 +142,7 @@ subdir('src/string')
 # TUs that set errno ride with it.
 no_thread_local_impls = libc_impls + string_impls
 
-libc_impls += [errno_impls, getauxval_impl] + unistd_impls
+libc_impls += [errno_impls, getauxval_impl] + unistd_impls + socket_impls
 
 libc = static_library(
   'c',
@@ -231,6 +232,17 @@ if get_option('tests')
     link_args: probe_link_args,
     link_depends: 'libuc.ld',
     link_whole: [crt1_internal] + no_thread_local_impls,
+    name_suffix: 'elf',
+  )
+
+  socket_echo_probe = executable(
+    'socket-echo',
+    'test/socket_echo.c',
+    c_args: common_c_args + ['-Wno-reserved-identifier'],
+    include_directories: [public_include, private_include, fiber_arch_include],
+    link_args: probe_link_args,
+    link_depends: 'libuc.ld',
+    link_whole: [crt1_internal, libc],
     name_suffix: 'elf',
   )
 
@@ -398,6 +410,7 @@ if get_option('tests')
     test('close suspends on the ring', close_probe)
     test('pipe descriptors arrive through the ring', pipe_probe)
     test('read suspends until write completes it', libc_io_probe)
+    test('sockets arrive through the ring', socket_echo_probe)
     test('thread-local install alternation', thread_local_install_probe)
     test('fiber bootstrap round trip', fiber_probe)
     test('fiber thread-local binding', fiber_thread_local_probe)
@@ -439,6 +452,16 @@ if get_option('tests')
     'initramfs-no-thread-local',
     start_no_thread_local_initramfs,
   )
+
+  socket_echo_initramfs = custom_target(
+    'socket-echo-initramfs',
+    build_by_default: false,
+    command: [sh, mkinitramfs, '@INPUT@', '@OUTPUT@'],
+    input: socket_echo_probe,
+    output: 'socket-echo.initramfs.cpio.gz',
+  )
+
+  alias_target('initramfs-socket-echo', socket_echo_initramfs)
 
   libc_io_initramfs = custom_target(
     'libc-io-initramfs',
