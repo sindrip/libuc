@@ -7,9 +7,10 @@ depends: [UC-016]
 
 ## Goal
 
-Let a fiber stop owning operations safely: cancellation as a protocol,
-exit while operations stand, and generation-safe recycling of operation
-slots.
+Make operation teardown automatic at fiber death: exit-time cancellation,
+the zombie lifetime, and delayed reclamation. Manual cancel-and-drain and
+ordinary terminal recycling land in UC-016; this ticket makes them
+survive an owner that is already gone.
 
 ## Spec
 
@@ -32,7 +33,8 @@ than address the slot's next tenant.
 
 - Fiber exit cancels and drains the original operation before any
   reclamation.
-- A stale generation cannot address a recycled slot.
+- A CQE arriving after the zombie drain cannot address the slot's next
+  tenant.
 - The loop does not return while a zombie holds operations.
 
 Both architectures build clean.

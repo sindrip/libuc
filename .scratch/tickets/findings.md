@@ -154,7 +154,8 @@ verified against `out/src/` before fixing.
   SQE: probes are NOP-only and no wrapper requests multishot. The surface
   cannot *prevent* one either, so the reap loop now traps on
   `F_MORE | F_NOTIF | F_SKIP` until UC-016 designs the operation record
-  (the same object as bpf-loop.md's task header). `F_SKIP` is the
+  (an operation slab bpf-loop.md's offset encoding addresses; it
+  references task-header slots, it is not them). `F_SKIP` is the
   CQE32/CQE_MIXED gap filler with `user_data = 0`
   (`io_uring.c:708-720`), unreachable on this ring config; if it appears,
   the config drifted.
