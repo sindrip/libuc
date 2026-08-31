@@ -87,7 +87,7 @@ The ticket index is `tickets/README.md`. The useful dependency order is:
 1. **UC-024 — thread exit, join, and detach.** The thread half of fiber
    lifetime, ahead of UC-017 because it needs no operation records. Returning
    from `main` is `exit` (C11 5.1.2.2.3); `thrd_exit` from `main` drains the
-   scheduler, then `EXIT_SUCCESS` (7.26.5.6).
+   scheduler, then `EXIT_SUCCESS` (7.26.5.5).
 2. **UC-011 — scheduler-owned stack/block recycling.** It makes the scheduler
    ownership seam explicit, then measures separate versus carved TLS storage.
 3. **UC-019 — completion-loss detection.** It maps and checks the kernel's

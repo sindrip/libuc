@@ -27,7 +27,7 @@ ends the calling thread from any depth with that result, exactly as returning
 it from the entry does.
 
 Ownership: the wait is an edge between two fibers, and the scheduler owns it
-whole. C11 admits at most one joiner (7.26.5.3 leaves a second join
+whole. C11 admits at most one joiner (7.26.5.6 leaves a second join
 undefined), so the edge is a single slot in the target's record —
 scheduler-owned like the ready link. The suspended request parks in the
 slot and is how the answer travels back, matching the one-shot completion
@@ -45,7 +45,7 @@ the root fiber's entry returns, unjoined threads are abandoned, and
 `exit_group` reclaims every mapping and in-flight operation with no cancels
 and no teardown walk. `thrd_exit` from `main` ends only main's thread; the
 program then terminates as if by `exit(EXIT_SUCCESS)` once the last thread
-does (C11 7.26.5.6, the sentence DR 411 added), so today's drain loop
+does (C11 7.26.5.5, the sentence DR 411 added), so today's drain loop
 survives as that path, not as the return contract. The mechanism is a
 process-exit request distinct from a thread's EXIT, raised by the root
 trampoline after `main` returns; a future public `exit` raises the same
