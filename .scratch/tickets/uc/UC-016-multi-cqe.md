@@ -15,93 +15,103 @@ single-shot routing.
 
 Two independent state machines, never conflated. The fiber machine —
 ready, running, parked, dead — changes once per block or wake, is counted
-by `ready`/`parked`, and never double-enqueues. The operation machine —
-staged, active, terminal, free — changes per CQE and is counted by
-`live_ops` from allocation until terminal processing and slot release. Its
-state distinguishes SQEs not yet submitted from requests held by the kernel;
-the count keeps the scheduler alive in either case.
+by `ready_count`/`parked_count`, and never double-enqueues. The operation
+machine — FREE and ACTIVE today, STAGED returning with cancellation —
+changes per CQE and per consumption, and lives in a per-scheduler table
+of records addressed by the completion key.
 
-The completion key stops being a fiber. `user_data` encodes
-{generation, slot, tag}: the slot indexes a per-scheduler operation table
+The completion key is `{generation, slot, tag}` packed as
+tag 4 | slot 16 | generation 44, tag zero invalid so a CQE_MIXED gap
+filler can never decode into a live record. The slot indexes the table
 (shared-nothing, no atomics), the generation detects a CQE aimed at a
-recycled slot, and the tag separates ordinary operations, cancellation,
-linked timeouts, notifications, and transport. `../../scheduler.md`
-("Completion identity") records the same seam — a
-scheduler-owned, generation-bearing record living until the final CQE.
-The operation table is its own identity space: a record may reference a
-fiber, never be embedded in one, since a fiber owns several operations the
-moment cancellation or concurrency exists. `../../bpf-loop.md` uses this same
-table — one encoding, BPF-bounds-checkable, decided once.
+recycled slot, and the tag separates the operation's own results from
+CQEs about it: cancellation outcomes, linked timeouts, zero-copy
+notifications, transport doorbells — each enumerator arriving with its
+consumer. `../../bpf-loop.md` shares this encoding; the pack/unpack pair
+is its documentation.
 
-The record: owner, current waiter (if any), generation, kind, state, and a
-bounded delivery queue
-with an explicit capacity and an overflow policy — one `{res, cqe_flags}`
-slot is not enough, since a stream posts several CQEs before its consumer
-runs. The wake rule is edge-triggered: an empty-to-nonempty transition wakes
-the owner only when that fiber is parked waiting on this operation. An owner
-that is ready, running, or parked on a different operation only accumulates
-delivery; it is never enqueued twice and never spuriously woken.
+**One delivery path (decided, landed).** A single-shot is a stream of
+length one. Every CQE lands as a `{res, cqe_flags}` delivery in its
+record's four-slot ring; consumers pop deliveries; a record retires when
+a terminal delivery — `F_MORE` clear — is consumed with the queue
+drained. Release is at consume-time, never reap-time: the one lifetime
+rule streams require, adopted by singles at measured zero cost (await-NOP
+benchmark, consolidated vs direct: ~252 vs ~250 ns/op single, ~83 vs ~83
+ns/op across 64 fibers). There is no operation-kind dispatch; the former
+SINGLE/STREAM kind is deleted from the design. What distinguishes
+zero-copy send is its tags, not a kind: the primary CQE carries `F_MORE`
+(`out/src/io_uring/net.c:1598,1609-1611`) and buffers as a non-terminal
+delivery; the later notification, addressed by `sqe->addr3`
+(`out/src/io_uring/net.c:1398-1404`) as {same slot, same generation,
+NOTIFICATION tag}, is the terminal event that lets the record retire. A
+preparation failure before notification allocation is an ordinary
+one-CQE terminal error.
 
-Reap validates ring-format flags first. `F_SKIP` gap fillers carry
-`user_data = 0` and are ignored before identity decoding only when
-`IORING_SETUP_CQE_MIXED` is enabled; on today's ring they remain a fatal
-configuration-drift signal. Reap then decodes identity, dispatches on kind,
-and performs kind-specific terminal detection. SINGLE: the one CQE finishes
-it. STREAM: `F_MORE` clear means this CQE is the terminal event, not that it
-has no payload; deliver its result according to the opcode and then finish the
-operation. Delivery never retires a stream while `F_MORE` remains set
-(`out/src/include/uapi/linux/io_uring.h:515-533`). ZC_SEND is a two-phase
-protocol on one record once the kernel allocates its notification: the primary
-completion carries `F_MORE` (`out/src/io_uring/net.c:1598,1609-1611`) and the
-later notification carries `F_NOTIF`, addressed by `sqe->addr3`
-(`out/src/io_uring/net.c:1398-1404`) as {same slot, same generation, NOTIF tag}
-against the primary's RESULT tag. A preparation failure before notification
-allocation is an ordinary one-CQE terminal error. A separate record for the
-two-phase case would leave the primary's `F_MORE` half with no terminal
-transition and leak `live_ops`; the record retires when both phases have
-landed. CANCEL and LINK_TIMEOUT are bookkeeping, not automatic wakes.
+**The consumer seam (decided, next).** Arm and consume ride the fiber
+request protocol, symmetric with AWAIT: `STREAM_OPEN` carries the
+multishot SQE, allocates a record, stages it, and returns the handle
+without blocking; `STREAM_NEXT` pops a buffered delivery or parks the
+fiber as the record's waiter. `next()` returns the delivery — res and
+terminality in one value, so a consumer cannot take a final payload
+without learning the stream ended. The transport costs one switch
+round-trip per call; at the benchmark's ~80 ns/op switch-and-bookkeeping
+floor under syscall-paced streams this is noise, and the transport hides
+behind `__libuc_fiber_stream_*`, swappable if a measurement ever says
+otherwise. The delivery struct is private machinery: public libc calls
+fold it to one-result-per-call POSIX shape at their boundary exactly as
+`errno_result.h` folds single-shot res today.
+
+The wake rule is edge-triggered and the waiter field is its whole
+implementation: reap's push wakes only a fiber parked on this record
+(`waiter != nullptr`), popping the delivery into it in the same breath.
+An owner that is ready, running, or parked on a different operation only
+accumulates deliveries; it is never enqueued twice and never spuriously
+woken. `waiter` is set by NEXT parking and cleared by the wake — for
+singles it is set for the record's whole tenancy, which is the length-one
+degenerate case of the same rule.
+
+**Backpressure (decided, after the seam).** push_delivery's capacity
+trap becomes cancel-and-rearm: a full queue submits `ASYNC_CANCEL` for
+the stream — deliberately triggering what the kernel does spontaneously
+when it cannot post (`io_req_post_cqe` failing ends a multishot,
+`out/src/io_uring/poll.c:305`) — the consumer drains, observes the
+terminal, and rearms. The CANCEL tag and STAGED state return here with
+their first readers: a cancel request has its own result CQE, and
+kernel-held versus never-submitted changes the cancel protocol. The two
+CQEs of a cancelled operation have no assumed order; UC-017 owns the
+rest of cancellation (fiber death, zombies, delayed reclamation). For
+buffer-selecting opcodes the later provided-buffer pool replaces the
+policy with credit, under the invariant that makes "naturally bounded"
+precise: **pool size ≤ queue capacity**, so the kernel can never hold
+more claimable buffers than the record can hold deliveries.
+
+Reap validates ring-format flags first: on today's ring `F_SKIP` remains
+a fatal configuration-drift signal, ignored-before-decoding only if
+CQE_MIXED is ever enabled. The `F_MORE`/`F_NOTIF` trap in reap lifts
+when the seam lands; terminal detection is per-delivery at consume time,
+never per-CQE at reap time.
 
 Rules that hold the seam: waking is a fiber-state transition, never a
-per-CQE action — an already-ready owner buffers without a second enqueue.
-`parked` counts blocked fibers; `live_ops` counts allocated operation records.
-A fiber's stack reclaims only at zero owned operations (scheduler.md's
-lifetime rule). Cancellation is cancel, reap the terminal CQE, then
-recycle the slot — never immediate release.
+per-CQE action. `parked_count` counts blocked fibers; records are
+counted by their states. A fiber's stack reclaims only at zero owned
+operations (scheduler.md's lifetime rule). Cancellation is cancel, reap
+the terminal, then recycle — never immediate release. A stale handle
+cannot reach a recycled record: the key's generation fails validation.
 
-The surface is the bounded receiver `.scratch/language.md` §6 already
-names: multishot accept is a receiver of connections, next() consumes a
-buffered result or parks. Capacity exhaustion takes an explicit
-per-opcode policy — cancel and rearm, or a naturally bounded
-provided-buffer pool.
+The surface is the bounded receiver `../../language.md` §6 already
+names: multishot accept is a receiver of connections; `next()` consumes
+a buffered result or parks. `__libuc_fiber_await` keeps its
+exactly-one-CQE contract throughout as the length-one veneer.
 
-Sequencing: UC-014 lands on single-shot operations only, and
-`__libuc_fiber_await` keeps its exactly-one-CQE contract throughout. This
-ticket carries operation identity, bounded stream delivery, ordinary
-terminal-slot recycling (a repeated stream must not exhaust the table),
-explicit stream cancel-and-drain (the overflow policy depends on it),
-and the multishot forcing probe — forced with multishot poll
-(`IORING_POLL_ADD_MULTI`, uapi io_uring.h:371) over UC-014's pipe, so no
-socket dependency. UC-017 owns what exit makes automatic: cancellation
-on fiber death, zombies, and delayed reclamation. The zero-copy
-notification probe waits for the ticket that brings sockets and
-`SEND_ZC`; UC-014 has neither.
-
-Decided 2026-08-31: `user_data` is tag in bits 0-3 (zero invalid, so a
-gap filler's zero key never decodes), slot in bits 4-19, generation in
-bits 20-63. The table is a constexpr 256 records per scheduler; exhaustion
-traps until a measurement funds growth. The delivery queue is four inline
-`{res, flags}` slots; capacity overflow cancels the stream at the kernel
-and the consumer rearms after draining — the same rearm path a
-kernel-ended stream already requires.
-
-Landed 2026-08-31 (a853417..ea56eff): the packed key, the two-state
-record, the scheduler's table and free list, and park/reap speaking the
-key — single-shot behavior unchanged, full sweep and VM green. Next arc
-is the STREAM kind, opening with the consumer seam: next() needs a new
-fiber-scheduler request shape (AWAIT carries one SQE, one result; a
-stream consumer parks against a record), an API conversation before
-code. STAGED, owner, kind, the delivery queue, and the waiter/next
-nulls all return with their readers in this arc.
+Landed so far (a853417..5ceffa3): the packed key, the record and table,
+park/reap speaking the key, the one-path delivery queue with release at
+consume, and the await-NOP benchmark with its baseline. Remaining, in
+order: the STREAM_OPEN/STREAM_NEXT requests with the multishot-poll
+forcing probe (`IORING_POLL_ADD_MULTI`, uapi io_uring.h:371, over
+UC-014's pipe — no socket dependency); cancel-and-rearm behind the
+capacity trap with explicit stream cancel-and-drain; slot-recycling
+acceptance for repeated streams. The zero-copy notification probe waits
+for `SEND_ZC`, which whichever of the network tickets lands next brings.
 
 ## Acceptance
 
@@ -109,15 +119,17 @@ nulls all return with their readers in this arc.
   insertion, two results delivered in order.
 - A CQE arrives while the owner is ready: buffered, no duplicate enqueue.
 - The owner is parked on a different operation: no wake.
-- A terminal CQE may carry a final delivered result and retires its operation
+- A terminal delivery may carry a final result and retires its operation
   exactly once, with no counter underflow.
-- Delivery-queue capacity exhausted: the chosen backpressure policy is
-  observed, not a drop.
+- Delivery-queue capacity exhausted: cancel-and-rearm observed, not a
+  drop.
 - A stream cancelled and drained through its terminal CQE; its slot
   recycles, a repeated stream reuses slots without table growth, and a
   stale generation aimed at a recycled slot fails validation.
-- Zero-copy notification routing (both tags on one record) is the network
-  ticket's probe, once `SEND_ZC` exists to force it.
+- The await-NOP benchmark holds its baseline within noise after each
+  slice (~250 ns/op single, ~83 ns/op crowd on the recorded setup).
+- Zero-copy notification routing (both tags on one record) is the
+  network ticket's probe, once `SEND_ZC` exists to force it.
 
-Both architectures build clean; cancellation and recycling cases are
-UC-017's acceptance.
+Both architectures build clean; cancellation on fiber death and
+end-of-life reclamation are UC-017's acceptance.
