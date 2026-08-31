@@ -71,6 +71,12 @@ Do not violate these without explicit discussion.
 7. **Scheduling is cooperative.** Fibers yield only at runtime I/O points or
    through the private `__libuc_fiber_yield()` implementation.
 
+   A call that reaches the scheduler is such a point: `thrd_create` may
+   reschedule, and so may anything built on a fiber request. What follows
+   the call is the runtime's choice and is never promised — no caller may
+   depend on whether a spawner or its child runs first. Keeping that
+   unpromised is what leaves fairness and locality free to change later.
+
 8. **Do not create another purity exception silently.** Update the registry
    and discuss it first.
 
