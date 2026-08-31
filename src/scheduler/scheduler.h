@@ -15,6 +15,9 @@ struct __libuc_scheduler {
   struct __libuc_fiber *ready_tail;
   uint32_t ready_count;
   uint32_t parked_count;
+  /* Fibers blocked in joins, waiting on exits rather than CQEs. */
+  uint32_t joining_count;
+  uint32_t : 32;
 };
 
 [[nodiscard]] bool

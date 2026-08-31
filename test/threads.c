@@ -12,6 +12,8 @@ static bool worker_ran;
 static bool worker_ok = true;
 static size_t worker_turns;
 static size_t creator_turns;
+static int worker_result;
+static int quick_result;
 
 /* thrd_exit ends the thread from any call depth with that result,
  * exactly as returning it from the entry does. */
@@ -34,6 +36,8 @@ static int worker(void *opaque) {
   finish(7);
 }
 
+static int quick([[maybe_unused]] void *opaque) { return 9; }
+
 static int creator([[maybe_unused]] void *opaque) {
   main_thread = thrd_current();
   worker_ok = worker_ok && thrd_equal(main_thread, thrd_current());
@@ -43,10 +47,24 @@ static int creator([[maybe_unused]] void *opaque) {
   }
 
   creator_turns++;
-  thrd_yield();
-  creator_turns++;
-  thrd_yield();
+  /* The worker cannot have run yet, so this join blocks until it
+   * exits. */
+  if (thrd_join(worker_thread, &worker_result) != thrd_success) {
+    return 2;
+  }
 
+  thrd_t quick_thread;
+  if (thrd_create(&quick_thread, quick, nullptr) != thrd_success) {
+    return 3;
+  }
+  thrd_yield();
+  /* The yield let quick run to exit, so this join takes a zombie
+   * without blocking. */
+  if (thrd_join(quick_thread, &quick_result) != thrd_success) {
+    return 4;
+  }
+
+  creator_turns++;
   return 0;
 }
 
@@ -79,12 +97,17 @@ int main(void) {
   if (worker_turns != 2 || creator_turns != 2) {
     return 121;
   }
-  if (first->status != 0 || worker_thread->status != 7) {
+  /* Each join took its target's result and released its record; the
+   * handles are dead, so only the never-joined creator remains. */
+  if (worker_result != 7 || quick_result != 9) {
     return 120;
   }
-
-  if (!__libuc_fiber_destroy(worker_thread) || !__libuc_fiber_destroy(first)) {
+  if (first->status != 0) {
     return 119;
+  }
+
+  if (!__libuc_fiber_destroy(first)) {
+    return 118;
   }
 
   return 0;

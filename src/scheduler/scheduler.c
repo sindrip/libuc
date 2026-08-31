@@ -75,8 +75,21 @@ void __libuc_scheduler_run(struct __libuc_scheduler *scheduler) {
       case __LIBUC_FIBER_REQUEST_YIELD:
         __libuc_scheduler_enqueue(scheduler, fiber);
         break;
-      case __LIBUC_FIBER_REQUEST_EXIT:
+      case __LIBUC_FIBER_REQUEST_EXIT: {
+        struct __libuc_fiber_request *joiner = fiber->joiner;
+        if (joiner == nullptr) {
+          break;
+        }
+        scheduler->joining_count--;
+        joiner->result = fiber->status;
+        /* The EXIT request lives on the mapping being released; neither
+         * is touched past this point. */
+        if (!__libuc_fiber_destroy(fiber)) {
+          __builtin_trap();
+        }
+        __libuc_scheduler_enqueue(scheduler, joiner->fiber);
         break;
+      }
       case __LIBUC_FIBER_REQUEST_AWAIT:
         park(scheduler, request);
         break;
@@ -94,6 +107,23 @@ void __libuc_scheduler_run(struct __libuc_scheduler *scheduler) {
         if (spawned != nullptr) {
           __libuc_scheduler_enqueue(scheduler, spawned);
         }
+        break;
+      }
+      case __LIBUC_FIBER_REQUEST_JOIN: {
+        struct __libuc_fiber *target = request->target;
+        if (target == fiber || target->joiner != nullptr) {
+          __builtin_trap();
+        }
+        if (target->life == __LIBUC_FIBER_EXITED) {
+          request->result = target->status;
+          if (!__libuc_fiber_destroy(target)) {
+            __builtin_trap();
+          }
+          __libuc_scheduler_enqueue(scheduler, fiber);
+          break;
+        }
+        target->joiner = request;
+        scheduler->joining_count++;
         break;
       }
       }
@@ -126,5 +156,11 @@ void __libuc_scheduler_run(struct __libuc_scheduler *scheduler) {
       scheduler->parked_count--;
       __libuc_scheduler_enqueue(scheduler, woken);
     }
+  }
+
+  /* Joiners left with nothing runnable and nothing in flight are a
+   * cycle: a program bug, not a wait. */
+  if (scheduler->joining_count != 0) {
+    __builtin_trap();
   }
 }

@@ -106,6 +106,7 @@ __libuc_fiber_resume(struct __libuc_fiber *fiber) {
   }
   if (request->kind == __LIBUC_FIBER_REQUEST_EXIT) {
     fiber->context = (struct fiber_context){0};
+    fiber->life = __LIBUC_FIBER_EXITED;
   }
   fiber->return_to = nullptr;
   request->fiber = fiber;
@@ -128,6 +129,19 @@ void __libuc_fiber_yield(void) {
   struct __libuc_fiber_request request = {
       .kind = __LIBUC_FIBER_REQUEST_AWAIT,
       .argument = sqe,
+  };
+
+  (void)fiber_switch(&fiber->context, fiber->return_to,
+                     (unsigned long)(uintptr_t)&request);
+
+  return request.result;
+}
+
+[[nodiscard]] long __libuc_fiber_join(struct __libuc_fiber *target) {
+  struct __libuc_fiber *fiber = __libuc_fiber_current();
+  struct __libuc_fiber_request request = {
+      .kind = __LIBUC_FIBER_REQUEST_JOIN,
+      .target = target,
   };
 
   (void)fiber_switch(&fiber->context, fiber->return_to,

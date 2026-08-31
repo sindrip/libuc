@@ -22,4 +22,12 @@ int thrd_equal(thrd_t lhs, thrd_t rhs) { return lhs == rhs; }
 
 [[noreturn]] void thrd_exit(int res) { __libuc_fiber_exit(res); }
 
+int thrd_join(thrd_t thr, int *res) {
+  const long status = __libuc_fiber_join(thr);
+  if (res != nullptr) {
+    *res = (int)status;
+  }
+  return thrd_success;
+}
+
 void thrd_yield(void) { __libuc_fiber_yield(); }

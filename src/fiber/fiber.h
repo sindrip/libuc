@@ -2,6 +2,7 @@
 #define LIBUC_SRC_FIBER_FIBER_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #include "fiber_arch.h"
 #include "thread_local/thread_local.h"
@@ -13,6 +14,7 @@ enum __libuc_fiber_request_kind : unsigned long {
   __LIBUC_FIBER_REQUEST_EXIT,
   __LIBUC_FIBER_REQUEST_AWAIT,
   __LIBUC_FIBER_REQUEST_SPAWN,
+  __LIBUC_FIBER_REQUEST_JOIN,
 };
 
 struct io_uring_sqe;
@@ -30,14 +32,29 @@ struct __libuc_fiber_spawn_request {
  * in which it means something. */
 struct __libuc_fiber_request {
   enum __libuc_fiber_request_kind kind;
-  /* An SQE for AWAIT, a spawn request for SPAWN. */
-  const void *argument;
+  union {
+    /* An SQE for AWAIT, a spawn request for SPAWN. */
+    const void *argument;
+    /* JOIN's ask: the fiber to wait on. Its record belongs to the
+     * scheduler answering the request, so it rides unqualified. */
+    struct __libuc_fiber *target;
+  };
   /* The scheduler's answer, written before it resumes the asker. */
   long result;
   /* Stamped by the scheduler when it takes the request, so an answer
    * that arrives later knows whom to resume. */
   struct __libuc_fiber *fiber;
 };
+
+/* A record outlives its exit: the mapping keeps the status readable
+ * until a join or detach takes it. Spawn zero-initializes the record,
+ * so live must be the zero state. */
+enum __libuc_fiber_life : uint32_t {
+  __LIBUC_FIBER_LIVE,
+  __LIBUC_FIBER_EXITED,
+};
+
+static_assert(__LIBUC_FIBER_LIVE == 0);
 
 struct __libuc_fiber {
   /* where the fiber stopped */
@@ -51,9 +68,13 @@ struct __libuc_fiber {
   struct fiber_context *return_to;
   /* Scheduler-owned FIFO link; a fiber is in at most one queue. */
   struct __libuc_fiber *ready_next;
-  /* The entry's return value, readable once the fiber has exited. */
+  /* The one join waiting on this fiber, parked until the exit that
+   * answers it; scheduler-owned like the FIFO link. A second joiner
+   * traps. */
+  struct __libuc_fiber_request *joiner;
+  /* The exit status, readable once the fiber has exited. */
   int status;
-  uint32_t : 32;
+  enum __libuc_fiber_life life;
 };
 
 /* Create a fiber whose record lives at the top of its own stack mapping,
@@ -71,8 +92,8 @@ __libuc_fiber_start(size_t stack_length, int (*entry)(void *),
 
 [[nodiscard]] bool __libuc_fiber_destroy(const struct __libuc_fiber *fiber);
 
-/* Run the fiber until it suspends or its entry returns, and give back
- * the request it carried. EXIT poisons the context, so resuming again
+/* Run the fiber until it suspends or exits, and give back the request
+ * it carried. EXIT poisons the context, so resuming again
  * faults. */
 [[nodiscard]] struct __libuc_fiber_request *
 __libuc_fiber_resume(struct __libuc_fiber *fiber);
@@ -85,6 +106,12 @@ void __libuc_fiber_yield(void);
  * as returning it from the entry does; with no current fiber this
  * faults. */
 [[noreturn]] void __libuc_fiber_exit(int status);
+
+/* Block until the target exits, then take its status; the join
+ * releases the target's record, so the handle is dead afterward.
+ * Joining yourself, or a target another fiber already joins, traps.
+ * With no current fiber this faults. */
+[[nodiscard]] long __libuc_fiber_join(struct __libuc_fiber *target);
 
 /* Exactly one CQE; the reap loop traps streams. The suspended frame
  * keeps the SQE and its buffers live through the CQE. Returns res; with

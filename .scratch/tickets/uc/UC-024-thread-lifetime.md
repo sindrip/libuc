@@ -26,10 +26,12 @@ scheduler destroys the target at exit instead of keeping it. `thrd_exit(res)`
 ends the calling thread from any depth with that result, exactly as returning
 it from the entry does.
 
-Ownership: the wait is an edge between two fibers, so the scheduler owns it
-whole — neither end records the other. A per-scheduler table of
-`{request, target}` is scanned at join and at exit; the request is how the
-answer travels back, matching the one-shot completion path.
+Ownership: the wait is an edge between two fibers, and the scheduler owns it
+whole. C11 admits at most one joiner (7.26.5.3 leaves a second join
+undefined), so the edge is a single slot in the target's record —
+scheduler-owned like the ready link. The suspended request parks in the
+slot and is how the answer travels back, matching the one-shot completion
+path; a second join finds the slot taken and traps.
 
 Waiting on a fiber is not waiting on the ring. `parked_count` decides whether
 the reactor blocks in the kernel, and a join-blocked fiber has no completion
