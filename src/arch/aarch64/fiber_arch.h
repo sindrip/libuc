@@ -12,16 +12,17 @@ struct fiber_context {
   unsigned long d[8];   /* d8..d15 */
 };
 
-[[gnu::naked]] [[maybe_unused]] static void
-fiber_switch(struct fiber_context *save, const struct fiber_context *restore) {
+[[gnu::naked]] [[maybe_unused]] static unsigned long
+fiber_switch(struct fiber_context *save, const struct fiber_context *restore,
+             unsigned long token) {
   __asm__ volatile("stp x19, x20, [x0, #%c[x19]]\n"
                    "stp x21, x22, [x0, #%c[x21]]\n"
                    "stp x23, x24, [x0, #%c[x23]]\n"
                    "stp x25, x26, [x0, #%c[x25]]\n"
                    "stp x27, x28, [x0, #%c[x27]]\n"
                    "stp x29, x30, [x0, #%c[fp]]\n"
-                   "mov x2, sp\n"
-                   "str x2, [x0, #%c[sp]]\n"
+                   "mov x3, sp\n"
+                   "str x3, [x0, #%c[sp]]\n"
                    "stp d8, d9, [x0, #%c[d8]]\n"
                    "stp d10, d11, [x0, #%c[d10]]\n"
                    "stp d12, d13, [x0, #%c[d12]]\n"
@@ -33,12 +34,15 @@ fiber_switch(struct fiber_context *save, const struct fiber_context *restore) {
                    "ldp x25, x26, [x1, #%c[x25]]\n"
                    "ldp x27, x28, [x1, #%c[x27]]\n"
                    "ldp x29, x30, [x1, #%c[fp]]\n"
-                   "ldr x2, [x1, #%c[sp]]\n"
-                   "mov sp, x2\n"
+                   "ldr x3, [x1, #%c[sp]]\n"
+                   "mov sp, x3\n"
                    "ldp d8, d9, [x1, #%c[d8]]\n"
                    "ldp d10, d11, [x1, #%c[d10]]\n"
                    "ldp d12, d13, [x1, #%c[d12]]\n"
                    "ldp d14, d15, [x1, #%c[d14]]\n"
+
+                   /* What the resumed side's own switch returns. */
+                   "mov x0, x2\n"
                    "ret\n"
                    :
                    : [x19] "i"(offsetof(struct fiber_context, gp[0])),

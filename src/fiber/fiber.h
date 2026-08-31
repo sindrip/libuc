@@ -6,9 +6,11 @@
 #include "fiber_arch.h"
 #include "thread_local/thread_local.h"
 
+/* Rides the context switch rather than living in the fiber, so a
+ * request cannot be read stale. Zero is not a request: it is what a
+ * resume passes in, and seeing it back means a broken transfer. */
 enum __libuc_fiber_request : unsigned long {
-  __LIBUC_FIBER_REQUEST_NONE,
-  __LIBUC_FIBER_REQUEST_YIELD,
+  __LIBUC_FIBER_REQUEST_YIELD = 1,
   __LIBUC_FIBER_REQUEST_EXIT,
   __LIBUC_FIBER_REQUEST_AWAIT,
   __LIBUC_FIBER_REQUEST_SPAWN,
@@ -64,8 +66,7 @@ __libuc_fiber_start(size_t stack_length, int (*entry)(void *),
 
 [[nodiscard]] bool __libuc_fiber_destroy(const struct __libuc_fiber *fiber);
 
-/* NONE returned is a broken transfer; EXIT poisons the context, so
- * resuming again faults. */
+/* EXIT poisons the context, so resuming again faults. */
 [[nodiscard]] enum __libuc_fiber_request
 __libuc_fiber_resume(struct __libuc_fiber *fiber);
 

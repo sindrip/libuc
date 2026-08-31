@@ -90,8 +90,6 @@ void __libuc_scheduler_run(struct __libuc_scheduler *scheduler) {
         __libuc_scheduler_enqueue(scheduler, fiber);
         break;
       }
-      case __LIBUC_FIBER_REQUEST_NONE:
-        __builtin_trap();
       }
     }
 

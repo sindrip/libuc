@@ -11,8 +11,8 @@
   struct __libuc_fiber *fiber = opaque;
   fiber->status = fiber->entry(fiber->argument);
 
-  fiber->request = __LIBUC_FIBER_REQUEST_EXIT;
-  fiber_switch(&fiber->context, fiber->return_to);
+  (void)fiber_switch(&fiber->context, fiber->return_to,
+                     __LIBUC_FIBER_REQUEST_EXIT);
   __builtin_trap();
 }
 
@@ -76,34 +76,36 @@
 __libuc_fiber_resume(struct __libuc_fiber *fiber) {
   struct fiber_context here;
   fiber->return_to = &here;
-  fiber->request = __LIBUC_FIBER_REQUEST_NONE;
 
   void *caller_thread_pointer = thread_local_read();
   thread_local_install(fiber->thread_local_block.thread_pointer);
-  fiber_switch(&here, &fiber->context);
+  const unsigned long request =
+      fiber_switch(&here, &fiber->context, 0);
   thread_local_install(caller_thread_pointer);
 
-  if (fiber->request == __LIBUC_FIBER_REQUEST_EXIT) {
+  /* Zero is not a request: the fiber came back without setting one. */
+  if (request == 0) {
+    __builtin_trap();
+  }
+  if (request == __LIBUC_FIBER_REQUEST_EXIT) {
     fiber->context = (struct fiber_context){0};
   }
   fiber->return_to = nullptr;
 
-  return fiber->request;
+  return (enum __libuc_fiber_request)request;
 }
 
 void __libuc_fiber_yield(void) {
   struct __libuc_fiber *fiber = __libuc_fiber_current();
-  fiber->request = __LIBUC_FIBER_REQUEST_YIELD;
-
-  fiber_switch(&fiber->context, fiber->return_to);
+  (void)fiber_switch(&fiber->context, fiber->return_to,
+                     __LIBUC_FIBER_REQUEST_YIELD);
 }
 
 [[nodiscard]] long __libuc_fiber_await(const struct io_uring_sqe *sqe) {
   struct __libuc_fiber *fiber = __libuc_fiber_current();
   fiber->request_argument = sqe;
-  fiber->request = __LIBUC_FIBER_REQUEST_AWAIT;
-
-  fiber_switch(&fiber->context, fiber->return_to);
+  (void)fiber_switch(&fiber->context, fiber->return_to,
+                     __LIBUC_FIBER_REQUEST_AWAIT);
 
   return fiber->request_result;
 }
@@ -119,8 +121,8 @@ __libuc_fiber_start(size_t stack_length, int (*entry)(void *),
   };
 
   fiber->request_argument = &request;
-  fiber->request = __LIBUC_FIBER_REQUEST_SPAWN;
-  fiber_switch(&fiber->context, fiber->return_to);
+  (void)fiber_switch(&fiber->context, fiber->return_to,
+                     __LIBUC_FIBER_REQUEST_SPAWN);
 
   return (struct __libuc_fiber *)(uintptr_t)fiber->request_result;
 }

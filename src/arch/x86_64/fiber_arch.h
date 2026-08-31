@@ -15,8 +15,9 @@ struct fiber_context {
   unsigned long rip;
 };
 
-[[gnu::naked]] [[maybe_unused]] static void
-fiber_switch(struct fiber_context *save, const struct fiber_context *restore) {
+[[gnu::naked]] [[maybe_unused]] static unsigned long
+fiber_switch(struct fiber_context *save, const struct fiber_context *restore,
+             unsigned long token) {
   __asm__ volatile("movq %%rbx, %c[rbx](%%rdi)\n"
                    "movq %%rbp, %c[rbp](%%rdi)\n"
                    "movq %%r12, %c[r12](%%rdi)\n"
@@ -35,6 +36,9 @@ fiber_switch(struct fiber_context *save, const struct fiber_context *restore) {
                    "movq %c[r14](%%rsi), %%r14\n"
                    "movq %c[r15](%%rsi), %%r15\n"
                    "movq %c[rsp](%%rsi), %%rsp\n"
+
+                   /* What the resumed side's own switch returns. */
+                   "movq %%rdx, %%rax\n"
                    "jmpq *%c[rip](%%rsi)\n"
                    :
                    : [rbx] "i"(offsetof(struct fiber_context, rbx)),
