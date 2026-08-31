@@ -22,13 +22,23 @@ enum __libuc_operation_state : uint8_t {
   __LIBUC_OPERATION_STATE_ACTIVE,
 };
 
+struct __libuc_operation_delivery {
+  int32_t res;
+  uint32_t cqe_flags;
+};
+
+constexpr uint8_t __libuc_operation_queue_capacity = 4;
+
 struct __libuc_operation {
   struct __libuc_fiber *waiter;
   /* Free-list link while FREE. */
   struct __libuc_operation *next;
   uint64_t generation;
+  struct __libuc_operation_delivery queue[__libuc_operation_queue_capacity];
   enum __libuc_operation_state state;
-  uint64_t : 56;
+  uint8_t queue_head;
+  uint8_t queue_count;
+  uint64_t : 40;
 };
 
 constexpr uint64_t __libuc_operation_tag_bits = 4;

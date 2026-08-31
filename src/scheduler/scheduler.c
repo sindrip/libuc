@@ -67,6 +67,8 @@ allocate_operation(struct __libuc_scheduler *scheduler,
 
   record->waiter = waiter;
   record->state = __LIBUC_OPERATION_STATE_ACTIVE;
+  record->queue_head = 0;
+  record->queue_count = 0;
 
   return record;
 }
@@ -77,6 +79,34 @@ static void release_operation(struct __libuc_scheduler *scheduler,
   record->state = __LIBUC_OPERATION_STATE_FREE;
   record->next = scheduler->free_head;
   scheduler->free_head = record;
+}
+
+/* Capacity overflow is the future cancel-and-rearm seam; no policy is
+ * designed, so it traps. */
+static void push_delivery(struct __libuc_operation *record, int32_t res,
+                          uint32_t cqe_flags) {
+  if (record->queue_count == __libuc_operation_queue_capacity) {
+    __builtin_trap();
+  }
+
+  const uint8_t tail = (uint8_t)((record->queue_head + record->queue_count) %
+                                 __libuc_operation_queue_capacity);
+  record->queue[tail] = (struct __libuc_operation_delivery){
+      .res = res,
+      .cqe_flags = cqe_flags,
+  };
+  record->queue_count++;
+}
+
+static struct __libuc_operation_delivery
+pop_delivery(struct __libuc_operation *record) {
+  const struct __libuc_operation_delivery delivery =
+      record->queue[record->queue_head];
+  record->queue_head =
+      (uint8_t)((record->queue_head + 1) % __libuc_operation_queue_capacity);
+  record->queue_count--;
+
+  return delivery;
 }
 
 static void park(struct __libuc_scheduler *scheduler,
@@ -175,9 +205,18 @@ void __libuc_scheduler_run(struct __libuc_scheduler *scheduler) {
         __builtin_trap();
       }
 
+      /* One path for every CQE: land it in the record's queue, then serve
+       * the parked waiter from the queue. A terminal delivery consumed
+       * with the queue drained retires the record. */
+      push_delivery(record, completion.res, completion.flags);
+      const struct __libuc_operation_delivery delivery = pop_delivery(record);
+
       struct __libuc_fiber *woken = record->waiter;
-      woken->await_res = completion.res;
-      release_operation(scheduler, record);
+      woken->await_res = delivery.res;
+      if ((delivery.cqe_flags & IORING_CQE_F_MORE) == 0 &&
+          record->queue_count == 0) {
+        release_operation(scheduler, record);
+      }
 
       scheduler->parked_count--;
       __libuc_scheduler_enqueue(scheduler, woken);
