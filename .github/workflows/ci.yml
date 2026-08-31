@@ -23,6 +23,10 @@ jobs:
   libuc:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     # A superseded build is cancelled here and its dependent jobs skipped.
     # Run-level cancellation would also kill a `latest` job mid-update.
     concurrency:
@@ -47,19 +51,30 @@ jobs:
             docker-bake.gha-cache.hcl
           targets: libuc
 
+      # Staged once here, in release shape: both publish jobs upload
+      # dist/ exactly as downloaded.
+      - name: Stage assets
+        run: mkdir dist && mv -- out/libuc/*/*.tar.gz dist/ && (cd dist && sha256sum -- * > SHA256SUMS)
+
       - uses: actions/upload-artifact@v7
         with:
           name: libuc
-          path: out/libuc/*/*.tar.gz
+          path: dist
+
+      # Signed provenance linking each asset to this workflow, commit, and
+      # toolchain; consumers check it with `gh attestation verify`.
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/*
 
       - name: Summarize artifacts
         run: |
           {
-            echo '| tarball | bytes | sha256 |'
+            echo '| asset | bytes | sha256 |'
             echo '| --- | --- | --- |'
-            for f in out/libuc/*/*.tar.gz; do
-              echo "| ${f#out/libuc/} | $(stat -c %s "$f") | $(sha256sum "$f" | cut -d' ' -f1) |"
-            done
+            while read -r sha name; do
+              echo "| $name | $(stat -c %s "dist/$name") | $sha |"
+            done < dist/SHA256SUMS
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Never cancelled mid-update: a superseding push queues behind the group,
@@ -81,9 +96,6 @@ jobs:
         with:
           name: libuc
           path: dist
-
-      - name: Stage assets
-        run: (cd dist && mv -- */*.tar.gz . && rmdir -- */ && sha256sum -- * > SHA256SUMS)
 
       # gh cannot move an existing tag; this push is the whole trick.
       - name: Float the latest tag to head
@@ -113,15 +125,17 @@ jobs:
           name: libuc
           path: dist
 
-      - name: Stage assets
-        run: (cd dist && mv -- */*.tar.gz . && rmdir -- */ && sha256sum -- * > SHA256SUMS)
-
       # No checkout in this job, so name the repo for gh explicitly.
+      # Assets upload only after the release exists, so a plain create is
+      # briefly visible empty; stay draft until they land, then the flip to
+      # published is atomic.
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: >-
-          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --notes
-          "include/ and lib/libc.a per architecture, plain -O2, Clang/LLD
-          pinned by the repo's flake.lock."
+        run: |
+          notes="include/ and lib/libc.a per architecture, plain -O2, \
+          Clang/LLD pinned by the repo's flake.lock. Provenance: \
+          gh attestation verify <asset> --repo ${GITHUB_REPOSITORY}"
+          gh release create "$GITHUB_REF_NAME" dist/* --draft --verify-tag --notes "$notes"
+          gh release edit "$GITHUB_REF_NAME" --draft=false
