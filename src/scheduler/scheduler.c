@@ -56,6 +56,29 @@ void __libuc_scheduler_enqueue(struct __libuc_scheduler *scheduler,
   scheduler->ready_tail = fiber;
 }
 
+static struct __libuc_operation *
+allocate_operation(struct __libuc_scheduler *scheduler,
+                   struct __libuc_fiber *waiter) {
+  struct __libuc_operation *record = scheduler->free_head;
+  if (record == nullptr) {
+    __builtin_trap();
+  }
+  scheduler->free_head = record->next;
+
+  record->waiter = waiter;
+  record->state = __LIBUC_OPERATION_STATE_ACTIVE;
+
+  return record;
+}
+
+static void release_operation(struct __libuc_scheduler *scheduler,
+                              struct __libuc_operation *record) {
+  record->generation++;
+  record->state = __LIBUC_OPERATION_STATE_FREE;
+  record->next = scheduler->free_head;
+  scheduler->free_head = record;
+}
+
 static void park(struct __libuc_scheduler *scheduler,
                  struct __libuc_fiber *fiber) {
   /* IOSQE flags link batches or skip CQEs; none is designed. And a full
@@ -77,8 +100,14 @@ static void park(struct __libuc_scheduler *scheduler,
     }
   }
 
+  struct __libuc_operation *record = allocate_operation(scheduler, fiber);
+
   *slot = *fiber->await_sqe;
-  slot->user_data = (uintptr_t)fiber;
+  slot->user_data = __libuc_operation_key_pack((struct __libuc_operation_key){
+      .generation = record->generation,
+      .slot = (uint64_t)(record - scheduler->table),
+      .tag = __LIBUC_OPERATION_TAG_RESULT,
+  });
   scheduler->parked_count++;
 }
 
@@ -127,10 +156,29 @@ void __libuc_scheduler_run(struct __libuc_scheduler *scheduler) {
         __builtin_trap();
       }
 
-      struct __libuc_fiber *woken =
-          (struct __libuc_fiber *)(uintptr_t)completion.user_data;
+      const struct __libuc_operation_key key =
+          __libuc_operation_key_unpack(completion.user_data);
+      if (key.slot >= scheduler_operation_slots) {
+        __builtin_trap();
+      }
 
+      /* Repacking the record's own identity compares tag, slot, and the
+       * generation bits the key carries in one test. */
+      struct __libuc_operation *record = &scheduler->table[key.slot];
+      if (record->state != __LIBUC_OPERATION_STATE_ACTIVE ||
+          completion.user_data !=
+              __libuc_operation_key_pack((struct __libuc_operation_key){
+                  .generation = record->generation,
+                  .slot = key.slot,
+                  .tag = __LIBUC_OPERATION_TAG_RESULT,
+              })) {
+        __builtin_trap();
+      }
+
+      struct __libuc_fiber *woken = record->waiter;
       woken->await_res = completion.res;
+      release_operation(scheduler, record);
+
       scheduler->parked_count--;
       __libuc_scheduler_enqueue(scheduler, woken);
     }
