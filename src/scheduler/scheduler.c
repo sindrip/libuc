@@ -31,9 +31,10 @@ void __libuc_scheduler_enqueue(struct __libuc_scheduler *scheduler,
 
 static void park(struct __libuc_scheduler *scheduler,
                  struct __libuc_fiber_request *request) {
-  /* IOSQE flags link batches or skip CQEs; none is designed. And a full
-   * CQ lets the kernel drop wakes behind a masked -EBADR, so parking
-   * stops at the CQ's capacity. */
+  /* IOSQE flags link batches or skip CQEs; none is designed. And with
+   * one CQE per parked operation, admitting at most cq_entries of them
+   * means the CQ never fills, so the kernel's overflow path stays out of
+   * the picture entirely. */
   const struct io_uring_sqe *await = request->argument;
   if (await->flags != 0 ||
       scheduler->parked_count == scheduler->ring.cq_entries) {
