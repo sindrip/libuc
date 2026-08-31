@@ -1,7 +1,7 @@
 ---
 id: UC-024
 title: Thread exit, join, and detach
-status: todo
+status: done
 depends: []
 ---
 

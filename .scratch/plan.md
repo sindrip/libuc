@@ -37,10 +37,14 @@ _start
        -> install its thread pointer
        -> run constructors
        -> call main
-       -> publish EXIT
-  -> destroy the root fiber from the scheduler stack
-  -> exit_group(main status)
+       -> main returns: publish PROCESS_EXIT with its value
+  -> the reactor stops and exit_group carries that status
 ```
+
+Returning from `main` is `exit` (C11 5.1.2.2.3): the reactor stops and every
+other fiber is abandoned to `exit_group`. A `main` that ends with `thrd_exit`
+instead leaves a zombie; the reactor drains and the program exits
+`EXIT_SUCCESS` after the last thread terminates (7.26.5.5).
 
 The landed layers are:
 
@@ -54,6 +58,7 @@ The landed layers are:
 | reactor | one SQE and exactly one CQE per await; a request lives on the asking fiber's frame and the switch carries its address; CQE `user_data` is that request pointer |
 | fairness | one ready generation per reactor iteration; pure yield generations do not enter the kernel |
 | public `errno` | compiler-visible `_Thread_local int`; therefore per-fiber after thread-pointer installation |
+| threads | `<threads.h>` create, current, equal, yield, exit, join, and detach over fiber requests; a join parks in the target's single joiner slot, and a record outlives its exit until joined or detached |
 | descriptor I/O | public `pipe2`, `pipe`, `read`, `write`, and `close`; completion errors translate to `errno` |
 
 The single-CQE restriction is enforced, not implicit: the current reap path
@@ -84,25 +89,21 @@ iterator engine.
 
 The ticket index is `tickets/README.md`. The useful dependency order is:
 
-1. **UC-024 — thread exit, join, and detach.** The thread half of fiber
-   lifetime, ahead of UC-017 because it needs no operation records. Returning
-   from `main` is `exit` (C11 5.1.2.2.3); `thrd_exit` from `main` drains the
-   scheduler, then `EXIT_SUCCESS` (7.26.5.5).
-2. **UC-011 — scheduler-owned stack/block recycling.** It makes the scheduler
+1. **UC-011 — scheduler-owned stack/block recycling.** It makes the scheduler
    ownership seam explicit, then measures separate versus carved TLS storage.
-3. **UC-019 — completion-loss detection.** It maps and checks the kernel's
+2. **UC-019 — completion-loss detection.** It maps and checks the kernel's
    dropped-CQE evidence while preserving the current single-CQE admission proof.
-4. **UC-020 — pull iterators over operation records.** The completion key
+3. **UC-020 — pull iterators over operation records.** The completion key
    becomes generation + operation slot + tag. The private engine proves
    repeated delivery with multishot poll while fused `await` keeps its current
    performance.
-5. **UC-017 — automatic iterator teardown and zombies.** Fiber exit cancels
+4. **UC-017 — automatic iterator teardown and zombies.** Fiber exit cancels
    owned operations and delays all reclamation until their terminal events
    arrive.
-6. **UC-021 and UC-022 — typed socket iterators.** Accepted connections use
+5. **UC-021 and UC-022 — typed socket iterators.** Accepted connections use
    bounded single-shot rearming; receive chunks use provided-buffer credit.
    Neither API promises a particular io_uring opcode.
-7. **UC-023 — zero-copy send lifetime.** One send remains a one-result API;
+6. **UC-023 — zero-copy send lifetime.** One send remains a one-result API;
    its notification delays buffer reuse rather than becoming an iterator item.
 
 UC-012 is not implementation work; it restores behavioral acceptance when a

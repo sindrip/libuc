@@ -9,7 +9,6 @@ a second architecture manual.
 
 | id | waits on | outcome |
 |---|---|---|
-| UC-024 | nothing | thread exit, join, and detach; return from `main` is `exit` |
 | UC-011 | nothing | scheduler-owned stack and TLS-block recycling |
 | UC-019 | nothing | direct completion-loss detection for the current ring |
 | UC-020 | UC-019 | operation records and the common pull-iterator engine |
@@ -21,7 +20,7 @@ a second architecture manual.
 UC-012 is environment-blocked rather than implementation work: x86-64
 behavioral acceptance needs an FSGSBASE-capable machine or guest.
 
-The intended implementation order is UC-024, UC-011, UC-019, UC-020, UC-017,
+The intended implementation order is UC-011, UC-019, UC-020, UC-017,
 UC-021, then UC-022 and UC-023. UC-019 is independent and may land before
 UC-011 if ring correctness is being worked on directly.
 
@@ -30,7 +29,9 @@ UC-011 if ring correctness is being worked on directly.
 - UC-013: the current fiber-await reactor and its single-CQE contract;
 - UC-014: public descriptor I/O, count conversion, and per-fiber `errno`;
 - UC-015: ready-generation fairness;
-- UC-018: socket ABI authorship and the single-shot connection lifecycle.
+- UC-018: socket ABI authorship and the single-shot connection lifecycle;
+- UC-024: thread exit, join, and detach; returning from `main` is `exit`,
+  and `thrd_exit` from `main` drains to `EXIT_SUCCESS`.
 
 ## Retired history
 
