@@ -8,7 +8,6 @@
 
 static thrd_t main_thread;
 static thrd_t worker_thread;
-static thrd_t worker_self;
 static bool worker_ran;
 static bool worker_ok = true;
 static size_t worker_turns;
@@ -18,10 +17,11 @@ static int worker(void *opaque) {
   worker_ran = true;
   worker_ok = worker_ok && opaque == &main_thread;
 
-  /* A child cannot read its creator's out-param — assignment races the
-   * child's first turn — so it reports its own identity instead. */
-  worker_self = thrd_current();
-  worker_ok = worker_ok && !thrd_equal(worker_self, main_thread);
+  /* thrd_create's completion synchronizes with this thread's start
+   * (C11 7.26.5.1), so the handle its creator stored is readable here
+   * and names this thread. */
+  worker_ok = worker_ok && thrd_equal(thrd_current(), worker_thread);
+  worker_ok = worker_ok && !thrd_equal(thrd_current(), main_thread);
 
   worker_turns++;
   thrd_yield();
@@ -68,9 +68,6 @@ int main(void) {
 
   if (!worker_ran || !worker_ok) {
     return 122;
-  }
-  if (!thrd_equal(worker_self, worker_thread)) {
-    return 118;
   }
   /* Interleaving after a spawn is the scheduler's business, not a
    * promise; that yield resumes a fiber where it left off is fiber_io's

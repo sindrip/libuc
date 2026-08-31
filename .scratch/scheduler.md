@@ -28,9 +28,19 @@ The scheduler currently owns:
 - `ready` and `parked`, which count the two places a live fiber can stand under
   the single-CQE contract.
 
-Fiber records remain caller-owned. UC-011 must make scheduler ownership
-explicit before a per-scheduler stack/block pool can replace the current
-per-fiber mappings.
+A fiber's record is carved from the top of its own stack mapping, so the
+pointer exists exactly as long as the fiber does. UC-011 must still make
+scheduler ownership explicit before a per-scheduler pool can replace the
+current per-fiber mappings.
+
+What a fiber asks its scheduler for lives on the asking frame, which the
+suspension keeps alive: the context switch carries the address of a
+`{kind, argument, result, fiber}` request, and the scheduler answers in
+place. Nothing about a request is stored in the fiber, so none of it is
+readable outside the window in which it means something. One-shot
+`user_data` therefore carries the request pointer rather than a fiber
+pointer, and the request records which fiber to resume. SPAWN is one of
+these requests, not a separate path.
 
 Scheduler zero lives in the active startup frame on the kernel-provided stack.
 Startup calls `become`, creates and enqueues the root fiber, runs the loop,
@@ -48,10 +58,19 @@ Each dispatch produces one request:
 
 | request | scheduler action |
 |---|---|
-| `NONE` | trap: control returned without a published request |
 | `YIELD` | append the fiber to ready |
 | `EXIT` | leave it unqueued; its caller may reclaim it after the loop returns |
 | `AWAIT` | copy the fiber-frame SQE into the ring batch and increment `parked` |
+| `SPAWN` | create the fiber, answer the spawner, and queue the spawner ahead of what it made |
+
+There is no `NONE`: a kind rides the switch, so it cannot be stale or
+unset. Zero is what a resume passes in, so seeing it come back is a
+broken transfer and traps.
+
+`SPAWN`'s ordering is not a preference. C11 7.26.5.1 makes `thrd_create`'s
+completion synchronize with the start of the new thread, so the spawner
+must be resumed far enough to store the handle before its child can read
+it.
 
 After the generation:
 

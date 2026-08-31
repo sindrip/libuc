@@ -84,13 +84,16 @@ void __libuc_scheduler_run(struct __libuc_scheduler *scheduler) {
         const struct __libuc_fiber_spawn_request *spawn = request->argument;
         struct __libuc_fiber *spawned = __libuc_fiber_spawn(
             spawn->stack_length, spawn->entry, spawn->argument);
+
+        /* The spawner goes back on the queue ahead of what it made:
+         * thrd_create's completion synchronizes with the start of the new
+         * thread (C11 7.26.5.1), so the handle must be stored before the
+         * child can read it. */
+        request->result = (long)(uintptr_t)spawned;
+        __libuc_scheduler_enqueue(scheduler, fiber);
         if (spawned != nullptr) {
           __libuc_scheduler_enqueue(scheduler, spawned);
         }
-
-        /* Both are runnable now: the spawner learns what it made. */
-        request->result = (long)(uintptr_t)spawned;
-        __libuc_scheduler_enqueue(scheduler, fiber);
         break;
       }
       }

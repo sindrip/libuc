@@ -48,10 +48,10 @@ The landed layers are:
 |---|---|
 | thread-local image | one immutable `PT_TLS` description decoded from program headers; absence is valid |
 | thread-local block | one mapping per fiber, ABI-specific placement, common two-word TCB |
-| fiber | caller-owned record, caller-sized unguarded stack mapping, saved callee context, per-fiber TCB |
+| fiber | record carved from the top of its own unguarded stack mapping, saved callee context, per-fiber TCB |
 | ring | `SINGLE_ISSUER | DEFER_TASKRUN | NO_SQARRAY | SQ_REWIND | SUBMIT_ALL`; CQ acquire/release; short-submit retry |
-| scheduler | caller-owned scheduler zero, intrusive FIFO, `ready`/`parked` structural counts |
-| reactor | one SQE and exactly one CQE per await; CQE `user_data` is the parked fiber pointer |
+| scheduler | caller-owned scheduler zero, intrusive FIFO, `ready`/`parked` structural counts; owns the request protocol a fiber raises |
+| reactor | one SQE and exactly one CQE per await; a request lives on the asking fiber's frame and the switch carries its address; CQE `user_data` is that request pointer |
 | fairness | one ready generation per reactor iteration; pure yield generations do not enter the kernel |
 | public `errno` | compiler-visible `_Thread_local int`; therefore per-fiber after thread-pointer installation |
 | descriptor I/O | public `pipe2`, `pipe`, `read`, `write`, and `close`; completion errors translate to `errno` |

@@ -73,9 +73,12 @@ Do not violate these without explicit discussion.
 
    A call that reaches the scheduler is such a point: `thrd_create` may
    reschedule, and so may anything built on a fiber request. What follows
-   the call is the runtime's choice and is never promised — no caller may
-   depend on whether a spawner or its child runs first. Keeping that
-   unpromised is what leaves fairness and locality free to change later.
+   is the runtime's choice wherever no standard fixes it, and keeping it
+   unpromised is what leaves fairness and locality free to change. Where
+   a standard does fix it, the runtime obeys: `thrd_create`'s completion
+   synchronizes with the start of the new thread (C11 7.26.5.1), so a
+   spawner is resumed far enough to store the handle before its child
+   runs.
 
 8. **Do not create another purity exception silently.** Update the registry
    and discuss it first.

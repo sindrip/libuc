@@ -45,8 +45,8 @@ the ownership API with it as the consumer rather than inventing a private
 spawn surface to replace later. `thrd_create` needs the pool (no caller-owned
 fiber struct in a public signature) plus an ambient-scheduler accessor (the
 TCB already carries the current fiber; the scheduler can ride alongside);
-`thrd_join` additionally needs exit tracking and reclaim rules, UC-017's
-territory, so create/join may split. `thrd_yield`, `thrd_sleep`
+`thrd_join` additionally needs exit tracking and reclaim rules, which are
+UC-024's, so create and join split. `thrd_yield`, `thrd_sleep`
 (`IORING_OP_TIMEOUT`), and `thrd_current` are separable cheap slices. When
 `thrd_*` goes public, record the progress caveat: cooperative fibers satisfy
 C11's loose forward-progress only because blocking calls suspend — vendored
