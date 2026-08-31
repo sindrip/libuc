@@ -3,44 +3,17 @@
 #include <stdint.h>
 
 #include <linux/io_uring.h>
-#include <linux/mman.h>
 
 #include "syscall.h"
 
-/* One record per parked fiber, and park stops at the CQ's capacity —
- * the default grant is twice the SQ — so this keeps the CQ the binding
- * bound rather than the table. */
-constexpr uint32_t scheduler_operation_slots =
-    2 * __libuc_scheduler_ring_entries;
-static_assert(scheduler_operation_slots == 2048);
-static_assert(scheduler_operation_slots <= 1U << __libuc_operation_slot_bits);
-
-constexpr size_t scheduler_table_length =
-    scheduler_operation_slots * sizeof(struct __libuc_operation);
-
 [[nodiscard]] bool
 __libuc_scheduler_become(struct __libuc_scheduler *scheduler) {
-  const long address =
-      __libuc_sys_mmap(nullptr, scheduler_table_length, PROT_READ | PROT_WRITE,
-                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  if (__libuc_syscall_failed(address)) {
-    return false;
-  }
-
   *scheduler = (struct __libuc_scheduler){
-      .table = (struct __libuc_operation *)(uintptr_t)address,
+      .ready_head = nullptr,
+      .ready_tail = nullptr,
   };
-  for (size_t slot = scheduler_operation_slots; slot != 0; slot--) {
-    scheduler->table[slot - 1].next = scheduler->free_head;
-    scheduler->free_head = &scheduler->table[slot - 1];
-  }
 
-  if (!__libuc_ring_create(&scheduler->ring, __libuc_scheduler_ring_entries)) {
-    (void)__libuc_sys_munmap(scheduler->table, scheduler_table_length);
-    return false;
-  }
-
-  return true;
+  return __libuc_ring_create(&scheduler->ring, __libuc_scheduler_ring_entries);
 }
 
 void __libuc_scheduler_enqueue(struct __libuc_scheduler *scheduler,
@@ -54,59 +27,6 @@ void __libuc_scheduler_enqueue(struct __libuc_scheduler *scheduler,
     scheduler->ready_tail->ready_next = fiber;
   }
   scheduler->ready_tail = fiber;
-}
-
-static struct __libuc_operation *
-allocate_operation(struct __libuc_scheduler *scheduler,
-                   struct __libuc_fiber *waiter) {
-  struct __libuc_operation *record = scheduler->free_head;
-  if (record == nullptr) {
-    __builtin_trap();
-  }
-  scheduler->free_head = record->next;
-
-  record->waiter = waiter;
-  record->state = __LIBUC_OPERATION_STATE_ACTIVE;
-  record->queue_head = 0;
-  record->queue_count = 0;
-
-  return record;
-}
-
-static void release_operation(struct __libuc_scheduler *scheduler,
-                              struct __libuc_operation *record) {
-  record->generation++;
-  record->state = __LIBUC_OPERATION_STATE_FREE;
-  record->next = scheduler->free_head;
-  scheduler->free_head = record;
-}
-
-/* Capacity overflow is the future cancel-and-rearm seam; no policy is
- * designed, so it traps. */
-static void push_delivery(struct __libuc_operation *record, int32_t res,
-                          uint32_t cqe_flags) {
-  if (record->queue_count == __libuc_operation_queue_capacity) {
-    __builtin_trap();
-  }
-
-  const uint8_t tail = (uint8_t)((record->queue_head + record->queue_count) %
-                                 __libuc_operation_queue_capacity);
-  record->queue[tail] = (struct __libuc_operation_delivery){
-      .res = res,
-      .cqe_flags = cqe_flags,
-  };
-  record->queue_count++;
-}
-
-static struct __libuc_operation_delivery
-pop_delivery(struct __libuc_operation *record) {
-  const struct __libuc_operation_delivery delivery =
-      record->queue[record->queue_head];
-  record->queue_head =
-      (uint8_t)((record->queue_head + 1) % __libuc_operation_queue_capacity);
-  record->queue_count--;
-
-  return delivery;
 }
 
 static void park(struct __libuc_scheduler *scheduler,
@@ -130,14 +50,8 @@ static void park(struct __libuc_scheduler *scheduler,
     }
   }
 
-  struct __libuc_operation *record = allocate_operation(scheduler, fiber);
-
   *slot = *fiber->await_sqe;
-  slot->user_data = __libuc_operation_key_pack((struct __libuc_operation_key){
-      .generation = record->generation,
-      .slot = (uint64_t)(record - scheduler->table),
-      .tag = __LIBUC_OPERATION_TAG_RESULT,
-  });
+  slot->user_data = (uintptr_t)fiber;
   scheduler->parked_count++;
 }
 
@@ -186,38 +100,10 @@ void __libuc_scheduler_run(struct __libuc_scheduler *scheduler) {
         __builtin_trap();
       }
 
-      const struct __libuc_operation_key key =
-          __libuc_operation_key_unpack(completion.user_data);
-      if (key.slot >= scheduler_operation_slots) {
-        __builtin_trap();
-      }
+      struct __libuc_fiber *woken =
+          (struct __libuc_fiber *)(uintptr_t)completion.user_data;
 
-      /* Repacking the record's own identity compares tag, slot, and the
-       * generation bits the key carries in one test. */
-      struct __libuc_operation *record = &scheduler->table[key.slot];
-      if (record->state != __LIBUC_OPERATION_STATE_ACTIVE ||
-          completion.user_data !=
-              __libuc_operation_key_pack((struct __libuc_operation_key){
-                  .generation = record->generation,
-                  .slot = key.slot,
-                  .tag = __LIBUC_OPERATION_TAG_RESULT,
-              })) {
-        __builtin_trap();
-      }
-
-      /* One path for every CQE: land it in the record's queue, then serve
-       * the parked waiter from the queue. A terminal delivery consumed
-       * with the queue drained retires the record. */
-      push_delivery(record, completion.res, completion.flags);
-      const struct __libuc_operation_delivery delivery = pop_delivery(record);
-
-      struct __libuc_fiber *woken = record->waiter;
-      woken->await_res = delivery.res;
-      if ((delivery.cqe_flags & IORING_CQE_F_MORE) == 0 &&
-          record->queue_count == 0) {
-        release_operation(scheduler, record);
-      }
-
+      woken->await_res = completion.res;
       scheduler->parked_count--;
       __libuc_scheduler_enqueue(scheduler, woken);
     }

@@ -7,6 +7,15 @@ depends: [UC-013, UC-014]
 
 ## Goal
 
+**Deferred 2026-09-01: blocked on a consumer, not on mechanism.** Arming
+a multishot without consuming it is incoherent — deliveries accumulate
+with nowhere to go — so the surface cannot be designed before the first
+real consumer states what it needs. That consumer is a server written
+against the runtime's bounded receiver, not a libc wrapper: POSIX
+`accept` cannot hide multishot, since an unconsumed delivery holds an fd
+the kernel already installed, and no POSIX call signals "I am done
+accepting". This ticket reopens when that consumer has a ticket.
+
 Support operations whose one SQE produces many CQEs — multishot accept and
 recv, zero-copy send notifications — without corrupting the reactor's
 single-shot routing.
@@ -201,15 +210,35 @@ names: multishot accept is a receiver of connections; `next()` consumes
 a buffered result or parks. `__libuc_fiber_await` keeps its
 exactly-one-CQE contract throughout as the length-one veneer.
 
-Landed so far (a853417..5ceffa3): the packed key, the record and table,
-park/reap speaking the key, the one-path delivery queue with release at
-consume, and the await-NOP benchmark with its baseline. The consumer
-seam was built on top of that and backed out; the multishot-poll forcing
-probe written for it (`IORING_POLL_ADD_MULTI`, uapi io_uring.h:371, over
-UC-014's pipe — no socket dependency) proved the machinery works, and is
-worth recovering whatever shape replaces the seam.
+**Nothing of this ticket remains in the tree (2026-09-01).** The packed
+key, the record and table, park/reap speaking the key, and the one-path
+delivery queue all landed (a853417..3dbe1b7), then came out again: the
+consumer seam built on top was backed out, and once multishot had no
+consumer the machinery underneath it had none either. `user_data` is a
+fiber pointer again, which is correct while one fiber owns one operation
+producing one completion. What was kept from the episode is independent
+of it: the 1024/2048 ring geometry, the `ready_count`/`parked_count`
+naming, the flood probe deriving its count from the geometry, and the
+await-NOP benchmark with its baseline (~250 ns/op single, ~83 ns/op
+across 64 fibers).
 
-Whatever that shape is, these still hold: drop the reservation trap, gate submission
+Two artifacts are worth recovering rather than rewriting: the
+multishot-poll forcing probe (`IORING_POLL_ADD_MULTI`, uapi
+io_uring.h:371, over UC-014's pipe — no socket dependency), which proved
+the routing works, and the key encoding itself, which was sound.
+
+**The key and table belong to UC-017, not here.** They were justified
+twice over — by multishot, and by cancellation — and only the second
+justification is still live. A cancelled operation's completion can
+arrive after its fiber is gone, which under fiber-pointer keys is a
+use-after-free: reap dereferences a dead fiber and enqueues it. UC-017
+cannot be built without generation-bearing identity, and it needs it for
+plain single-shot reads, nothing to do with streams. So the key, the
+table, and the state enum should return as UC-017's opening move,
+alongside the readers that make each field earn itself, rather than as
+machinery this ticket leaves lying around.
+
+Whatever shape multishot returns in, these still hold: drop the reservation trap, gate submission
 on the ring's staged batch, recognize `-EBADR` as the fatal
 completion-loss signal, wrap the handle in its struct, derive parked
 from the waits-on relation instead of counting, and return the overflow
