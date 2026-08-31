@@ -55,7 +55,7 @@ protocol on one record once the kernel allocates its notification: the primary
 completion carries `F_MORE` (`out/src/io_uring/net.c:1598,1609-1611`) and the
 later notification carries `F_NOTIF`, addressed by `sqe->addr3`
 (`out/src/io_uring/net.c:1398-1404`) as {same slot, same generation, NOTIF tag}
-against the primary's PRIMARY tag. A preparation failure before notification
+against the primary's RESULT tag. A preparation failure before notification
 allocation is an ordinary one-CQE terminal error. A separate record for the
 two-phase case would leave the primary's `F_MORE` half with no terminal
 transition and leak `live_ops`; the record retires when both phases have
@@ -85,6 +85,14 @@ socket dependency. UC-017 owns what exit makes automatic: cancellation
 on fiber death, zombies, and delayed reclamation. The zero-copy
 notification probe waits for the ticket that brings sockets and
 `SEND_ZC`; UC-014 has neither.
+
+Decided 2026-08-31: `user_data` is tag in bits 0-3 (zero invalid, so a
+gap filler's zero key never decodes), slot in bits 4-19, generation in
+bits 20-63. The slab is a constexpr 256 records per scheduler; exhaustion
+traps until a measurement funds growth. The delivery queue is four inline
+`{res, flags}` slots; capacity overflow cancels the stream at the kernel
+and the consumer rearms after draining — the same rearm path a
+kernel-ended stream already requires.
 
 ## Acceptance
 

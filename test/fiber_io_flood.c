@@ -6,9 +6,9 @@
 #include "scheduler/scheduler.h"
 #include "thread_local/thread_local.h"
 
-/* One sweep parks all of these; past the ring's 64 SQ entries the batch
+/* One sweep parks more fibers than the ring has SQ entries, so the batch
  * must flush mid-sweep or the rest are silently dropped. */
-constexpr size_t flood_count = 70;
+constexpr size_t flood_count = __libuc_scheduler_ring_entries + 6;
 
 static struct __libuc_fiber fibers[flood_count];
 static size_t wakes;
