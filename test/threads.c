@@ -1,4 +1,5 @@
 #include <stddef.h>
+#include <stdint.h>
 
 #include <threads.h>
 
@@ -14,6 +15,7 @@ static size_t worker_turns;
 static size_t creator_turns;
 static int worker_result;
 static int quick_result;
+static bool detached_ran;
 
 /* thrd_exit ends the thread from any call depth with that result,
  * exactly as returning it from the entry does. */
@@ -37,6 +39,11 @@ static int worker(void *opaque) {
 }
 
 static int quick([[maybe_unused]] void *opaque) { return 9; }
+
+static int detached([[maybe_unused]] void *opaque) {
+  detached_ran = true;
+  return 5;
+}
 
 static int creator([[maybe_unused]] void *opaque) {
   main_thread = thrd_current();
@@ -62,6 +69,46 @@ static int creator([[maybe_unused]] void *opaque) {
    * without blocking. */
   if (thrd_join(quick_thread, &quick_result) != thrd_success) {
     return 4;
+  }
+
+  thrd_t detached_thread;
+  if (thrd_create(&detached_thread, detached, nullptr) != thrd_success) {
+    return 5;
+  }
+  if (thrd_detach(detached_thread) != thrd_success) {
+    return 6;
+  }
+  thrd_yield();
+  /* The yield let the detached thread run to exit, where the scheduler
+   * reclaimed it with no join. */
+  if (!detached_ran) {
+    return 7;
+  }
+
+  thrd_t zombie_thread;
+  if (thrd_create(&zombie_thread, quick, nullptr) != thrd_success) {
+    return 8;
+  }
+  const uintptr_t zombie_address = (uintptr_t)zombie_thread;
+  thrd_yield();
+  /* The target is a zombie by now; this detach disposes of it on the
+   * spot. */
+  if (thrd_detach(zombie_thread) != thrd_success) {
+    return 9;
+  }
+
+  /* Every thread stack is the same size and this kernel's mmap fills
+   * the highest fitting hole, so a fully reclaimed chain hands the same
+   * slot back; a leaked mapping shifts the address. */
+  thrd_t reuse_thread;
+  if (thrd_create(&reuse_thread, quick, nullptr) != thrd_success) {
+    return 10;
+  }
+  if ((uintptr_t)reuse_thread != zombie_address) {
+    return 11;
+  }
+  if (thrd_join(reuse_thread, nullptr) != thrd_success) {
+    return 12;
   }
 
   creator_turns++;

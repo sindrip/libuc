@@ -106,7 +106,11 @@ __libuc_fiber_resume(struct __libuc_fiber *fiber) {
   }
   if (request->kind == __LIBUC_FIBER_REQUEST_EXIT) {
     fiber->context = (struct fiber_context){0};
-    fiber->life = __LIBUC_FIBER_EXITED;
+    /* Exiting does not overwrite a detach mark: the scheduler reads it
+     * to reclaim at once instead of keeping a zombie. */
+    if (fiber->life == __LIBUC_FIBER_LIVE) {
+      fiber->life = __LIBUC_FIBER_EXITED;
+    }
   }
   fiber->return_to = nullptr;
   request->fiber = fiber;
@@ -148,6 +152,17 @@ void __libuc_fiber_yield(void) {
                      (unsigned long)(uintptr_t)&request);
 
   return request.result;
+}
+
+void __libuc_fiber_detach(struct __libuc_fiber *target) {
+  struct __libuc_fiber *fiber = __libuc_fiber_current();
+  struct __libuc_fiber_request request = {
+      .kind = __LIBUC_FIBER_REQUEST_DETACH,
+      .target = target,
+  };
+
+  (void)fiber_switch(&fiber->context, fiber->return_to,
+                     (unsigned long)(uintptr_t)&request);
 }
 
 [[nodiscard]] struct __libuc_fiber *

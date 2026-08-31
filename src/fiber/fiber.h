@@ -15,6 +15,7 @@ enum __libuc_fiber_request_kind : unsigned long {
   __LIBUC_FIBER_REQUEST_AWAIT,
   __LIBUC_FIBER_REQUEST_SPAWN,
   __LIBUC_FIBER_REQUEST_JOIN,
+  __LIBUC_FIBER_REQUEST_DETACH,
 };
 
 struct io_uring_sqe;
@@ -47,10 +48,12 @@ struct __libuc_fiber_request {
 };
 
 /* A record outlives its exit: the mapping keeps the status readable
- * until a join or detach takes it. Spawn zero-initializes the record,
- * so live must be the zero state. */
+ * until a join or detach takes it. A detached fiber skips the zombie:
+ * its exit reclaims it at once. Spawn zero-initializes the record, so
+ * live must be the zero state. */
 enum __libuc_fiber_life : uint32_t {
   __LIBUC_FIBER_LIVE,
+  __LIBUC_FIBER_DETACHED,
   __LIBUC_FIBER_EXITED,
 };
 
@@ -112,6 +115,12 @@ void __libuc_fiber_yield(void);
  * Joining yourself, or a target another fiber already joins, traps.
  * With no current fiber this faults. */
 [[nodiscard]] long __libuc_fiber_join(struct __libuc_fiber *target);
+
+/* Give up the right to join the target: a live target is reclaimed by
+ * its exit, an exited one right now; either way the handle is dead
+ * afterward. Detaching a target twice, or one a fiber joins, traps;
+ * detaching yourself is allowed. With no current fiber this faults. */
+void __libuc_fiber_detach(struct __libuc_fiber *target);
 
 /* Exactly one CQE; the reap loop traps streams. The suspended frame
  * keeps the SQE and its buffers live through the CQE. Returns res; with

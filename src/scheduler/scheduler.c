@@ -76,14 +76,20 @@ void __libuc_scheduler_run(struct __libuc_scheduler *scheduler) {
         __libuc_scheduler_enqueue(scheduler, fiber);
         break;
       case __LIBUC_FIBER_REQUEST_EXIT: {
+        /* The EXIT request lives on this fiber's mapping: after either
+         * reclaim below, neither is touched again. */
+        if (fiber->life == __LIBUC_FIBER_DETACHED) {
+          if (!__libuc_fiber_destroy(fiber)) {
+            __builtin_trap();
+          }
+          break;
+        }
         struct __libuc_fiber_request *joiner = fiber->joiner;
         if (joiner == nullptr) {
           break;
         }
         scheduler->joining_count--;
         joiner->result = fiber->status;
-        /* The EXIT request lives on the mapping being released; neither
-         * is touched past this point. */
         if (!__libuc_fiber_destroy(fiber)) {
           __builtin_trap();
         }
@@ -111,7 +117,8 @@ void __libuc_scheduler_run(struct __libuc_scheduler *scheduler) {
       }
       case __LIBUC_FIBER_REQUEST_JOIN: {
         struct __libuc_fiber *target = request->target;
-        if (target == fiber || target->joiner != nullptr) {
+        if (target == fiber || target->joiner != nullptr ||
+            target->life == __LIBUC_FIBER_DETACHED) {
           __builtin_trap();
         }
         if (target->life == __LIBUC_FIBER_EXITED) {
@@ -124,6 +131,22 @@ void __libuc_scheduler_run(struct __libuc_scheduler *scheduler) {
         }
         target->joiner = request;
         scheduler->joining_count++;
+        break;
+      }
+      case __LIBUC_FIBER_REQUEST_DETACH: {
+        struct __libuc_fiber *target = request->target;
+        if (target->joiner != nullptr ||
+            target->life == __LIBUC_FIBER_DETACHED) {
+          __builtin_trap();
+        }
+        if (target->life == __LIBUC_FIBER_EXITED) {
+          if (!__libuc_fiber_destroy(target)) {
+            __builtin_trap();
+          }
+        } else {
+          target->life = __LIBUC_FIBER_DETACHED;
+        }
+        __libuc_scheduler_enqueue(scheduler, fiber);
         break;
       }
       }

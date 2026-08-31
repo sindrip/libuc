@@ -18,6 +18,11 @@ int thrd_create(thrd_t *thr, thrd_start_t func, void *arg) {
 
 thrd_t thrd_current(void) { return __libuc_fiber_current(); }
 
+int thrd_detach(thrd_t thr) {
+  __libuc_fiber_detach(thr);
+  return thrd_success;
+}
+
 int thrd_equal(thrd_t lhs, thrd_t rhs) { return lhs == rhs; }
 
 [[noreturn]] void thrd_exit(int res) { __libuc_fiber_exit(res); }
