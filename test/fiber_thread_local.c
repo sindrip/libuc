@@ -56,14 +56,14 @@ int main(void) {
   /* A suspended fiber's thread-local value must survive the sibling's
    * turns. */
   for (int turn = 0; turn < 2; turn++) {
-    if (__libuc_fiber_resume(first) != __LIBUC_FIBER_REQUEST_YIELD ||
+    if (__libuc_fiber_resume(first)->kind != __LIBUC_FIBER_REQUEST_YIELD ||
         __libuc_fiber_current() != root ||
-        __libuc_fiber_resume(second) != __LIBUC_FIBER_REQUEST_YIELD) {
+        __libuc_fiber_resume(second)->kind != __LIBUC_FIBER_REQUEST_YIELD) {
       return 122;
     }
   }
-  if (__libuc_fiber_resume(first) != __LIBUC_FIBER_REQUEST_EXIT ||
-      __libuc_fiber_resume(second) != __LIBUC_FIBER_REQUEST_EXIT ||
+  if (__libuc_fiber_resume(first)->kind != __LIBUC_FIBER_REQUEST_EXIT ||
+      __libuc_fiber_resume(second)->kind != __LIBUC_FIBER_REQUEST_EXIT ||
       __libuc_fiber_current() != root) {
     return 121;
   }

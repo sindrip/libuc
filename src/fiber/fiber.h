@@ -9,22 +9,35 @@
 /* Rides the context switch rather than living in the fiber, so a
  * request cannot be read stale. Zero is not a request: it is what a
  * resume passes in, and seeing it back means a broken transfer. */
-enum __libuc_fiber_request : unsigned long {
+enum __libuc_fiber_request_kind : unsigned long {
   __LIBUC_FIBER_REQUEST_YIELD = 1,
   __LIBUC_FIBER_REQUEST_EXIT,
   __LIBUC_FIBER_REQUEST_AWAIT,
   __LIBUC_FIBER_REQUEST_SPAWN,
 };
 
-/* A SPAWN request's argument, living on the requesting fiber's suspended
- * frame; the scheduler writes back the fiber it made, or nullptr. */
 struct io_uring_sqe;
 
+/* A SPAWN request's argument. */
 struct __libuc_fiber_spawn_request {
   size_t stack_length;
   int (*entry)(void *);
   void *argument;
-  struct __libuc_fiber *spawned;
+};
+
+/* What a suspended fiber is asking for. It lives on the asking fiber's
+ * frame, which the suspension keeps alive, and the switch carries its
+ * address — so nothing about a request is readable outside the window
+ * in which it means something. */
+struct __libuc_fiber_request {
+  enum __libuc_fiber_request_kind kind;
+  /* An SQE for AWAIT, a spawn request for SPAWN. */
+  const void *argument;
+  /* The scheduler's answer, written before it resumes the asker. */
+  long result;
+  /* Stamped by the scheduler when it takes the request, so an answer
+   * that arrives later knows whom to resume. */
+  struct __libuc_fiber *fiber;
 };
 
 struct __libuc_fiber {
@@ -39,13 +52,6 @@ struct __libuc_fiber {
   struct fiber_context *return_to;
   /* Scheduler-owned FIFO link; a fiber is in at most one queue. */
   struct __libuc_fiber *ready_next;
-  /* The suspended frame's request argument — an SQE for AWAIT, a spawn
-   * request for SPAWN. The scheduler consumes it before any resume. */
-  const void *request_argument;
-  /* The request's answer: a completion's res, or the spawned fiber. The
-   * scheduler stores it before resuming. */
-  long request_result;
-  enum __libuc_fiber_request request;
   /* The entry's return value, readable once the fiber has exited. */
   int status;
   uint32_t : 32;
@@ -66,8 +72,10 @@ __libuc_fiber_start(size_t stack_length, int (*entry)(void *),
 
 [[nodiscard]] bool __libuc_fiber_destroy(const struct __libuc_fiber *fiber);
 
-/* EXIT poisons the context, so resuming again faults. */
-[[nodiscard]] enum __libuc_fiber_request
+/* Run the fiber until it suspends or its entry returns. Gives back the
+ * request it carried, or nullptr for a bare yield; EXIT poisons the
+ * context, so resuming again faults. */
+[[nodiscard]] struct __libuc_fiber_request *
 __libuc_fiber_resume(struct __libuc_fiber *fiber);
 
 /* Suspend the running fiber back to its resumer; with no current fiber

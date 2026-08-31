@@ -57,7 +57,7 @@ int main(int argc, char **argv, char **envp) {
       return 118;
     }
 
-    if (__libuc_fiber_resume(fiber) != __LIBUC_FIBER_REQUEST_EXIT) {
+    if (__libuc_fiber_resume(fiber)->kind != __LIBUC_FIBER_REQUEST_EXIT) {
       return 116;
     }
     const bool carried =
