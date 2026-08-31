@@ -81,7 +81,7 @@ transitions, not one CQE per message. Lost wakeup avoidance and cursor wrap need
 a small model or exhaustive test before implementation.
 
 A doorbell completion must use the same tagged operation/key namespace designed
-in UC-016, while remaining distinguishable from operation-table offsets. Raw
+in UC-020, while remaining distinguishable from operation-table offsets. Raw
 pointers and unversioned scheduler ids do not cross the ring.
 
 ## Large payloads
@@ -101,7 +101,7 @@ whole-region handoff. Neither is needed to establish transport semantics.
 Transport waits until all of these exist:
 
 - a second scheduler and a lifecycle for its handle;
-- UC-016's generation-bearing completion-key namespace;
+- UC-020's generation-bearing completion-key namespace;
 - a bounded mailbox layout with release/acquire cursor rules;
 - explicit sender and receiver shutdown behavior;
 - acceptance tests for empty/nonempty, full/nonfull, receiver death, sender

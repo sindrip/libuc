@@ -58,10 +58,10 @@ Multishot accept/recv, `send`/`recv` with their `MSG_*` constants,
 `shutdown` (`REQ_F_FORCE_ASYNC` at `out/src/io_uring/net.c:124-149` — the
 first deliberate io-wq operation),
 and `SEND_ZC` with its notification are all out: multishot and zero-copy
-belong to UC-016's operation records, and whichever of UC-016/UC-018 lands
-second carries the joint network probes. The acceptance path is TCP
-loopback only; no io-wq or no-punt claims are established for other
-address families.
+need operation records but are not one API. UC-021 owns the accepted-connection
+iterator, UC-022 owns the borrowed receive iterator, and UC-023 owns zero-copy
+send's one-result lifetime. The acceptance path is TCP loopback only; no io-wq
+or no-punt claims are established for other address families.
 
 ## Files
 

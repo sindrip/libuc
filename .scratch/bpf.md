@@ -6,7 +6,7 @@ Everything not carrying a cite must still be confirmed in the pinned tree —
 file and line, per AGENTS.md — before it becomes a ticket.
 
 Related: `plan.md` defers the in-kernel BPF loop (`io_uring/loop.c`,
-`io_uring/bpf-ops.c`) until the ordinary operation-lifetime work in UC-016 and
+`io_uring/bpf-ops.c`) until the ordinary operation-lifetime work in UC-020 and
 UC-017 is complete. Clang keeps this direction reachable.
 
 **Invariant 1 amendment required before any of this ships**: `bpf(2)` (and for
@@ -117,7 +117,7 @@ userland.
 
 The interface has been read and verified (`loop.c`, `bpf-ops.c`,
 `register.c`). `bpf-loop.md` records the operation-table encoding it must share
-with UC-016, the validation still missing, and the real cost: a freestanding
+with UC-020, the validation still missing, and the real cost: a freestanding
 struct_ops loader.
 
 ### 8. sockmap/sk_msg splice — the proxy fast path

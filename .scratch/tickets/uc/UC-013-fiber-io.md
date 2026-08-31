@@ -2,7 +2,7 @@
 id: UC-013
 title: Park fibers on the ring
 status: done
-depends: [UC-009, UC-010]
+depends: []
 ---
 
 ## Goal
@@ -20,12 +20,11 @@ the fiber is not requeued. The loop copies it into the SQ slot, stamps
 stand — a `ready` count on the queue and a `parked` count on the ring,
 both maintained by structural moves (enqueue, dequeue, park, wake) — and
 the loop returns when both are zero. Multi-CQE operations keep that true
-only through UC-016's routing layer; alone, the counters assume the
+only through UC-020's operation/iterator layer; alone, the counters assume the
 single-shot contract the reap loop traps on. Settled 2026-08-30 after landing, via an in-flight
 counter and then a live/queued pair; findings.md carries the arc. This
-reverses UC-009's expectation that in-flight accounting would be needed
-for the ring anyway; it never was (submission uses the ring's own
-batch_count).
+records that in-flight accounting was not needed for submission itself: the
+ring's own `batch_count` already owns that fact.
 
 The loop becomes the reactor. UC-013 initially swept the ready queue to empty;
 UC-015 now snapshots one ready generation so a persistent yielder cannot starve
@@ -60,7 +59,8 @@ completions — which is UC-015.
 2. The reactor tail with the acceptance probe: the live count, the copy
    through `await_sqe` into the SQ, park, submit, reap, result delivery,
    wake. The scheduler writes `res` into the parked fiber before resuming it;
-   UC-016 later moves completion identity and delivery into operation records.
+   UC-020 later moves completion identity and repeated delivery into operation
+   records.
 3. Batch-overflow flush with its own forcing probe (~70 parked fibers):
    untested overflow handling is the silent-drop class again.
 

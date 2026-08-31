@@ -1,6 +1,6 @@
 # libuc — current foundation and roadmap
 
-Status: **current design record, 2026-08-30.** Ticket status and acceptance live
+Status: **current design record, 2026-08-31.** Ticket status and acceptance live
 under `tickets/uc/`; this file records the cross-ticket shape and the order in
 which the remaining work becomes meaningful. The retired RT spike is available
 in git history and is not a second implementation plan.
@@ -58,7 +58,8 @@ The landed layers are:
 
 The single-CQE restriction is enforced, not implicit: the current reap path
 traps on `IORING_CQE_F_MORE`, `IORING_CQE_F_NOTIF`, and `IORING_CQE_F_SKIP`.
-UC-016 replaces that boundary with operation records.
+UC-020 replaces that boundary with operation records and a private pull-
+iterator engine.
 
 ## Why the ring has these flags
 
@@ -83,19 +84,22 @@ UC-016 replaces that boundary with operation records.
 
 The ticket index is `tickets/README.md`. The useful dependency order is:
 
-1. **UC-018 — single-shot sockets.** Add the public connection lifecycle over
-   the ring and exercise it with a loopback echo. This remains within the
-   exactly-one-CQE reactor contract; multishot receive and accept wait for
-   UC-016.
-2. **UC-011 — scheduler-owned stack/block recycling.** Independent of sockets,
-   but required before a public fiber-spawn surface or large fiber counts. It
-   first makes the scheduler ownership seam explicit, then measures separate
-   versus carved TLS storage.
-3. **UC-016 — operation records and multi-CQE delivery.** The completion key
-   becomes generation + operation slot + tag. This is where streams, bounded
-   delivery, terminal-slot recycling, and manual cancel-and-drain land.
-4. **UC-017 — automatic cancellation and zombies.** Fiber exit cancels owned
-   operations and delays all reclamation until their terminal events arrive.
+1. **UC-011 — scheduler-owned stack/block recycling.** It makes the scheduler
+   ownership seam explicit, then measures separate versus carved TLS storage.
+2. **UC-019 — completion-loss detection.** It maps and checks the kernel's
+   dropped-CQE evidence while preserving the current single-CQE admission proof.
+3. **UC-020 — pull iterators over operation records.** The completion key
+   becomes generation + operation slot + tag. The private engine proves
+   repeated delivery with multishot poll while fused `await` keeps its current
+   performance.
+4. **UC-017 — automatic iterator teardown and zombies.** Fiber exit cancels
+   owned operations and delays all reclamation until their terminal events
+   arrive.
+5. **UC-021 and UC-022 — typed socket iterators.** Accepted connections use
+   bounded single-shot rearming; receive chunks use provided-buffer credit.
+   Neither API promises a particular io_uring opcode.
+6. **UC-023 — zero-copy send lifetime.** One send remains a one-result API;
+   its notification delays buffer reuse rather than becoming an iterator item.
 
 UC-012 is not implementation work; it restores behavioral acceptance when a
 real FSGSBASE-capable x86-64 environment is available. Until then x86-64 is a
@@ -121,11 +125,29 @@ cost, and a teardown policy; `stacks.md` is the input record.
 
 ### Completion identity
 
-A fiber pointer works only while a fiber has one single-shot operation. The
-next identity is an operation record with a generation-bearing slot. The bit
-allocation, table growth, delivery capacity, overflow policy, and stale-key
-failure are UC-016 decisions. `scheduler.md` records the lifetime rules and
-`bpf-loop.md` must use the same operation address space.
+A fiber pointer works only while a fiber has one single-shot operation. UC-020
+replaces it with an operation record with a generation-bearing slot. Its bit
+allocation, table growth, terminal protocol, and stale-key failure are shared
+with the BPF-loop proposal. UC-019 separately establishes the ring-level rule:
+an observed dropped CQE is fatal, while a full CQ with retained overflow entries
+is not itself loss.
+
+### Pull iterators
+
+Operation records unify completion routing; typed pull iterators unify repeated
+value delivery. Their common semantic protocol is `open`, `next -> item | end |
+error`, and synchronous `destroy`. A terminal CQE may still yield the final
+item; the iterator records local end after consuming it. `__libuc_fiber_await`
+is the fused one-item equivalent, not an implementation assembled from three
+iterator operations.
+
+POSIX calls remain one-result calls. The extension namespace gains typed
+accepted-connection and borrowed-receive iterators only with UC-021 and UC-022.
+UC-023 keeps zero-copy send a one-result extension whose notification delays
+buffer reuse. Multishot is an implementation strategy: unmetered accept/poll
+cannot supply a hard finite delivery bound, so UC-021 begins with bounded
+single-shot rearming; provided-buffer credit makes UC-022's receive bound
+enforceable.
 
 ### More schedulers
 

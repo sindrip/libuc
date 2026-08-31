@@ -55,10 +55,11 @@ runs without a compiler-visible thread-local block installed.
 
 The archive currently provides startup, auxiliary-vector storage and
 `getauxval`, thread-local geometry and installation, per-fiber `errno`, fibers,
-the single-CQE reactor, the four compiler-required memory functions, and public
-`pipe2`/`pipe`/`read`/`write`/`close` over the ring. Installed public headers
-are `<errno.h>`, `<fcntl.h>`, `<string.h>`, `<unistd.h>`, `<sys/auxv.h>`, and
-`<sys/types.h>`.
+the single-CQE reactor, the four compiler-required memory functions, public
+`pipe2`/`pipe`/`read`/`write`/`close`, and the single-shot socket connection
+lifecycle over the ring. Installed public headers are `<errno.h>`, `<fcntl.h>`,
+`<string.h>`, `<unistd.h>`, `<sys/auxv.h>`, `<sys/socket.h>`, `<netinet/in.h>`,
+and `<sys/types.h>`.
 
 ## ABI layers
 
@@ -67,7 +68,7 @@ Keep three contracts visibly separate:
 | layer | examples | result convention |
 |---|---|---|
 | raw kernel seam | `__libuc_sys_*` | Linux return value: `-errno` in `-1..-4095` |
-| private suspension seam | `__libuc_fiber_await`, future `__libuc_await_*` | ring-mediated; may suspend; retains operation lifetime |
+| private suspension seam | `__libuc_fiber_await`, future iterator core | ring-mediated; may suspend; retains operation lifetime |
 | public C/POSIX | `read`, `write`, `close`, `thrd_yield` | standard declarations, `-1`/sentinel plus per-fiber `errno` |
 
 Public functions are real link-visible symbols, not macro aliases. Kernel UAPI
@@ -78,6 +79,21 @@ The private I/O names use `await` because they are not direct-syscall veneers.
 They prepare an operation, suspend the current fiber, and resume it with a
 completion. Temporary SQ capacity and ring batching never appear in the public
 ABI.
+
+## Pull-iterator extension
+
+POSIX calls continue to yield one result per call. Repeated sources gain a
+separate libuc extension API: typed `next` operations return item, end, or
+error, and destruction synchronously cancels and drains unfinished kernel work.
+The shared result vocabulary will live in `<uc/iterator.h>`; typed socket
+iterators arrive in `<uc/socket.h>` with UC-021 and UC-022.
+
+This is a semantic API, not an io_uring exposure. An accepted-connection
+iterator initially uses bounded single-shot rearming; a borrowed receive
+iterator uses provided-buffer credit. The private operation-record layer routes
+multiple CQEs, while adapters define item ownership and cleanup. UC-023 makes
+zero-copy send a one-result extension, not an iterator: its notification keeps
+memory live until the kernel is finished.
 
 ## Per-fiber C thread-local state
 

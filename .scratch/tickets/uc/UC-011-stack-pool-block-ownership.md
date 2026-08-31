@@ -2,7 +2,7 @@
 id: UC-011
 title: Pool stacks and decide block ownership
 status: todo
-depends: [UC-009]
+depends: []
 ---
 
 ## Goal
@@ -19,7 +19,8 @@ a scheduler-owned creation operation or a scheduler/pool argument on fiber
 creation and destruction. Do not introduce an ambient process-global pool or
 derive ownership from a CPU: the owner is the scheduler.
 
-Against that explicit owner, compare the deferred UC-004 shapes:
+Against that explicit owner, compare the two shapes left open by the current
+implementation:
 
 - create-owns: stack and thread-local block retain separate mappings; the pool
   can recycle the stack but not absorb the block mapping;

@@ -87,7 +87,7 @@ the bootstrap thread pointer on every dispatch, but it duplicates the switch
 protocol. It lands only if measurement identifies dispatch as material.
 
 The current CQE key is a fiber pointer and the reap path accepts exactly one CQE
-per await. UC-016 replaces it with a generation-bearing operation record. The
+per await. UC-020 replaces it with a generation-bearing operation record. The
 operation table is its own identity space; it may refer to a fiber, never be
 embedded in a fiber slot merely to save an address calculation.
 
@@ -107,36 +107,44 @@ output storage until completion (`net.c:1617-1676`).
 
 Blocking wrappers park through completion and are correct under both rules.
 The distinction becomes load-bearing when submission decouples from
-completion: UC-016's operation records must keep pointer-retained buffers
+completion: UC-020's operation records must keep pointer-retained buffers
 live until the terminal CQE, while address snapshots impose nothing past
 submission.
 
-## Completion capacity, revised
+## Completion capacity and loss
 
-The reservation rule UC-013 shipped with — park at most `cq_entries`
-operations, because a full CQ silently drops wakes — was wrong, and
-UC-016 supersedes it.
+The UC-013 admission rule remains a correct proof for the current reactor:
+at most `cq_entries` parked operations, each producing exactly one CQE, means
+the kernel never needs CQ overflow storage. The original explanation was wrong
+only in treating a full CQ as an immediate silent lost wake.
 
-A full CQ is not lossy. The kernel allocates an overflow entry and
-queues it on `cq_overflow_list` (`out/src/io_uring/io_uring.c:635-658`),
-flushing it back into the CQ on a later enter (`io_uring.c:1217-1218`).
-Only when that allocation fails are completions dropped, and the kernel
-says so: the DROPPED bit makes the next enter return `-EBADR`
-(`io_uring.c:1223-1224`). So the rule bought nothing it claimed to buy,
-and multishot ends it regardless — one record can post arbitrarily many
-CQEs, so no per-operation reservation bounds completions.
+A full CQ normally remains lossless. The kernel allocates an overflow entry and
+queues it on `cq_overflow_list` (`out/src/io_uring/io_uring.c:635-658`), then
+flushes retained entries during a later wait (`out/src/io_uring/wait.c:206-207`).
+If allocation fails, it increments the mapped `cq_overflow` word and sets the
+DROPPED bit (`io_uring.c:640-650`; the UAPI returns the word's offset through
+`params.cq_off.overflow`, `io_uring.c:2931-2937`).
 
-The standing contract: overflow is tolerated and lossless, `-EBADR` is
-the one fatal completion-loss signal, and no scheduler counter carries a
-capacity role. Bounding moves to the per-record delivery queue, where it
-must be prevented rather than handled — reap has to drain the CQ, since
-declining stalls every operation behind the head and can deadlock a
-fiber parked behind the stall, and there is no allocator to grow into.
-Multishot therefore splits by provenance of its bound: metered opcodes
-(recv, which the kernel requires to use provided buffers,
-`out/src/io_uring/net.c:845`) are bounded by credit under **pool size ≤
-queue capacity**; unmetered ones (poll, accept) carry a consumer
-contract to drain every scheduler pass, enforced by a trap.
+`-EBADR` is fatal when observed, but is not a reliable “next enter” signal. The
+normal wait path returns as soon as visible events satisfy `min_complete`
+(`wait.c:189-213`), which is immediate for zero; an enter that successfully
+submits SQEs also returns its positive submission count instead of the
+completion-side error (`io_uring.c:2640-2662,2689-2699`). UC-019 therefore maps
+and checks `cq_overflow` directly, in addition to treating returned `-EBADR` as
+fatal.
+
+Multi-CQE producers do not inherit the single-shot admission proof. A bounded
+delivery queue must be justified at the producer. Multishot recv requires buffer
+selection (`out/src/io_uring/net.c:841-846`), but exhausted buffers can create a
+separate terminal `-ENOBUFS` CQE (`net.c:1245-1253,1283-1295`), so the initial
+provided-buffer invariant is **buffers + one terminal slot ≤ delivery capacity**.
+Incremental buffer consumption and bundling stay disabled until separately
+modelled. Multishot accept and poll have no comparable kernel credit; the accept
+loop can post repeatedly before userspace runs (`net.c:1699-1703`). They cannot
+claim a hard finite, lossless delivery bound merely by asking a consumer to drain
+once per scheduler pass. A public bounded accept iterator therefore starts with
+single-shot rearming; any later kernel multishot policy must explicitly choose
+its overflow behavior.
 
 ## Visibility policy
 

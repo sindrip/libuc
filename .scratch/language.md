@@ -164,22 +164,35 @@ receivers remain excluded.
 
 ## 6. Channels, streams, and iterators
 
-The proposed common shape is bounded `sender[T]` / `receiver[T]`:
+The common pull shape is a fallible iterator:
+
+```text
+next -> item | end | error
+```
+
+Its owner may destroy it early; destruction cancels and drains any kernel work
+before resource reclamation. A receiver is an iterator with a sender side,
+while a kernel source such as accepted connections or received byte chunks has
+only the iterator side. The C runtime's UC-020 groundwork uses the same shape,
+but this does not commit language spelling or a generic C value representation.
 
 - scheduler-local channels use ordinary queues;
 - cross-scheduler channels use explicit mailbox transport;
-- multishot kernel operations feed bounded receivers through operation records;
+- operation records route kernel completions; typed iterators expose repeated
+  values from them;
 - `select` waits on several receivers in declaration order;
-- `for x := range receiver` consumes until the receiver terminates.
+- `for x := range receiver` consumes until the iterator terminates.
 
 The io_uring terminal rule must remain exact. `IORING_CQE_F_MORE` means another
 CQE follows the current one (`out/src/include/uapi/linux/io_uring.h:515-533`).
 A CQE with `F_MORE` clear is terminal but may still carry a final value or error.
-The stream adapter therefore delivers the opcode's terminal result when
-appropriate and records termination separately; it never equates “terminal”
-with an empty payload.
+The iterator therefore delivers a terminal value when appropriate and records
+local end afterward; it never equates “terminal” with an empty payload.
 
-Every receiver has explicit capacity and overflow policy. Cross-scheduler MPMC
+Every receiver has explicit capacity and overflow policy. A semantic iterator
+does not promise a kernel opcode: unmetered accept/poll needs bounded
+single-shot rearming unless it deliberately chooses a lossy or fatal overflow
+policy; provided-buffer receive gains a real credit bound. Cross-scheduler MPMC
 is work stealing through a data structure and is not offered. Endpoint death,
 closure, send-to-dead behavior, and backpressure wakeups remain part of the
 future channel specification.

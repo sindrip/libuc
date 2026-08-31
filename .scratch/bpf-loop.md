@@ -1,8 +1,8 @@
 # The in-kernel BPF loop
 
 Status: **verified kernel interface plus deferred proposal, 2026-08-30.** The
-plain userspace reactor is implemented. This optimization waits on UC-016's
-operation records and on a freestanding BPF loader. Kernel claims below were
+plain userspace reactor is implemented. This optimization waits on UC-020's
+operation records, UC-017's zombie lifetime, and a freestanding BPF loader. Kernel claims below were
 checked against the pinned 7.2 tree.
 
 ## Interface shipped by 7.2
@@ -43,7 +43,7 @@ The current resolved kernel configuration already contains
 The BPF callback may lower bounded bookkeeping, not fiber execution:
 
 1. inspect a bounded number of new CQEs;
-2. validate and decode the completion key into UC-016's operation table;
+2. validate and decode the completion key into UC-020's operation table;
 3. append opcode-specific delivery and update terminal bookkeeping;
 4. put a waiting owner on the ready queue only on the operation's defined wake
    edge;
@@ -61,8 +61,8 @@ forcing tests; there is no second BPF-specific completion identity space.
 
 ## Completion-key requirement
 
-Raw fiber pointers are unsuitable for BPF validation and already disappear in
-UC-016. The shared completion key is:
+Raw fiber pointers are unsuitable for BPF validation and disappear in UC-020.
+The shared completion key is:
 
 ```text
 generation | operation-slot offset | tag
@@ -92,8 +92,8 @@ issue it again.
 
 Do not decrement a single generic in-flight count merely because `F_MORE` is
 clear. Single-shot, streams, linked timeouts, cancellation, and zero-copy send
-notifications have different terminal protocols. UC-016 defines those state
-machines before the BPF lowering copies them.
+notifications have different terminal protocols. UC-020 and UC-023 define
+those state machines before the BPF lowering copies them.
 
 Do not reclaim memory in BPF. Reclaimability is a notification to userspace;
 only the scheduler returns memory to its own pools.
@@ -129,7 +129,8 @@ the loader work.
 
 The implementation order is therefore:
 
-1. UC-016 operation identity and userspace multi-CQE tests;
+1. UC-019 completion-loss detection and UC-020 operation identity plus
+   userspace iterator tests;
 2. UC-017 cancellation/zombie lifetime;
 3. a minimal freestanding struct_ops loader;
 4. the BPF callback running the same state-machine fixtures;

@@ -2,8 +2,8 @@
 
 Status: **current design record, 2026-08-30.** The private single-scheduler
 reactor is implemented through UC-015. Public topology, scheduler spawning,
-operation tables, shutdown, and cross-scheduler transport are future work and
-are labelled as such below.
+operation tables, iterator teardown, and cross-scheduler transport are future
+work and are labelled as such below.
 
 ## Current private surface
 
@@ -62,9 +62,9 @@ After the generation:
   `parked`, and enqueue the fiber once.
 
 The current loop returns when `ready + parked == 0`. That is a probe-era
-termination contract, not resident scheduler shutdown. UC-016 adds operation
-lifetime; UC-017 adds zombies. Either makes termination depend on more than the
-two fiber-location counters.
+termination contract, not resident scheduler shutdown. UC-020 adds operation
+lifetime and UC-017 adds zombies, so either makes termination depend on more
+than the two fiber-location counters.
 
 ## The request protocol
 
@@ -130,13 +130,13 @@ Today `sqe->user_data` is the parked fiber pointer. That is valid only because:
 - the fiber cannot exit while parked;
 - the fiber record remains stable through the wait.
 
-UC-016 ends that contract. The completion key becomes
+UC-020 ends that contract. The completion key becomes
 `{generation, operation slot, tag}` and indexes a per-scheduler operation table.
 The record, not the fiber, lives until the operation's terminal event. It owns:
 
 - its fiber owner and current waiter, if any;
-- generation, kind, and staged/active/terminal state;
-- opcode-specific terminal bookkeeping;
+- generation and staged/active/terminal state;
+- typed preparation and cleanup policy, including terminal bookkeeping;
 - a bounded result-delivery queue;
 - any preparation data needed until the kernel releases referenced memory.
 
@@ -150,6 +150,14 @@ CQE terminal; it does not erase that CQE's payload. `F_NOTIF` participates in
 the zero-copy send protocol. `F_SKIP` is ignored only on a mixed-CQE ring where
 the kernel may insert a wrap filler; on the current ring it is a fatal format
 mismatch.
+
+The public repeated-value shape is a typed pull iterator: `next` returns item,
+end, or error; destroying an unfinished iterator cancels and drains it. A
+positive terminal delivery still returns its item, then makes the following
+`next` return local end. C has no generic value type, so the scheduler provides
+the shared record machinery while operation-specific adapters define their
+typed items. `__libuc_fiber_await` remains the fused one-item path rather than
+paying open/next/destroy dispatches.
 
 ## Future scheduler construction
 
