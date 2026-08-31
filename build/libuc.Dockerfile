@@ -33,7 +33,7 @@ RUN case "${TARGETARCH}" in arm64) cpu=aarch64 ;; amd64) cpu=x86_64 ;; *) exit 1
     && meson setup .cache/release --cross-file "cross/${cpu}.ini" -Dtests=false -Dubsan=disabled \
     && meson compile -C .cache/release \
     && meson install -C .cache/release --destdir /stage \
-    && tar -C /stage/usr -czf "/libuc-${cpu}.tar.gz" include lib
+    && tar -C /stage/usr -czf "/libuc-${cpu}.tar.gz" LICENSE include lib
 
 FROM scratch AS libuc
 COPY --from=build /libuc-*.tar.gz /

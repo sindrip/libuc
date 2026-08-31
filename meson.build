@@ -2,6 +2,8 @@ project(
   'libuc',
   'c',
   version: '0.0.0',
+  license: 'MIT',
+  license_files: 'LICENSE',
   meson_version: '>=1.10.0',
   default_options: [
     'b_asneeded=false',
@@ -152,6 +154,7 @@ libc = static_library(
   pic: false,
 )
 
+install_data('LICENSE', install_dir: '.')
 install_headers('include/errno.h')
 install_headers('include/fcntl.h')
 install_headers('include/string.h')
