@@ -6,9 +6,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include "fiber/fiber.h"
-#include "scheduler/scheduler.h"
-#include "thread_local/thread_local.h"
+#include <threads.h>
 
 static_assert(sizeof(struct sockaddr) == __SOCK_SIZE__);
 
@@ -95,41 +93,22 @@ static int client(void *opaque) {
 }
 
 int main(void) {
-  /* 125 singles out an environment where user mode cannot install. */
-  if (!__libuc_thread_local_install_available()) {
-    return 125;
-  }
-
-  struct __libuc_scheduler scheduler;
-  if (!__libuc_scheduler_become(&scheduler)) {
+  thrd_t serves;
+  thrd_t connects;
+  if (thrd_create(&serves, server, &server_ok) != thrd_success ||
+      thrd_create(&connects, client, &client_ok) != thrd_success) {
     return 124;
   }
-
-  struct __libuc_fiber *serves;
-  struct __libuc_fiber *connects;
-  if ((serves = __libuc_fiber_spawn((size_t)256 * 1024, server, &server_ok)) ==
-          nullptr ||
-      (connects = __libuc_fiber_spawn((size_t)256 * 1024, client,
-                                      &client_ok)) == nullptr) {
+  if (thrd_join(serves, nullptr) != thrd_success ||
+      thrd_join(connects, nullptr) != thrd_success) {
     return 123;
   }
-
-  __libuc_scheduler_enqueue(&scheduler, serves);
-  __libuc_scheduler_enqueue(&scheduler, connects);
-  __libuc_scheduler_run(&scheduler);
 
   if (!server_ok) {
     return 122;
   }
   if (!client_ok) {
     return 121;
-  }
-  if (scheduler.parked_count != 0 || scheduler.ready_count != 0 ||
-      scheduler.ready_head != nullptr) {
-    return 120;
-  }
-  if (!__libuc_fiber_destroy(serves) || !__libuc_fiber_destroy(connects)) {
-    return 119;
   }
 
   return 0;

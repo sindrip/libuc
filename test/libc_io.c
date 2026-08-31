@@ -5,9 +5,8 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "fiber/fiber.h"
-#include "scheduler/scheduler.h"
-#include "thread_local/thread_local.h"
+#include <threads.h>
+
 #include "unistd/rw_len.h"
 
 static constexpr char payload[] = "ring-libc-io";
@@ -49,46 +48,27 @@ static int writer([[maybe_unused]] void *opaque) {
 }
 
 int main(void) {
-  /* 125 singles out an environment where user mode cannot install. */
-  if (!__libuc_thread_local_install_available()) {
-    return 125;
-  }
-
   if (__libuc_rw_len(5) != 5 || __libuc_rw_len(SIZE_MAX >> 1) != INT32_MAX ||
       __libuc_rw_len((size_t)INT32_MAX + 1) != INT32_MAX) {
     return 124;
   }
 
-  struct __libuc_scheduler scheduler;
-  if (!__libuc_scheduler_become(&scheduler)) {
+  thrd_t reads;
+  thrd_t writes;
+  if (thrd_create(&reads, reader, nullptr) != thrd_success ||
+      thrd_create(&writes, writer, nullptr) != thrd_success) {
     return 123;
   }
-
-  struct __libuc_fiber *reads;
-  struct __libuc_fiber *writes;
-  if ((reads = __libuc_fiber_spawn((size_t)256 * 1024, reader, nullptr)) ==
-          nullptr ||
-      (writes = __libuc_fiber_spawn((size_t)256 * 1024, writer, nullptr)) ==
-          nullptr) {
+  if (thrd_join(reads, nullptr) != thrd_success ||
+      thrd_join(writes, nullptr) != thrd_success) {
     return 122;
   }
-
-  __libuc_scheduler_enqueue(&scheduler, reads);
-  __libuc_scheduler_enqueue(&scheduler, writes);
-  __libuc_scheduler_run(&scheduler);
 
   if (!reader_ok) {
     return 121;
   }
   if (!writer_ok) {
     return 120;
-  }
-  if (scheduler.parked_count != 0 || scheduler.ready_count != 0 ||
-      scheduler.ready_head != nullptr) {
-    return 119;
-  }
-  if (!__libuc_fiber_destroy(reads) || !__libuc_fiber_destroy(writes)) {
-    return 118;
   }
 
   return 0;

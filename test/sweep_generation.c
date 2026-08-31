@@ -53,7 +53,9 @@ int main(void) {
 
   __libuc_scheduler_enqueue(&scheduler, parks);
   __libuc_scheduler_enqueue(&scheduler, spins);
-  __libuc_scheduler_run(&scheduler);
+  if (__libuc_scheduler_run(&scheduler) != 0) {
+    __builtin_trap();
+  }
 
   if (!woken) {
     return 122;

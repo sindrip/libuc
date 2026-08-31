@@ -59,7 +59,7 @@ static void park(struct __libuc_scheduler *scheduler,
   scheduler->parked_count++;
 }
 
-int __libuc_scheduler_run(struct __libuc_scheduler *scheduler) {
+[[nodiscard]] int __libuc_scheduler_run(struct __libuc_scheduler *scheduler) {
   while (scheduler->parked_count + scheduler->ready_count != 0) {
     for (uint32_t turns = scheduler->ready_count; turns != 0; turns--) {
       struct __libuc_fiber *fiber = scheduler->ready_head;

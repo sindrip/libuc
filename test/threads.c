@@ -3,22 +3,16 @@
 
 #include <threads.h>
 
-#include "fiber/fiber.h"
-#include "scheduler/scheduler.h"
-#include "thread_local/thread_local.h"
-
 static thrd_t main_thread;
 static thrd_t worker_thread;
 static bool worker_ran;
 static bool worker_ok = true;
 static size_t worker_turns;
-static size_t creator_turns;
 static int worker_result;
 static int quick_result;
 static bool detached_ran;
 
-/* thrd_exit ends the thread from any call depth with that result,
- * exactly as returning it from the entry does. */
+/* From a nested call, exactly as returning from the entry. */
 [[noreturn]] static void finish(int res) { thrd_exit(res); }
 
 static int worker(void *opaque) {
@@ -45,56 +39,57 @@ static int detached([[maybe_unused]] void *opaque) {
   return 5;
 }
 
-static int creator([[maybe_unused]] void *opaque) {
+/* Never exits: returning from main below abandons it mid-spin
+ * (C11 5.1.2.2.3); a drain loop would run it forever. */
+[[noreturn]] static int spinner([[maybe_unused]] void *opaque) {
+  for (;;) {
+    thrd_yield();
+  }
+}
+
+int main(void) {
   main_thread = thrd_current();
-  worker_ok = worker_ok && thrd_equal(main_thread, thrd_current());
 
   if (thrd_create(&worker_thread, worker, &main_thread) != thrd_success) {
-    return 1;
+    return 99;
   }
-
-  creator_turns++;
-  /* The worker cannot have run yet, so this join blocks until it
-   * exits. */
+  /* The worker cannot have run yet: this join blocks. */
   if (thrd_join(worker_thread, &worker_result) != thrd_success) {
-    return 2;
+    return 98;
   }
 
   thrd_t quick_thread;
   if (thrd_create(&quick_thread, quick, nullptr) != thrd_success) {
-    return 3;
+    return 97;
   }
   thrd_yield();
-  /* The yield let quick run to exit, so this join takes a zombie
-   * without blocking. */
+  /* quick has exited: this join takes a zombie. */
   if (thrd_join(quick_thread, &quick_result) != thrd_success) {
-    return 4;
+    return 96;
   }
 
   thrd_t detached_thread;
   if (thrd_create(&detached_thread, detached, nullptr) != thrd_success) {
-    return 5;
+    return 95;
   }
   if (thrd_detach(detached_thread) != thrd_success) {
-    return 6;
+    return 94;
   }
   thrd_yield();
-  /* The yield let the detached thread run to exit, where the scheduler
-   * reclaimed it with no join. */
+  /* The detached thread exited and was reclaimed with no join. */
   if (!detached_ran) {
-    return 7;
+    return 93;
   }
 
   thrd_t zombie_thread;
   if (thrd_create(&zombie_thread, quick, nullptr) != thrd_success) {
-    return 8;
+    return 92;
   }
   const uintptr_t zombie_address = (uintptr_t)zombie_thread;
   thrd_yield();
-  /* The target is a zombie by now; this detach disposes of it on the
-   * spot. */
+  /* Already a zombie: this detach disposes of it now. */
   if (thrd_detach(zombie_thread) != thrd_success) {
-    return 9;
+    return 91;
   }
 
   /* Every thread stack is the same size and this kernel's mmap fills
@@ -102,59 +97,25 @@ static int creator([[maybe_unused]] void *opaque) {
    * slot back; a leaked mapping shifts the address. */
   thrd_t reuse_thread;
   if (thrd_create(&reuse_thread, quick, nullptr) != thrd_success) {
-    return 10;
+    return 90;
   }
   if ((uintptr_t)reuse_thread != zombie_address) {
-    return 11;
+    return 89;
   }
   if (thrd_join(reuse_thread, nullptr) != thrd_success) {
-    return 12;
+    return 88;
   }
 
-  creator_turns++;
-  return 0;
-}
-
-int main(void) {
-  /* 125 singles out an environment where user mode cannot install. */
-  if (!__libuc_thread_local_install_available()) {
-    return 125;
+  if (!worker_ran || !worker_ok || worker_turns != 2) {
+    return 87;
   }
-
-  struct __libuc_scheduler scheduler;
-  if (!__libuc_scheduler_become(&scheduler)) {
-    return 124;
-  }
-
-  struct __libuc_fiber *first =
-      __libuc_fiber_spawn((size_t)256 * 1024, creator, nullptr);
-  if (first == nullptr) {
-    return 123;
-  }
-
-  __libuc_scheduler_enqueue(&scheduler, first);
-  __libuc_scheduler_run(&scheduler);
-
-  if (!worker_ran || !worker_ok) {
-    return 122;
-  }
-  /* Interleaving after a spawn is the scheduler's business, not a
-   * promise; that yield resumes a fiber where it left off is fiber_io's
-   * contract. Here: both threads ran to completion. */
-  if (worker_turns != 2 || creator_turns != 2) {
-    return 121;
-  }
-  /* Each join took its target's result and released its record; the
-   * handles are dead, so only the never-joined creator remains. */
   if (worker_result != 7 || quick_result != 9) {
-    return 120;
-  }
-  if (first->status != 0) {
-    return 119;
+    return 86;
   }
 
-  if (!__libuc_fiber_destroy(first)) {
-    return 118;
+  thrd_t spin_thread;
+  if (thrd_create(&spin_thread, spinner, nullptr) != thrd_success) {
+    return 85;
   }
 
   return 0;

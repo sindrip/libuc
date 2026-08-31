@@ -43,7 +43,9 @@ int main(void) {
   for (size_t i = 0; i < flood_count; i++) {
     __libuc_scheduler_enqueue(&scheduler, fibers[i]);
   }
-  __libuc_scheduler_run(&scheduler);
+  if (__libuc_scheduler_run(&scheduler) != 0) {
+    __builtin_trap();
+  }
 
   if (wakes != flood_count) {
     return 122;

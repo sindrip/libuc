@@ -252,6 +252,17 @@ if get_option('tests')
     name_suffix: 'elf',
   )
 
+  thrd_exit_main_probe = executable(
+    'thrd-exit-main',
+    'test/thrd_exit_main.c',
+    c_args: common_c_args + ['-Wno-reserved-identifier'],
+    include_directories: [public_include],
+    link_args: probe_link_args,
+    link_depends: 'libuc.ld',
+    link_whole: [crt1_internal, libc],
+    name_suffix: 'elf',
+  )
+
   socket_echo_probe = executable(
     'socket-echo',
     'test/socket_echo.c',
@@ -439,6 +450,7 @@ if get_option('tests')
     test('getauxval hit and ENOENT miss', getauxval_probe)
     test('close suspends on the ring', close_probe)
     test('threads spawn, yield, and carry status', threads_probe)
+    test('thrd_exit from main leaves the rest running', thrd_exit_main_probe)
     test('pipe descriptors arrive through the ring', pipe_probe)
     test('read suspends until write completes it', libc_io_probe)
     test('sockets arrive through the ring', socket_echo_probe)
@@ -663,6 +675,16 @@ if get_option('tests')
 
   alias_target('initramfs-threads', threads_initramfs)
 
+  thrd_exit_main_initramfs = custom_target(
+    'thrd-exit-main-initramfs',
+    build_by_default: false,
+    command: [sh, mkinitramfs, '@INPUT@', '@OUTPUT@'],
+    input: thrd_exit_main_probe,
+    output: 'thrd-exit-main.initramfs.cpio.gz',
+  )
+
+  alias_target('initramfs-thrd-exit-main', thrd_exit_main_initramfs)
+
   alias_target(
     'initramfs-all',
     start_initramfs,
@@ -682,5 +704,6 @@ if get_option('tests')
     exit_status_initramfs,
     fiber_initramfs,
     threads_initramfs,
+    thrd_exit_main_initramfs,
   )
 endif

@@ -96,7 +96,9 @@ int main(void) {
     return 123;
   }
   __libuc_scheduler_enqueue(&scheduler, fibers[0]);
-  __libuc_scheduler_run(&scheduler);
+  if (__libuc_scheduler_run(&scheduler) != 0) {
+    __builtin_trap();
+  }
   if (!__libuc_fiber_destroy(fibers[0])) {
     return 122;
   }
@@ -108,7 +110,9 @@ int main(void) {
   }
   __libuc_scheduler_enqueue(&scheduler, fibers[0]);
   const uint64_t single_start = bench_ticks();
-  __libuc_scheduler_run(&scheduler);
+  if (__libuc_scheduler_run(&scheduler) != 0) {
+    __builtin_trap();
+  }
   const uint64_t single_ticks = bench_ticks() - single_start;
   if (!__libuc_fiber_destroy(fibers[0])) {
     return 122;
@@ -122,7 +126,9 @@ int main(void) {
     __libuc_scheduler_enqueue(&scheduler, fibers[i]);
   }
   const uint64_t crowd_start = bench_ticks();
-  __libuc_scheduler_run(&scheduler);
+  if (__libuc_scheduler_run(&scheduler) != 0) {
+    __builtin_trap();
+  }
   const uint64_t crowd_ticks = bench_ticks() - crowd_start;
   for (size_t i = 0; i < crowd_fibers; i++) {
     if (!__libuc_fiber_destroy(fibers[i])) {

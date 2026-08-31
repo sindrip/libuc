@@ -60,7 +60,9 @@ int main(void) {
 
   __libuc_scheduler_enqueue(&scheduler, first.fiber);
   __libuc_scheduler_enqueue(&scheduler, second.fiber);
-  __libuc_scheduler_run(&scheduler);
+  if (__libuc_scheduler_run(&scheduler) != 0) {
+    __builtin_trap();
+  }
 
   if (order_count != sizeof(order) ||
       memcmp(order, "A0B0A1B1A2B2", sizeof(order)) != 0) {
