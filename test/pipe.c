@@ -10,7 +10,7 @@ static bool piper_ok = true;
 
 static void check(bool ok) { piper_ok = piper_ok && ok; }
 
-static void piper([[maybe_unused]] void *opaque) {
+static int piper([[maybe_unused]] void *opaque) {
   errno = 11;
 
   int plain[2] = {-1, -1};
@@ -30,6 +30,8 @@ static void piper([[maybe_unused]] void *opaque) {
 
   check(close(plain[0]) == 0 && close(plain[1]) == 0);
   check(close(cloexec[0]) == 0 && close(cloexec[1]) == 0);
+
+  return 0;
 }
 
 int main(void) {

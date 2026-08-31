@@ -117,6 +117,7 @@ subdir('src/scheduler')
 subdir('src/errno')
 subdir('src/sys/auxv')
 subdir('src/sys/socket')
+subdir('src/threads')
 subdir('src/unistd')
 
 libc_impls = [startup_impl, auxv_impl, thread_local_impls, fiber_impls,
@@ -144,7 +145,8 @@ subdir('src/string')
 # TUs that set errno ride with it.
 no_thread_local_impls = libc_impls + string_impls
 
-libc_impls += [errno_impls, getauxval_impl] + unistd_impls + socket_impls
+libc_impls += [errno_impls, getauxval_impl, threads_impls]
+libc_impls += unistd_impls + socket_impls
 
 libc = static_library(
   'c',
@@ -158,6 +160,7 @@ install_data('LICENSE', install_dir: '.')
 install_headers('include/errno.h')
 install_headers('include/fcntl.h')
 install_headers('include/string.h')
+install_headers('include/threads.h')
 install_headers('include/unistd.h')
 install_headers('include/netinet/in.h', subdir: 'netinet')
 install_headers('include/sys/auxv.h', subdir: 'sys')
@@ -235,6 +238,17 @@ if get_option('tests')
     link_args: probe_link_args,
     link_depends: 'libuc.ld',
     link_whole: [crt1_internal] + no_thread_local_impls,
+    name_suffix: 'elf',
+  )
+
+  threads_probe = executable(
+    'threads',
+    'test/threads.c',
+    c_args: common_c_args + ['-Wno-reserved-identifier'],
+    include_directories: [public_include, private_include, fiber_arch_include],
+    link_args: probe_link_args,
+    link_depends: 'libuc.ld',
+    link_whole: [crt1_internal, libc],
     name_suffix: 'elf',
   )
 
@@ -424,6 +438,7 @@ if get_option('tests')
     test('thread-local block with PT_TLS', thread_local_block_probe)
     test('getauxval hit and ENOENT miss', getauxval_probe)
     test('close suspends on the ring', close_probe)
+    test('threads spawn, yield, and carry status', threads_probe)
     test('pipe descriptors arrive through the ring', pipe_probe)
     test('read suspends until write completes it', libc_io_probe)
     test('sockets arrive through the ring', socket_echo_probe)

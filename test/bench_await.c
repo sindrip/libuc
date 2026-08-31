@@ -24,10 +24,16 @@ static void await_nops(size_t iterations) {
   }
 }
 
-static void single(void *opaque) { await_nops(*(const size_t *)opaque); }
+static int single(void *opaque) {
+  await_nops(*(const size_t *)opaque);
 
-static void crowd([[maybe_unused]] void *opaque) {
+  return 0;
+}
+
+static int crowd([[maybe_unused]] void *opaque) {
   await_nops(crowd_iterations);
+
+  return 0;
 }
 
 static char *append_string(char *cursor, const char *text) {

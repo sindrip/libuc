@@ -34,7 +34,8 @@ static void park(struct __libuc_scheduler *scheduler,
   /* IOSQE flags link batches or skip CQEs; none is designed. And a full
    * CQ lets the kernel drop wakes behind a masked -EBADR, so parking
    * stops at the CQ's capacity. */
-  if (fiber->await_sqe->flags != 0 ||
+  const struct io_uring_sqe *await = fiber->request_argument;
+  if (await->flags != 0 ||
       scheduler->parked_count == scheduler->ring.cq_entries) {
     __builtin_trap();
   }
@@ -50,7 +51,7 @@ static void park(struct __libuc_scheduler *scheduler,
     }
   }
 
-  *slot = *fiber->await_sqe;
+  *slot = *await;
   slot->user_data = (uintptr_t)fiber;
   scheduler->parked_count++;
 }
@@ -61,7 +62,6 @@ void __libuc_scheduler_run(struct __libuc_scheduler *scheduler) {
       struct __libuc_fiber *fiber = scheduler->ready_head;
       scheduler->ready_head = fiber->ready_next;
       scheduler->ready_count--;
-
       if (scheduler->ready_head == nullptr) {
         scheduler->ready_tail = nullptr;
       }
@@ -76,6 +76,20 @@ void __libuc_scheduler_run(struct __libuc_scheduler *scheduler) {
       case __LIBUC_FIBER_REQUEST_AWAIT:
         park(scheduler, fiber);
         break;
+      case __LIBUC_FIBER_REQUEST_SPAWN: {
+        const struct __libuc_fiber_spawn_request *spawn =
+            fiber->request_argument;
+        struct __libuc_fiber *spawned = __libuc_fiber_spawn(
+            spawn->stack_length, spawn->entry, spawn->argument);
+        if (spawned != nullptr) {
+          __libuc_scheduler_enqueue(scheduler, spawned);
+        }
+
+        /* Both are runnable now: the spawner learns what it made. */
+        fiber->request_result = (long)(uintptr_t)spawned;
+        __libuc_scheduler_enqueue(scheduler, fiber);
+        break;
+      }
       case __LIBUC_FIBER_REQUEST_NONE:
         __builtin_trap();
       }
@@ -102,8 +116,8 @@ void __libuc_scheduler_run(struct __libuc_scheduler *scheduler) {
 
       struct __libuc_fiber *woken =
           (struct __libuc_fiber *)(uintptr_t)completion.user_data;
+      woken->request_result = completion.res;
 
-      woken->await_res = completion.res;
       scheduler->parked_count--;
       __libuc_scheduler_enqueue(scheduler, woken);
     }

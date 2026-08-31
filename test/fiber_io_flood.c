@@ -14,10 +14,12 @@ static struct __libuc_fiber *fibers[flood_count];
 static size_t wakes;
 static bool wakes_ok = true;
 
-static void parker([[maybe_unused]] void *opaque) {
+static int parker([[maybe_unused]] void *opaque) {
   struct io_uring_sqe nop = {.opcode = IORING_OP_NOP};
   wakes_ok = wakes_ok && __libuc_fiber_await(&nop) == 0;
   wakes++;
+
+  return 0;
 }
 
 int main(void) {

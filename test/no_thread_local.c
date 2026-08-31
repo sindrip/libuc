@@ -5,8 +5,10 @@
 
 static struct __libuc_fiber *seen_current;
 
-static void record_current([[maybe_unused]] void *opaque) {
+static int record_current([[maybe_unused]] void *opaque) {
   seen_current = __libuc_fiber_current();
+
+  return 0;
 }
 
 int main(int argc, char **argv, char **envp) {

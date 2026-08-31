@@ -16,7 +16,7 @@ struct actor {
   unsigned long label;
 };
 
-static void entry(void *opaque) {
+static int entry(void *opaque) {
   struct actor *actor = opaque;
 
   for (int turn = 0; turn < 3; turn++) {
@@ -34,6 +34,8 @@ static void entry(void *opaque) {
       __libuc_fiber_yield();
     }
   }
+
+  return 0;
 }
 
 int main(void) {

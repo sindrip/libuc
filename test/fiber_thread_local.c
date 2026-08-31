@@ -9,7 +9,7 @@ struct report {
   int ok;
 };
 
-static void entry(void *opaque) {
+static int entry(void *opaque) {
   struct report *report = opaque;
   int local = 1;
 
@@ -24,6 +24,8 @@ static void entry(void *opaque) {
   __libuc_fiber_yield();
 
   report->ok = report->ok && value == report->write + 1 && local == 2;
+
+  return 0;
 }
 
 int main(void) {

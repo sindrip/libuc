@@ -15,7 +15,7 @@ static int fds[2] = {-1, -1};
 static bool reader_ok = true;
 static bool writer_ok = true;
 
-static void reader([[maybe_unused]] void *opaque) {
+static int reader([[maybe_unused]] void *opaque) {
   reader_ok = reader_ok && pipe(fds) == 0;
   errno = 17;
 
@@ -32,9 +32,11 @@ static void reader([[maybe_unused]] void *opaque) {
   reader_ok = reader_ok && close(fds[0]) == 0 && close(fds[1]) == 0;
   reader_ok = reader_ok && read(fds[0], buf, sizeof(buf)) == -1;
   reader_ok = reader_ok && errno == EBADF;
+
+  return 0;
 }
 
-static void writer([[maybe_unused]] void *opaque) {
+static int writer([[maybe_unused]] void *opaque) {
   writer_ok = writer_ok && write(-1, payload, sizeof(payload)) == -1;
   writer_ok = writer_ok && errno == EBADF;
 
@@ -42,6 +44,8 @@ static void writer([[maybe_unused]] void *opaque) {
   writer_ok = writer_ok && write(fds[1], payload, sizeof(payload)) ==
                                (ssize_t)sizeof(payload);
   writer_ok = writer_ok && errno == 29;
+
+  return 0;
 }
 
 int main(void) {

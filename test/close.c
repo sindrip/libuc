@@ -7,7 +7,7 @@
 
 static bool closer_ok = true;
 
-static void closer([[maybe_unused]] void *opaque) {
+static int closer([[maybe_unused]] void *opaque) {
   errno = 11;
 
   closer_ok = closer_ok && close(0) == 0;
@@ -15,6 +15,8 @@ static void closer([[maybe_unused]] void *opaque) {
 
   const int again = close(0);
   closer_ok = closer_ok && again == -1 && errno == EBADF;
+
+  return 0;
 }
 
 int main(void) {

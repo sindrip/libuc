@@ -23,7 +23,7 @@ static void record(unsigned long label, int turn) {
   order_count += 2;
 }
 
-static void waiter(void *opaque) {
+static int waiter(void *opaque) {
   struct actor *actor = opaque;
 
   for (int turn = 0; turn < 3; turn++) {
@@ -32,9 +32,11 @@ static void waiter(void *opaque) {
     struct io_uring_sqe nop = {.opcode = IORING_OP_NOP};
     wakes_ok = wakes_ok && __libuc_fiber_await(&nop) == 0;
   }
+
+  return 0;
 }
 
-static void yielder(void *opaque) {
+static int yielder(void *opaque) {
   struct actor *actor = opaque;
 
   for (int turn = 0; turn < 3; turn++) {
@@ -43,6 +45,8 @@ static void yielder(void *opaque) {
       __libuc_fiber_yield();
     }
   }
+
+  return 0;
 }
 
 int main(void) {

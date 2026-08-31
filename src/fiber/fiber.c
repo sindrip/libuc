@@ -9,7 +9,7 @@
 
 [[noreturn]] static void run_fiber(void *opaque) {
   struct __libuc_fiber *fiber = opaque;
-  fiber->entry(fiber->argument);
+  fiber->status = fiber->entry(fiber->argument);
 
   fiber->request = __LIBUC_FIBER_REQUEST_EXIT;
   fiber_switch(&fiber->context, fiber->return_to);
@@ -17,7 +17,7 @@
 }
 
 [[nodiscard]] struct __libuc_fiber *__libuc_fiber_spawn(size_t stack_length,
-                                                        void (*entry)(void *),
+                                                        int (*entry)(void *),
                                                         void *argument) {
   if (stack_length <= sizeof(struct __libuc_fiber)) {
     return nullptr;
@@ -100,12 +100,29 @@ void __libuc_fiber_yield(void) {
 
 [[nodiscard]] long __libuc_fiber_await(const struct io_uring_sqe *sqe) {
   struct __libuc_fiber *fiber = __libuc_fiber_current();
-  fiber->await_sqe = sqe;
+  fiber->request_argument = sqe;
   fiber->request = __LIBUC_FIBER_REQUEST_AWAIT;
 
   fiber_switch(&fiber->context, fiber->return_to);
 
-  return fiber->await_res;
+  return fiber->request_result;
+}
+
+[[nodiscard]] struct __libuc_fiber *
+__libuc_fiber_start(size_t stack_length, int (*entry)(void *),
+                    void *argument) {
+  struct __libuc_fiber *fiber = __libuc_fiber_current();
+  struct __libuc_fiber_spawn_request request = {
+      .stack_length = stack_length,
+      .entry = entry,
+      .argument = argument,
+  };
+
+  fiber->request_argument = &request;
+  fiber->request = __LIBUC_FIBER_REQUEST_SPAWN;
+  fiber_switch(&fiber->context, fiber->return_to);
+
+  return (struct __libuc_fiber *)(uintptr_t)fiber->request_result;
 }
 
 [[nodiscard]] struct __libuc_fiber *__libuc_fiber_current(void) {

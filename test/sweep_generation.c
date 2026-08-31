@@ -12,19 +12,23 @@ constexpr int turn_limit = 5;
 static bool woken;
 static int turns_until_wake = -1;
 
-static void parker([[maybe_unused]] void *opaque) {
+static int parker([[maybe_unused]] void *opaque) {
   struct io_uring_sqe nop = {.opcode = IORING_OP_NOP};
   woken = __libuc_fiber_await(&nop) == 0;
+
+  return 0;
 }
 
-static void spinner([[maybe_unused]] void *opaque) {
+static int spinner([[maybe_unused]] void *opaque) {
   for (int turn = 0; turn < turn_limit; turn++) {
     if (woken) {
       turns_until_wake = turn;
-      return;
+      return 0;
     }
     __libuc_fiber_yield();
   }
+
+  return 0;
 }
 
 int main(void) {

@@ -20,10 +20,10 @@ struct root_arguments {
   char **argv;
   char **envp;
   int argument_count;
-  int status;
+  uint32_t : 32;
 };
 
-static void root_entry(void *opaque) {
+static int root_entry(void *opaque) {
   struct root_arguments *arguments = opaque;
 
   for (void (*const *init)(void) = __libuc_init_array_start;
@@ -31,8 +31,7 @@ static void root_entry(void *opaque) {
     (*init)();
   }
 
-  arguments->status =
-      main(arguments->argument_count, arguments->argv, arguments->envp);
+  return main(arguments->argument_count, arguments->argv, arguments->envp);
 }
 
 /* The live startup frame becomes scheduler zero's control stack: parse what
@@ -70,7 +69,6 @@ int __libuc_start(void *initial_stack) {
       .argv = argv,
       .envp = envp,
       .argument_count = (int)argument_count,
-      .status = 127,
   };
   struct __libuc_fiber *root =
       __libuc_fiber_spawn(root_stack_length, root_entry, &arguments);
@@ -81,8 +79,10 @@ int __libuc_start(void *initial_stack) {
   __libuc_scheduler_enqueue(&scheduler, root);
   __libuc_scheduler_run(&scheduler);
 
+  const int status = root->status;
   if (!__libuc_fiber_destroy(root)) {
     return 127;
   }
-  return arguments.status;
+
+  return status;
 }

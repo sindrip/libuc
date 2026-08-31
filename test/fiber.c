@@ -12,12 +12,14 @@ static int argument_token;
 static unsigned long argument_witness;
 static unsigned long stack_witness;
 
-static void observe(void *argument) {
+static int observe(void *argument) {
   unsigned char local;
   argument_witness = (unsigned long)(uintptr_t)argument;
   stack_witness = (unsigned long)(uintptr_t)&local;
 
   dirty_registers_and_yield();
+
+  return 0;
 }
 
 int main(void) {

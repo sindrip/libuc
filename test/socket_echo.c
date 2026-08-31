@@ -26,7 +26,7 @@ static struct sockaddr_in loopback(uint16_t port) {
   };
 }
 
-static void server(void *opaque) {
+static int server(void *opaque) {
   bool *ok = opaque;
 
   *ok = *ok && socket(-1, SOCK_STREAM, 0) == -1;
@@ -61,9 +61,11 @@ static void server(void *opaque) {
   *ok = *ok && write(conn, buf, sizeof(payload)) == sizeof(payload);
 
   *ok = *ok && close(conn) == 0 && close(fd) == 0;
+
+  return 0;
 }
 
-static void client(void *opaque) {
+static int client(void *opaque) {
   bool *ok = opaque;
 
   const struct sockaddr_in nobody = loopback(echo_port + 1);
@@ -88,6 +90,8 @@ static void client(void *opaque) {
   *ok = *ok && errno == 29;
 
   *ok = *ok && close(fd) == 0;
+
+  return 0;
 }
 
 int main(void) {
