@@ -653,6 +653,16 @@ if get_option('tests')
 
   alias_target('initramfs-fiber', fiber_initramfs)
 
+  threads_initramfs = custom_target(
+    'threads-initramfs',
+    build_by_default: false,
+    command: [sh, mkinitramfs, '@INPUT@', '@OUTPUT@'],
+    input: threads_probe,
+    output: 'threads.initramfs.cpio.gz',
+  )
+
+  alias_target('initramfs-threads', threads_initramfs)
+
   alias_target(
     'initramfs-all',
     start_initramfs,
@@ -671,5 +681,6 @@ if get_option('tests')
     sweep_generation_initramfs,
     exit_status_initramfs,
     fiber_initramfs,
+    threads_initramfs,
   )
 endif

@@ -81,6 +81,11 @@ __libuc_fiber_resume(struct __libuc_fiber *fiber);
  * this faults. */
 void __libuc_fiber_yield(void);
 
+/* End the running fiber with this status, from any call depth, exactly
+ * as returning it from the entry does; with no current fiber this
+ * faults. */
+[[noreturn]] void __libuc_fiber_exit(int status);
+
 /* Exactly one CQE; the reap loop traps streams. The suspended frame
  * keeps the SQE and its buffers live through the CQE. Returns res; with
  * no current fiber this faults. */

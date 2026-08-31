@@ -13,6 +13,10 @@ static bool worker_ok = true;
 static size_t worker_turns;
 static size_t creator_turns;
 
+/* thrd_exit ends the thread from any call depth with that result,
+ * exactly as returning it from the entry does. */
+[[noreturn]] static void finish(int res) { thrd_exit(res); }
+
 static int worker(void *opaque) {
   worker_ran = true;
   worker_ok = worker_ok && opaque == &main_thread;
@@ -27,7 +31,7 @@ static int worker(void *opaque) {
   thrd_yield();
   worker_turns++;
 
-  return 7;
+  finish(7);
 }
 
 static int creator([[maybe_unused]] void *opaque) {

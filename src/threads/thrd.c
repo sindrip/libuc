@@ -20,4 +20,6 @@ thrd_t thrd_current(void) { return __libuc_fiber_current(); }
 
 int thrd_equal(thrd_t lhs, thrd_t rhs) { return lhs == rhs; }
 
+[[noreturn]] void thrd_exit(int res) { __libuc_fiber_exit(res); }
+
 void thrd_yield(void) { __libuc_fiber_yield(); }

@@ -7,9 +7,11 @@
 #include "syscall.h"
 #include "thread_local_arch.h"
 
-[[noreturn]] static void run_fiber(void *opaque) {
-  struct __libuc_fiber *fiber = opaque;
-  fiber->status = fiber->entry(fiber->argument);
+/* Takes the fiber by pointer, not through thread_local_read(): an entry
+ * may return with a foreign thread-local block installed, and the
+ * resumer reinstalls its own either way. */
+[[noreturn]] static void exit_fiber(struct __libuc_fiber *fiber, int status) {
+  fiber->status = status;
 
   /* The frame is finished but its stack is mapped until the fiber is
    * destroyed, and the scheduler reads this before that can happen. */
@@ -20,6 +22,15 @@
   (void)fiber_switch(&fiber->context, fiber->return_to,
                      (unsigned long)(uintptr_t)&request);
   __builtin_trap();
+}
+
+[[noreturn]] static void run_fiber(void *opaque) {
+  struct __libuc_fiber *fiber = opaque;
+  exit_fiber(fiber, fiber->entry(fiber->argument));
+}
+
+[[noreturn]] void __libuc_fiber_exit(int status) {
+  exit_fiber(__libuc_fiber_current(), status);
 }
 
 [[nodiscard]] struct __libuc_fiber *__libuc_fiber_spawn(size_t stack_length,
