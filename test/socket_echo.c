@@ -120,7 +120,7 @@ int main(void) {
   if (!client_ok) {
     return 121;
   }
-  if (scheduler.parked != 0 || scheduler.ready != 0 ||
+  if (scheduler.parked_count != 0 || scheduler.ready_count != 0 ||
       scheduler.ready_head != nullptr) {
     return 120;
   }

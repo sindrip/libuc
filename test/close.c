@@ -39,7 +39,7 @@ int main(void) {
   if (!closer_ok) {
     return 122;
   }
-  if (scheduler.parked != 0 || scheduler.ready != 0 ||
+  if (scheduler.parked_count != 0 || scheduler.ready_count != 0 ||
       scheduler.ready_head != nullptr) {
     return 121;
   }

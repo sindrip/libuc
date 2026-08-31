@@ -13,8 +13,8 @@ struct __libuc_scheduler {
   struct __libuc_ring ring;
   struct __libuc_fiber *ready_head;
   struct __libuc_fiber *ready_tail;
-  uint32_t ready;
-  uint32_t parked;
+  uint32_t ready_count;
+  uint32_t parked_count;
 };
 
 [[nodiscard]] bool

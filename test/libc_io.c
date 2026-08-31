@@ -77,7 +77,7 @@ int main(void) {
   if (!writer_ok) {
     return 120;
   }
-  if (scheduler.parked != 0 || scheduler.ready != 0 ||
+  if (scheduler.parked_count != 0 || scheduler.ready_count != 0 ||
       scheduler.ready_head != nullptr) {
     return 119;
   }

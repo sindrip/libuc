@@ -18,7 +18,7 @@ __libuc_scheduler_become(struct __libuc_scheduler *scheduler) {
 
 void __libuc_scheduler_enqueue(struct __libuc_scheduler *scheduler,
                                struct __libuc_fiber *fiber) {
-  scheduler->ready++;
+  scheduler->ready_count++;
   fiber->ready_next = nullptr;
 
   if (scheduler->ready_tail == nullptr) {
@@ -35,7 +35,7 @@ static void park(struct __libuc_scheduler *scheduler,
    * CQ lets the kernel drop wakes behind a masked -EBADR, so parking
    * stops at the CQ's capacity. */
   if (fiber->await_sqe->flags != 0 ||
-      scheduler->parked == scheduler->ring.cq_entries) {
+      scheduler->parked_count == scheduler->ring.cq_entries) {
     __builtin_trap();
   }
 
@@ -52,15 +52,15 @@ static void park(struct __libuc_scheduler *scheduler,
 
   *slot = *fiber->await_sqe;
   slot->user_data = (uintptr_t)fiber;
-  scheduler->parked++;
+  scheduler->parked_count++;
 }
 
 void __libuc_scheduler_run(struct __libuc_scheduler *scheduler) {
-  while (scheduler->parked + scheduler->ready != 0) {
-    for (uint32_t turns = scheduler->ready; turns != 0; turns--) {
+  while (scheduler->parked_count + scheduler->ready_count != 0) {
+    for (uint32_t turns = scheduler->ready_count; turns != 0; turns--) {
       struct __libuc_fiber *fiber = scheduler->ready_head;
       scheduler->ready_head = fiber->ready_next;
-      scheduler->ready--;
+      scheduler->ready_count--;
 
       if (scheduler->ready_head == nullptr) {
         scheduler->ready_tail = nullptr;
@@ -81,11 +81,11 @@ void __libuc_scheduler_run(struct __libuc_scheduler *scheduler) {
       }
     }
 
-    if (scheduler->parked == 0) {
+    if (scheduler->parked_count == 0) {
       continue;
     }
 
-    const uint32_t min_complete = scheduler->ready == 0 ? 1 : 0;
+    const uint32_t min_complete = scheduler->ready_count == 0 ? 1 : 0;
     if (__libuc_syscall_failed(
             __libuc_ring_submit(&scheduler->ring, min_complete))) {
       __builtin_trap();
@@ -104,7 +104,7 @@ void __libuc_scheduler_run(struct __libuc_scheduler *scheduler) {
           (struct __libuc_fiber *)(uintptr_t)completion.user_data;
 
       woken->await_res = completion.res;
-      scheduler->parked--;
+      scheduler->parked_count--;
       __libuc_scheduler_enqueue(scheduler, woken);
     }
   }
