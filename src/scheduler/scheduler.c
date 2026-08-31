@@ -3,17 +3,44 @@
 #include <stdint.h>
 
 #include <linux/io_uring.h>
+#include <linux/mman.h>
 
 #include "syscall.h"
 
+/* One record per parked fiber, and park stops at the CQ's capacity —
+ * the default grant is twice the SQ — so this keeps the CQ the binding
+ * bound rather than the table. */
+constexpr uint32_t scheduler_operation_slots =
+    2 * __libuc_scheduler_ring_entries;
+static_assert(scheduler_operation_slots == 2048);
+static_assert(scheduler_operation_slots <= 1U << __libuc_operation_slot_bits);
+
+constexpr size_t scheduler_table_length =
+    scheduler_operation_slots * sizeof(struct __libuc_operation);
+
 [[nodiscard]] bool
 __libuc_scheduler_become(struct __libuc_scheduler *scheduler) {
-  *scheduler = (struct __libuc_scheduler){
-      .ready_head = nullptr,
-      .ready_tail = nullptr,
-  };
+  const long address =
+      __libuc_sys_mmap(nullptr, scheduler_table_length, PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (__libuc_syscall_failed(address)) {
+    return false;
+  }
 
-  return __libuc_ring_create(&scheduler->ring, __libuc_scheduler_ring_entries);
+  *scheduler = (struct __libuc_scheduler){
+      .table = (struct __libuc_operation *)(uintptr_t)address,
+  };
+  for (size_t slot = scheduler_operation_slots; slot != 0; slot--) {
+    scheduler->table[slot - 1].next = scheduler->free_head;
+    scheduler->free_head = &scheduler->table[slot - 1];
+  }
+
+  if (!__libuc_ring_create(&scheduler->ring, __libuc_scheduler_ring_entries)) {
+    (void)__libuc_sys_munmap(scheduler->table, scheduler_table_length);
+    return false;
+  }
+
+  return true;
 }
 
 void __libuc_scheduler_enqueue(struct __libuc_scheduler *scheduler,

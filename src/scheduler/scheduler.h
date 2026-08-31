@@ -2,6 +2,7 @@
 #define LIBUC_SRC_SCHEDULER_SCHEDULER_H
 
 #include "fiber/fiber.h"
+#include "operation.h"
 #include "ring/ring.h"
 
 /* SQ entries; a power of two is granted exactly by io_uring_setup, up to
@@ -13,6 +14,8 @@ struct __libuc_scheduler {
   struct __libuc_ring ring;
   struct __libuc_fiber *ready_head;
   struct __libuc_fiber *ready_tail;
+  struct __libuc_operation *table;
+  struct __libuc_operation *free_head;
   uint32_t ready_count;
   uint32_t parked_count;
 };
