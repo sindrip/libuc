@@ -94,6 +94,15 @@ traps until a measurement funds growth. The delivery queue is four inline
 and the consumer rearms after draining — the same rearm path a
 kernel-ended stream already requires.
 
+Landed 2026-08-31 (a853417..ea56eff): the packed key, the two-state
+record, the scheduler's table and free list, and park/reap speaking the
+key — single-shot behavior unchanged, full sweep and VM green. Next arc
+is the STREAM kind, opening with the consumer seam: next() needs a new
+fiber-scheduler request shape (AWAIT carries one SQE, one result; a
+stream consumer parks against a record), an API conversation before
+code. STAGED, owner, kind, the delivery queue, and the waiter/next
+nulls all return with their readers in this arc.
+
 ## Acceptance
 
 - Two `F_MORE` CQEs reaped before the consumer runs: one ready-queue
