@@ -16,6 +16,7 @@ enum __libuc_fiber_request_kind : unsigned long {
   __LIBUC_FIBER_REQUEST_SPAWN,
   __LIBUC_FIBER_REQUEST_JOIN,
   __LIBUC_FIBER_REQUEST_DETACH,
+  __LIBUC_FIBER_REQUEST_PROCESS_EXIT,
 };
 
 struct io_uring_sqe;
@@ -36,9 +37,11 @@ struct __libuc_fiber_request {
   union {
     /* An SQE for AWAIT, a spawn request for SPAWN. */
     const void *argument;
-    /* JOIN's ask: the fiber to wait on. Its record belongs to the
-     * scheduler answering the request, so it rides unqualified. */
+    /* JOIN's ask; the scheduler writes its slot, so it rides
+     * unqualified. */
     struct __libuc_fiber *target;
+    /* PROCESS_EXIT's ask. */
+    long status;
   };
   /* The scheduler's answer, written before it resumes the asker. */
   long result;
@@ -47,10 +50,8 @@ struct __libuc_fiber_request {
   struct __libuc_fiber *fiber;
 };
 
-/* A record outlives its exit: the mapping keeps the status readable
- * until a join or detach takes it. A detached fiber skips the zombie:
- * its exit reclaims it at once. Spawn zero-initializes the record, so
- * live must be the zero state. */
+/* A record outlives its exit until a join or detach takes it. Spawn
+ * zero-initializes the record, so live is the zero state. */
 enum __libuc_fiber_life : uint32_t {
   __LIBUC_FIBER_LIVE,
   __LIBUC_FIBER_DETACHED,
@@ -71,9 +72,7 @@ struct __libuc_fiber {
   struct fiber_context *return_to;
   /* Scheduler-owned FIFO link; a fiber is in at most one queue. */
   struct __libuc_fiber *ready_next;
-  /* The one join waiting on this fiber, parked until the exit that
-   * answers it; scheduler-owned like the FIFO link. A second joiner
-   * traps. */
+  /* Scheduler-owned; the one join waiting on this fiber. */
   struct __libuc_fiber_request *joiner;
   /* The exit status, readable once the fiber has exited. */
   int status;
@@ -121,6 +120,12 @@ void __libuc_fiber_yield(void);
  * afterward. Detaching a target twice, or one a fiber joins, traps;
  * detaching yourself is allowed. With no current fiber this faults. */
 void __libuc_fiber_detach(struct __libuc_fiber *target);
+
+/* Stop the reactor with this status; everything else is abandoned to
+ * the dying process. By pointer: main may return with a foreign
+ * thread-local block installed. */
+[[noreturn]] void __libuc_fiber_process_exit(struct __libuc_fiber *fiber,
+                                             int status);
 
 /* Exactly one CQE; the reap loop traps streams. The suspended frame
  * keeps the SQE and its buffers live through the CQE. Returns res; with

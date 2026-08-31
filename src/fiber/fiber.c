@@ -7,9 +7,8 @@
 #include "syscall.h"
 #include "thread_local_arch.h"
 
-/* Takes the fiber by pointer, not through thread_local_read(): an entry
- * may return with a foreign thread-local block installed, and the
- * resumer reinstalls its own either way. */
+/* By pointer, not thread_local_read(): an entry may return with a
+ * foreign thread-local block installed. */
 [[noreturn]] static void exit_fiber(struct __libuc_fiber *fiber, int status) {
   fiber->status = status;
 
@@ -106,8 +105,7 @@ __libuc_fiber_resume(struct __libuc_fiber *fiber) {
   }
   if (request->kind == __LIBUC_FIBER_REQUEST_EXIT) {
     fiber->context = (struct fiber_context){0};
-    /* Exiting does not overwrite a detach mark: the scheduler reads it
-     * to reclaim at once instead of keeping a zombie. */
+    /* A detach mark outlives the exit; the scheduler reclaims by it. */
     if (fiber->life == __LIBUC_FIBER_LIVE) {
       fiber->life = __LIBUC_FIBER_EXITED;
     }
@@ -152,6 +150,18 @@ void __libuc_fiber_yield(void) {
                      (unsigned long)(uintptr_t)&request);
 
   return request.result;
+}
+
+[[noreturn]] void __libuc_fiber_process_exit(struct __libuc_fiber *fiber,
+                                             int status) {
+  struct __libuc_fiber_request request = {
+      .kind = __LIBUC_FIBER_REQUEST_PROCESS_EXIT,
+      .status = status,
+  };
+
+  (void)fiber_switch(&fiber->context, fiber->return_to,
+                     (unsigned long)(uintptr_t)&request);
+  __builtin_trap();
 }
 
 void __libuc_fiber_detach(struct __libuc_fiber *target) {

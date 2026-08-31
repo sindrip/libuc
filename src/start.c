@@ -19,11 +19,13 @@ constexpr size_t root_stack_length = (size_t)8 << 20;
 struct root_arguments {
   char **argv;
   char **envp;
+  /* The root record, so the exit after main needs no thread pointer. */
+  struct __libuc_fiber *fiber;
   int argument_count;
   uint32_t : 32;
 };
 
-static int root_entry(void *opaque) {
+[[noreturn]] static int root_entry(void *opaque) {
   struct root_arguments *arguments = opaque;
 
   for (void (*const *init)(void) = __libuc_init_array_start;
@@ -31,7 +33,12 @@ static int root_entry(void *opaque) {
     (*init)();
   }
 
-  return main(arguments->argument_count, arguments->argv, arguments->envp);
+  /* Returning from main is exit with that value (C11 5.1.2.2.3); a
+   * main that ends with thrd_exit never comes back here, and the
+   * reactor drains instead. */
+  __libuc_fiber_process_exit(
+      arguments->fiber,
+      main(arguments->argument_count, arguments->argv, arguments->envp));
 }
 
 /* The live startup frame becomes scheduler zero's control stack: parse what
@@ -75,14 +82,8 @@ int __libuc_start(void *initial_stack) {
   if (root == nullptr) {
     return 127;
   }
+  arguments.fiber = root;
 
   __libuc_scheduler_enqueue(&scheduler, root);
-  __libuc_scheduler_run(&scheduler);
-
-  const int status = root->status;
-  if (!__libuc_fiber_destroy(root)) {
-    return 127;
-  }
-
-  return status;
+  return __libuc_scheduler_run(&scheduler);
 }

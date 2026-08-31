@@ -26,6 +26,9 @@ __libuc_scheduler_become(struct __libuc_scheduler *scheduler);
 void __libuc_scheduler_enqueue(struct __libuc_scheduler *scheduler,
                                struct __libuc_fiber *fiber);
 
-void __libuc_scheduler_run(struct __libuc_scheduler *scheduler);
+/* Dispatch until a process-exit request stops the reactor, returning
+ * its status, or the scheduler drains, returning 0: the last thread's
+ * termination is exit(EXIT_SUCCESS) (C11 7.26.5.5). */
+int __libuc_scheduler_run(struct __libuc_scheduler *scheduler);
 
 #endif

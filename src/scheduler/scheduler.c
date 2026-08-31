@@ -59,7 +59,7 @@ static void park(struct __libuc_scheduler *scheduler,
   scheduler->parked_count++;
 }
 
-void __libuc_scheduler_run(struct __libuc_scheduler *scheduler) {
+int __libuc_scheduler_run(struct __libuc_scheduler *scheduler) {
   while (scheduler->parked_count + scheduler->ready_count != 0) {
     for (uint32_t turns = scheduler->ready_count; turns != 0; turns--) {
       struct __libuc_fiber *fiber = scheduler->ready_head;
@@ -149,6 +149,8 @@ void __libuc_scheduler_run(struct __libuc_scheduler *scheduler) {
         __libuc_scheduler_enqueue(scheduler, fiber);
         break;
       }
+      case __LIBUC_FIBER_REQUEST_PROCESS_EXIT:
+        return (int)request->status;
       }
     }
 
@@ -186,4 +188,6 @@ void __libuc_scheduler_run(struct __libuc_scheduler *scheduler) {
   if (scheduler->joining_count != 0) {
     __builtin_trap();
   }
+
+  return 0;
 }
