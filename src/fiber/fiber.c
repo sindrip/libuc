@@ -16,42 +16,58 @@
   __builtin_trap();
 }
 
-[[nodiscard]] bool __libuc_fiber_create(struct __libuc_fiber *fiber,
-                                        size_t stack_length,
-                                        void (*entry)(void *), void *argument) {
+[[nodiscard]] struct __libuc_fiber *__libuc_fiber_spawn(size_t stack_length,
+                                                        void (*entry)(void *),
+                                                        void *argument) {
+  if (stack_length <= sizeof(struct __libuc_fiber)) {
+    return nullptr;
+  }
+
   const long address =
       __libuc_sys_mmap(nullptr, stack_length, PROT_READ | PROT_WRITE,
                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (__libuc_syscall_failed(address)) {
-    return false;
+    return nullptr;
   }
+  unsigned char *stack = (unsigned char *)(uintptr_t)address;
+
+  /* The record takes the top of the mapping, so the stack grows down away
+   * from it and an overflow runs off the low end instead. */
+  const uintptr_t top =
+      (uintptr_t)(stack + stack_length) - sizeof(struct __libuc_fiber);
+  struct __libuc_fiber *fiber = (struct __libuc_fiber *)(void *)(
+      top & ~(uintptr_t)(alignof(struct __libuc_fiber) - 1));
 
   *fiber = (struct __libuc_fiber){
       .entry = entry,
       .argument = argument,
-      .stack = (unsigned char *)(uintptr_t)address,
+      .stack = stack,
       .stack_length = stack_length,
   };
 
   if (!__libuc_thread_local_block_create(&fiber->thread_local_block)) {
-    (void)__libuc_sys_munmap(fiber->stack, stack_length);
-    return false;
+    (void)__libuc_sys_munmap(stack, stack_length);
+    return nullptr;
   }
 
   struct __libuc_thread_local_tcb *tcb =
       fiber->thread_local_block.thread_pointer;
   tcb->fiber = fiber;
 
-  fiber_context_make(&fiber->context, fiber->stack + stack_length, run_fiber,
-                     fiber);
-  return true;
+  fiber_context_make(&fiber->context, (unsigned char *)fiber, run_fiber, fiber);
+  return fiber;
 }
 
 [[nodiscard]] bool __libuc_fiber_destroy(const struct __libuc_fiber *fiber) {
   const bool block_destroyed =
       __libuc_thread_local_block_destroy(&fiber->thread_local_block);
-  const bool stack_released = !__libuc_syscall_failed(
-      __libuc_sys_munmap(fiber->stack, fiber->stack_length));
+
+  /* A spawned record lives in the mapping being released, so read its
+   * geometry out before the unmap. */
+  unsigned char *const stack = fiber->stack;
+  const size_t stack_length = fiber->stack_length;
+  const bool stack_released =
+      !__libuc_syscall_failed(__libuc_sys_munmap(stack, stack_length));
 
   return block_destroyed && stack_released;
 }

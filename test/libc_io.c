@@ -60,15 +60,17 @@ int main(void) {
     return 123;
   }
 
-  struct __libuc_fiber reads;
-  struct __libuc_fiber writes;
-  if (!__libuc_fiber_create(&reads, (size_t)256 * 1024, reader, nullptr) ||
-      !__libuc_fiber_create(&writes, (size_t)256 * 1024, writer, nullptr)) {
+  struct __libuc_fiber *reads;
+  struct __libuc_fiber *writes;
+  if ((reads = __libuc_fiber_spawn((size_t)256 * 1024, reader, nullptr)) ==
+          nullptr ||
+      (writes = __libuc_fiber_spawn((size_t)256 * 1024, writer, nullptr)) ==
+          nullptr) {
     return 122;
   }
 
-  __libuc_scheduler_enqueue(&scheduler, &reads);
-  __libuc_scheduler_enqueue(&scheduler, &writes);
+  __libuc_scheduler_enqueue(&scheduler, reads);
+  __libuc_scheduler_enqueue(&scheduler, writes);
   __libuc_scheduler_run(&scheduler);
 
   if (!reader_ok) {
@@ -81,7 +83,7 @@ int main(void) {
       scheduler.ready_head != nullptr) {
     return 119;
   }
-  if (!__libuc_fiber_destroy(&reads) || !__libuc_fiber_destroy(&writes)) {
+  if (!__libuc_fiber_destroy(reads) || !__libuc_fiber_destroy(writes)) {
     return 118;
   }
 

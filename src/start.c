@@ -72,15 +72,16 @@ int __libuc_start(void *initial_stack) {
       .argument_count = (int)argument_count,
       .status = 127,
   };
-  struct __libuc_fiber root;
-  if (!__libuc_fiber_create(&root, root_stack_length, root_entry, &arguments)) {
+  struct __libuc_fiber *root =
+      __libuc_fiber_spawn(root_stack_length, root_entry, &arguments);
+  if (root == nullptr) {
     return 127;
   }
 
-  __libuc_scheduler_enqueue(&scheduler, &root);
+  __libuc_scheduler_enqueue(&scheduler, root);
   __libuc_scheduler_run(&scheduler);
 
-  if (!__libuc_fiber_destroy(&root)) {
+  if (!__libuc_fiber_destroy(root)) {
     return 127;
   }
   return arguments.status;

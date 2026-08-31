@@ -36,13 +36,13 @@ static void server(void *opaque) {
   const int fd = socket(AF_INET, SOCK_STREAM, 0);
   *ok = *ok && fd >= 0;
   errno = 17;
-  *ok = *ok && bind(fd, (const struct sockaddr *)&address, sizeof(address)) == 0;
+  *ok =
+      *ok && bind(fd, (const struct sockaddr *)&address, sizeof(address)) == 0;
   *ok = *ok && listen(fd, 1) == 0;
 
   const int squatter = socket(AF_INET, SOCK_STREAM, 0);
-  *ok = *ok &&
-        bind(squatter, (const struct sockaddr *)&address, sizeof(address)) ==
-            -1;
+  *ok = *ok && bind(squatter, (const struct sockaddr *)&address,
+                    sizeof(address)) == -1;
   *ok = *ok && errno == EADDRINUSE;
   *ok = *ok && close(squatter) == 0;
 
@@ -69,9 +69,8 @@ static void client(void *opaque) {
   const struct sockaddr_in nobody = loopback(echo_port + 1);
   const int refused = socket(AF_INET, SOCK_STREAM, 0);
   *ok = *ok && refused >= 0;
-  *ok = *ok &&
-        connect(refused, (const struct sockaddr *)&nobody, sizeof(nobody)) ==
-            -1;
+  *ok = *ok && connect(refused, (const struct sockaddr *)&nobody,
+                       sizeof(nobody)) == -1;
   *ok = *ok && errno == ECONNREFUSED;
   *ok = *ok && close(refused) == 0;
 
@@ -102,16 +101,17 @@ int main(void) {
     return 124;
   }
 
-  struct __libuc_fiber serves;
-  struct __libuc_fiber connects;
-  if (!__libuc_fiber_create(&serves, (size_t)256 * 1024, server, &server_ok) ||
-      !__libuc_fiber_create(&connects, (size_t)256 * 1024, client,
-                            &client_ok)) {
+  struct __libuc_fiber *serves;
+  struct __libuc_fiber *connects;
+  if ((serves = __libuc_fiber_spawn((size_t)256 * 1024, server, &server_ok)) ==
+          nullptr ||
+      (connects = __libuc_fiber_spawn((size_t)256 * 1024, client,
+                                      &client_ok)) == nullptr) {
     return 123;
   }
 
-  __libuc_scheduler_enqueue(&scheduler, &serves);
-  __libuc_scheduler_enqueue(&scheduler, &connects);
+  __libuc_scheduler_enqueue(&scheduler, serves);
+  __libuc_scheduler_enqueue(&scheduler, connects);
   __libuc_scheduler_run(&scheduler);
 
   if (!server_ok) {
@@ -124,7 +124,7 @@ int main(void) {
       scheduler.ready_head != nullptr) {
     return 120;
   }
-  if (!__libuc_fiber_destroy(&serves) || !__libuc_fiber_destroy(&connects)) {
+  if (!__libuc_fiber_destroy(serves) || !__libuc_fiber_destroy(connects)) {
     return 119;
   }
 

@@ -37,27 +37,31 @@ int main(void) {
     return 124;
   }
 
-  struct __libuc_fiber first;
-  struct __libuc_fiber second;
-  struct report first_report = {.fiber = &first, .write = 11, .ok = 0};
-  struct report second_report = {.fiber = &second, .write = 22, .ok = 0};
-  if (!__libuc_fiber_create(&first, (size_t)256 * 1024, entry, &first_report) ||
-      !__libuc_fiber_create(&second, (size_t)256 * 1024, entry,
-                            &second_report)) {
+  /* A fiber's identity exists only once it is spawned, so the reports
+   * learn their fiber after the fact. */
+  struct report first_report = {.write = 11, .ok = 0};
+  struct report second_report = {.write = 22, .ok = 0};
+  struct __libuc_fiber *first =
+      __libuc_fiber_spawn((size_t)256 * 1024, entry, &first_report);
+  struct __libuc_fiber *second =
+      __libuc_fiber_spawn((size_t)256 * 1024, entry, &second_report);
+  if (first == nullptr || second == nullptr) {
     return 123;
   }
+  first_report.fiber = first;
+  second_report.fiber = second;
 
   /* A suspended fiber's thread-local value must survive the sibling's
    * turns. */
   for (int turn = 0; turn < 2; turn++) {
-    if (__libuc_fiber_resume(&first) != __LIBUC_FIBER_REQUEST_YIELD ||
+    if (__libuc_fiber_resume(first) != __LIBUC_FIBER_REQUEST_YIELD ||
         __libuc_fiber_current() != root ||
-        __libuc_fiber_resume(&second) != __LIBUC_FIBER_REQUEST_YIELD) {
+        __libuc_fiber_resume(second) != __LIBUC_FIBER_REQUEST_YIELD) {
       return 122;
     }
   }
-  if (__libuc_fiber_resume(&first) != __LIBUC_FIBER_REQUEST_EXIT ||
-      __libuc_fiber_resume(&second) != __LIBUC_FIBER_REQUEST_EXIT ||
+  if (__libuc_fiber_resume(first) != __LIBUC_FIBER_REQUEST_EXIT ||
+      __libuc_fiber_resume(second) != __LIBUC_FIBER_REQUEST_EXIT ||
       __libuc_fiber_current() != root) {
     return 121;
   }
@@ -66,7 +70,7 @@ int main(void) {
     return 120;
   }
 
-  if (!__libuc_fiber_destroy(&first) || !__libuc_fiber_destroy(&second)) {
+  if (!__libuc_fiber_destroy(first) || !__libuc_fiber_destroy(second)) {
     return 119;
   }
   return 0;

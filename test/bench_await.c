@@ -66,8 +66,8 @@ static void report(const char *name, uint64_t ticks, uint64_t operations) {
   }
   *cursor++ = '\n';
 
-  awaits_ok = awaits_ok &&
-              write(1, line, (size_t)(cursor - line)) == cursor - line;
+  awaits_ok =
+      awaits_ok && write(1, line, (size_t)(cursor - line)) == cursor - line;
 }
 
 int main(void) {
@@ -81,44 +81,45 @@ int main(void) {
     return 124;
   }
 
-  static struct __libuc_fiber fibers[crowd_fibers];
+  static struct __libuc_fiber *fibers[crowd_fibers];
   static size_t iterations;
 
   iterations = warmup_iterations;
-  if (!__libuc_fiber_create(&fibers[0], (size_t)64 * 1024, single,
-                            &iterations)) {
+  if ((fibers[0] = __libuc_fiber_spawn((size_t)64 * 1024, single,
+                                       &iterations)) == nullptr) {
     return 123;
   }
-  __libuc_scheduler_enqueue(&scheduler, &fibers[0]);
+  __libuc_scheduler_enqueue(&scheduler, fibers[0]);
   __libuc_scheduler_run(&scheduler);
-  if (!__libuc_fiber_destroy(&fibers[0])) {
+  if (!__libuc_fiber_destroy(fibers[0])) {
     return 122;
   }
 
   iterations = single_iterations;
-  if (!__libuc_fiber_create(&fibers[0], (size_t)64 * 1024, single,
-                            &iterations)) {
+  if ((fibers[0] = __libuc_fiber_spawn((size_t)64 * 1024, single,
+                                       &iterations)) == nullptr) {
     return 123;
   }
-  __libuc_scheduler_enqueue(&scheduler, &fibers[0]);
+  __libuc_scheduler_enqueue(&scheduler, fibers[0]);
   const uint64_t single_start = bench_ticks();
   __libuc_scheduler_run(&scheduler);
   const uint64_t single_ticks = bench_ticks() - single_start;
-  if (!__libuc_fiber_destroy(&fibers[0])) {
+  if (!__libuc_fiber_destroy(fibers[0])) {
     return 122;
   }
 
   for (size_t i = 0; i < crowd_fibers; i++) {
-    if (!__libuc_fiber_create(&fibers[i], (size_t)64 * 1024, crowd, nullptr)) {
+    if ((fibers[i] = __libuc_fiber_spawn((size_t)64 * 1024, crowd, nullptr)) ==
+        nullptr) {
       return 121;
     }
-    __libuc_scheduler_enqueue(&scheduler, &fibers[i]);
+    __libuc_scheduler_enqueue(&scheduler, fibers[i]);
   }
   const uint64_t crowd_start = bench_ticks();
   __libuc_scheduler_run(&scheduler);
   const uint64_t crowd_ticks = bench_ticks() - crowd_start;
   for (size_t i = 0; i < crowd_fibers; i++) {
-    if (!__libuc_fiber_destroy(&fibers[i])) {
+    if (!__libuc_fiber_destroy(fibers[i])) {
       return 120;
     }
   }

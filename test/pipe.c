@@ -43,12 +43,13 @@ int main(void) {
     return 124;
   }
 
-  struct __libuc_fiber fiber;
-  if (!__libuc_fiber_create(&fiber, (size_t)256 * 1024, piper, nullptr)) {
+  struct __libuc_fiber *fiber;
+  if ((fiber = __libuc_fiber_spawn((size_t)256 * 1024, piper, nullptr)) ==
+      nullptr) {
     return 123;
   }
 
-  __libuc_scheduler_enqueue(&scheduler, &fiber);
+  __libuc_scheduler_enqueue(&scheduler, fiber);
   __libuc_scheduler_run(&scheduler);
 
   if (!piper_ok) {
@@ -58,7 +59,7 @@ int main(void) {
       scheduler.ready_head != nullptr) {
     return 121;
   }
-  if (!__libuc_fiber_destroy(&fiber)) {
+  if (!__libuc_fiber_destroy(fiber)) {
     return 120;
   }
 

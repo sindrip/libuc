@@ -38,15 +38,17 @@ int main(void) {
     return 124;
   }
 
-  struct __libuc_fiber parks;
-  struct __libuc_fiber spins;
-  if (!__libuc_fiber_create(&parks, (size_t)64 * 1024, parker, nullptr) ||
-      !__libuc_fiber_create(&spins, (size_t)64 * 1024, spinner, nullptr)) {
+  struct __libuc_fiber *parks;
+  struct __libuc_fiber *spins;
+  if ((parks = __libuc_fiber_spawn((size_t)64 * 1024, parker, nullptr)) ==
+          nullptr ||
+      (spins = __libuc_fiber_spawn((size_t)64 * 1024, spinner, nullptr)) ==
+          nullptr) {
     return 123;
   }
 
-  __libuc_scheduler_enqueue(&scheduler, &parks);
-  __libuc_scheduler_enqueue(&scheduler, &spins);
+  __libuc_scheduler_enqueue(&scheduler, parks);
+  __libuc_scheduler_enqueue(&scheduler, spins);
   __libuc_scheduler_run(&scheduler);
 
   if (!woken) {
@@ -60,7 +62,7 @@ int main(void) {
     return 120;
   }
 
-  if (!__libuc_fiber_destroy(&parks) || !__libuc_fiber_destroy(&spins)) {
+  if (!__libuc_fiber_destroy(parks) || !__libuc_fiber_destroy(spins)) {
     return 119;
   }
   return 0;

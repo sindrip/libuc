@@ -1,6 +1,6 @@
-#include <string.h>
-
 #include <linux/io_uring.h>
+
+#include <string.h>
 
 #include "fiber/fiber.h"
 #include "scheduler/scheduler.h"
@@ -11,7 +11,7 @@ static size_t order_count;
 static bool wakes_ok = true;
 
 struct actor {
-  struct __libuc_fiber fiber;
+  struct __libuc_fiber *fiber;
   unsigned long label;
 };
 
@@ -58,15 +58,15 @@ int main(void) {
 
   struct actor waits = {.label = 'A'};
   struct actor yields = {.label = 'B'};
-  if (!__libuc_fiber_create(&waits.fiber, (size_t)256 * 1024, waiter,
-                            &waits) ||
-      !__libuc_fiber_create(&yields.fiber, (size_t)256 * 1024, yielder,
-                            &yields)) {
+  if ((waits.fiber = __libuc_fiber_spawn((size_t)256 * 1024, waiter, &waits)) ==
+          nullptr ||
+      (yields.fiber = __libuc_fiber_spawn((size_t)256 * 1024, yielder,
+                                          &yields)) == nullptr) {
     return 123;
   }
 
-  __libuc_scheduler_enqueue(&scheduler, &waits.fiber);
-  __libuc_scheduler_enqueue(&scheduler, &yields.fiber);
+  __libuc_scheduler_enqueue(&scheduler, waits.fiber);
+  __libuc_scheduler_enqueue(&scheduler, yields.fiber);
   __libuc_scheduler_run(&scheduler);
 
   if (order_count != sizeof(order) ||
@@ -81,8 +81,8 @@ int main(void) {
     return 120;
   }
 
-  if (!__libuc_fiber_destroy(&waits.fiber) ||
-      !__libuc_fiber_destroy(&yields.fiber)) {
+  if (!__libuc_fiber_destroy(waits.fiber) ||
+      !__libuc_fiber_destroy(yields.fiber)) {
     return 119;
   }
   return 0;

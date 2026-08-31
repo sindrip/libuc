@@ -32,9 +32,12 @@ struct __libuc_fiber {
   enum __libuc_fiber_request request;
 };
 
-[[nodiscard]] bool __libuc_fiber_create(struct __libuc_fiber *fiber,
-                                        size_t stack_length,
-                                        void (*entry)(void *), void *argument);
+/* Create a fiber whose record lives at the top of its own stack mapping,
+ * so the stack grows down away from it. nullptr when the mapping fails or
+ * the stack cannot hold the record; destroying the fiber invalidates the
+ * pointer along with the mapping. */
+[[nodiscard]] struct __libuc_fiber *
+__libuc_fiber_spawn(size_t stack_length, void (*entry)(void *), void *argument);
 
 [[nodiscard]] bool __libuc_fiber_destroy(const struct __libuc_fiber *fiber);
 

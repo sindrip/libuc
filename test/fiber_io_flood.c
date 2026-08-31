@@ -10,7 +10,7 @@
  * must flush mid-sweep or the rest are silently dropped. */
 constexpr size_t flood_count = __libuc_scheduler_ring_entries + 6;
 
-static struct __libuc_fiber fibers[flood_count];
+static struct __libuc_fiber *fibers[flood_count];
 static size_t wakes;
 static bool wakes_ok = true;
 
@@ -32,14 +32,14 @@ int main(void) {
   }
 
   for (size_t i = 0; i < flood_count; i++) {
-    if (!__libuc_fiber_create(&fibers[i], (size_t)64 * 1024, parker,
-                              nullptr)) {
+    if ((fibers[i] = __libuc_fiber_spawn((size_t)64 * 1024, parker, nullptr)) ==
+        nullptr) {
       return 123;
     }
   }
 
   for (size_t i = 0; i < flood_count; i++) {
-    __libuc_scheduler_enqueue(&scheduler, &fibers[i]);
+    __libuc_scheduler_enqueue(&scheduler, fibers[i]);
   }
   __libuc_scheduler_run(&scheduler);
 
@@ -55,7 +55,7 @@ int main(void) {
   }
 
   for (size_t i = 0; i < flood_count; i++) {
-    if (!__libuc_fiber_destroy(&fibers[i])) {
+    if (!__libuc_fiber_destroy(fibers[i])) {
       return 119;
     }
   }

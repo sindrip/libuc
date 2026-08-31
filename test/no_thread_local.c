@@ -49,19 +49,19 @@ int main(int argc, char **argv, char **envp) {
       return 119;
     }
 
-    struct __libuc_fiber fiber;
-    if (!__libuc_fiber_create(&fiber, (size_t)256 * 1024, record_current,
-                              nullptr)) {
+    struct __libuc_fiber *fiber;
+    if ((fiber = __libuc_fiber_spawn((size_t)256 * 1024, record_current,
+                                     nullptr)) == nullptr) {
       return 118;
     }
 
-    if (__libuc_fiber_resume(&fiber) != __LIBUC_FIBER_REQUEST_EXIT) {
+    if (__libuc_fiber_resume(fiber) != __LIBUC_FIBER_REQUEST_EXIT) {
       return 116;
     }
     const bool carried =
-        seen_current == &fiber && __libuc_fiber_current() == root;
+        seen_current == fiber && __libuc_fiber_current() == root;
 
-    if (!__libuc_fiber_destroy(&fiber) || !carried) {
+    if (!__libuc_fiber_destroy(fiber) || !carried) {
       return 117;
     }
   }
