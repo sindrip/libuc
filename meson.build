@@ -372,6 +372,19 @@ if get_option('tests')
 
   test_arch_include = include_directories('test/arch/' + arch)
 
+  # A benchmark, not a test: run by hand on a -Dubsan=disabled setup.
+  bench_await_probe = executable(
+    'bench-await',
+    'test/bench_await.c',
+    c_args: common_c_args + ['-Wno-reserved-identifier'],
+    include_directories: [public_include, private_include, fiber_arch_include,
+                          test_arch_include],
+    link_args: probe_link_args,
+    link_depends: 'libuc.ld',
+    link_whole: [crt1_internal, libc],
+    name_suffix: 'elf',
+  )
+
   fiber_probe = executable(
     'fiber',
     'test/fiber.c',
@@ -584,6 +597,16 @@ if get_option('tests')
   )
 
   alias_target('initramfs-fiber-io-flood', fiber_io_flood_initramfs)
+
+  bench_await_initramfs = custom_target(
+    'bench-await-initramfs',
+    build_by_default: false,
+    command: [sh, mkinitramfs, '@INPUT@', '@OUTPUT@'],
+    input: bench_await_probe,
+    output: 'bench-await.initramfs.cpio.gz',
+  )
+
+  alias_target('initramfs-bench-await', bench_await_initramfs)
 
   sweep_generation_initramfs = custom_target(
     'sweep-generation-initramfs',
