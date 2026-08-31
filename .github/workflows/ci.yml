@@ -22,6 +22,7 @@ permissions:
 jobs:
   libuc:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # A superseded build is cancelled here and its dependent jobs skipped.
     # Run-level cancellation would also kill a `latest` job mid-update.
     concurrency:
@@ -29,6 +30,9 @@ jobs:
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v7
+
+      - name: Lint workflows
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
 
       # The default docker driver cannot export layer cache, hence the
       # container-driver builder.
@@ -48,12 +52,23 @@ jobs:
           name: libuc
           path: out/libuc/*/*.tar.gz
 
+      - name: Summarize artifacts
+        run: |
+          {
+            echo '| tarball | bytes | sha256 |'
+            echo '| --- | --- | --- |'
+            for f in out/libuc/*/*.tar.gz; do
+              echo "| ${f#out/libuc/} | $(stat -c %s "$f") | $(sha256sum "$f" | cut -d' ' -f1) |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # Never cancelled mid-update: a superseding push queues behind the group,
   # so the tag and the assets it floats with cannot be left torn.
   latest:
     needs: libuc
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     concurrency:
@@ -89,6 +104,7 @@ jobs:
     needs: libuc
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
