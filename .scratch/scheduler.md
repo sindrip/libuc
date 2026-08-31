@@ -2,7 +2,7 @@
 
 Status: **current design record, 2026-08-30.** The private single-scheduler
 reactor is implemented through UC-015. Public topology, scheduler spawning,
-operation slabs, shutdown, and cross-scheduler transport are future work and
+operation tables, shutdown, and cross-scheduler transport are future work and
 are labelled as such below.
 
 ## Current private surface
@@ -131,7 +131,7 @@ Today `sqe->user_data` is the parked fiber pointer. That is valid only because:
 - the fiber record remains stable through the wait.
 
 UC-016 ends that contract. The completion key becomes
-`{generation, operation slot, tag}` and indexes a per-scheduler operation slab.
+`{generation, operation slot, tag}` and indexes a per-scheduler operation table.
 The record, not the fiber, lives until the operation's terminal event. It owns:
 
 - its fiber owner and current waiter, if any;
@@ -171,7 +171,7 @@ The constraints already settled are:
 `SINGLE_ISSUER` stores the submitting task, not a CPU
 (`out/src/io_uring/io_uring.c:3065-3067`). Pinning is therefore a locality and
 wakeup-placement policy. It does not authorize naming cores as owners: rings,
-pools, fibers, and operation slabs belong to schedulers.
+pools, fibers, and operation tables belong to schedulers.
 
 ## No migration
 

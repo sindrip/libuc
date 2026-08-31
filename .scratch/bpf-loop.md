@@ -43,7 +43,7 @@ The current resolved kernel configuration already contains
 The BPF callback may lower bounded bookkeeping, not fiber execution:
 
 1. inspect a bounded number of new CQEs;
-2. validate and decode the completion key into UC-016's operation slab;
+2. validate and decode the completion key into UC-016's operation table;
 3. append opcode-specific delivery and update terminal bookkeeping;
 4. put a waiting owner on the ready queue only on the operation's defined wake
    edge;
@@ -52,7 +52,7 @@ The BPF callback may lower bounded bookkeeping, not fiber execution:
 7. stop when userspace has ready fibers or reclamation work, otherwise set the
    next CQ index and continue sleeping in-kernel.
 
-Context switching, running fibers, allocating slab chunks, returning buffers,
+Context switching, running fibers, allocating table chunks, returning buffers,
 and reclaiming stacks or arenas remain userspace work.
 
 This is an optimization of a correct userspace state machine. The userspace
@@ -69,7 +69,7 @@ generation | operation-slot offset | tag
 ```
 
 The offset addresses a record in a bounded BPF-visible window of the
-per-scheduler operation slab. The generation rejects stale CQEs after slot
+per-scheduler operation table. The generation rejects stale CQEs after slot
 reuse, and the tag distinguishes primary delivery, cancellation, linked
 timeouts, notifications, and transport.
 
@@ -109,7 +109,7 @@ program:
 - how ring resize affects pointers returned by `get_region`;
 - how the callback observes the exact number of userspace-prepared SQEs under
   `SQ_REWIND`;
-- verifier bounds for slab lookup, ready delivery, and reclaim production;
+- verifier bounds for table lookup, ready delivery, and reclaim production;
 - ordering between MSG_RING task work and local CQEs;
 - failure behavior when the BPF program or a kfunc returns an error.
 

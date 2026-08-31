@@ -88,7 +88,7 @@ protocol. It lands only if measurement identifies dispatch as material.
 
 The current CQE key is a fiber pointer and the reap path accepts exactly one CQE
 per await. UC-016 replaces it with a generation-bearing operation record. The
-operation slab is its own identity space; it may refer to a fiber, never be
+operation table is its own identity space; it may refer to a fiber, never be
 embedded in a fiber slot merely to save an address calculation.
 
 ## io_uring buffer liveness

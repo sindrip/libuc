@@ -123,7 +123,7 @@ cost, and a teardown policy; `stacks.md` is the input record.
 
 A fiber pointer works only while a fiber has one single-shot operation. The
 next identity is an operation record with a generation-bearing slot. The bit
-allocation, slab growth, delivery capacity, overflow policy, and stale-key
+allocation, table growth, delivery capacity, overflow policy, and stale-key
 failure are UC-016 decisions. `scheduler.md` records the lifetime rules and
 `bpf-loop.md` must use the same operation address space.
 

@@ -22,16 +22,16 @@ state distinguishes SQEs not yet submitted from requests held by the kernel;
 the count keeps the scheduler alive in either case.
 
 The completion key stops being a fiber. `user_data` encodes
-{generation, slot, tag}: the slot indexes a per-scheduler operation slab
+{generation, slot, tag}: the slot indexes a per-scheduler operation table
 (shared-nothing, no atomics), the generation detects a CQE aimed at a
 recycled slot, and the tag separates ordinary operations, cancellation,
 linked timeouts, notifications, and transport. `../../scheduler.md`
 ("Completion identity") records the same seam — a
 scheduler-owned, generation-bearing record living until the final CQE.
-The operation slab is its own identity space: a record may reference a
+The operation table is its own identity space: a record may reference a
 fiber, never be embedded in one, since a fiber owns several operations the
 moment cancellation or concurrency exists. `../../bpf-loop.md` uses this same
-slab — one encoding, BPF-bounds-checkable, decided once.
+table — one encoding, BPF-bounds-checkable, decided once.
 
 The record: owner, current waiter (if any), generation, kind, state, and a
 bounded delivery queue
@@ -77,7 +77,7 @@ provided-buffer pool.
 Sequencing: UC-014 lands on single-shot operations only, and
 `__libuc_fiber_await` keeps its exactly-one-CQE contract throughout. This
 ticket carries operation identity, bounded stream delivery, ordinary
-terminal-slot recycling (a repeated stream must not exhaust the slab),
+terminal-slot recycling (a repeated stream must not exhaust the table),
 explicit stream cancel-and-drain (the overflow policy depends on it),
 and the multishot forcing probe — forced with multishot poll
 (`IORING_POLL_ADD_MULTI`, uapi io_uring.h:371) over UC-014's pipe, so no
@@ -88,7 +88,7 @@ notification probe waits for the ticket that brings sockets and
 
 Decided 2026-08-31: `user_data` is tag in bits 0-3 (zero invalid, so a
 gap filler's zero key never decodes), slot in bits 4-19, generation in
-bits 20-63. The slab is a constexpr 256 records per scheduler; exhaustion
+bits 20-63. The table is a constexpr 256 records per scheduler; exhaustion
 traps until a measurement funds growth. The delivery queue is four inline
 `{res, flags}` slots; capacity overflow cancels the stream at the kernel
 and the consumer rearms after draining — the same rearm path a
@@ -105,7 +105,7 @@ kernel-ended stream already requires.
 - Delivery-queue capacity exhausted: the chosen backpressure policy is
   observed, not a drop.
 - A stream cancelled and drained through its terminal CQE; its slot
-  recycles, a repeated stream reuses slots without slab growth, and a
+  recycles, a repeated stream reuses slots without table growth, and a
   stale generation aimed at a recycled slot fails validation.
 - Zero-copy notification routing (both tags on one record) is the network
   ticket's probe, once `SEND_ZC` exists to force it.

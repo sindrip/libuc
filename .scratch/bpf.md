@@ -116,7 +116,7 @@ userland.
 ### 7. In-kernel loop — promoted to `bpf-loop.md`
 
 The interface has been read and verified (`loop.c`, `bpf-ops.c`,
-`register.c`). `bpf-loop.md` records the operation-slab encoding it must share
+`register.c`). `bpf-loop.md` records the operation-table encoding it must share
 with UC-016, the validation still missing, and the real cost: a freestanding
 struct_ops loader.
 
