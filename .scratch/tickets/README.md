@@ -9,10 +9,11 @@ a second architecture manual.
 
 | id | waits on | outcome |
 |---|---|---|
+| UC-024 | nothing | thread exit, join, and detach; return from `main` is `exit` |
 | UC-011 | nothing | scheduler-owned stack and TLS-block recycling |
 | UC-019 | nothing | direct completion-loss detection for the current ring |
 | UC-020 | UC-019 | operation records and the common pull-iterator engine |
-| UC-017 | UC-020 | automatic iterator cancellation, zombies, and reclamation |
+| UC-017 | UC-020, UC-024 | automatic iterator cancellation, zombies, and reclamation |
 | UC-021 | UC-017, UC-018, UC-020 | typed accepted-connection iterator |
 | UC-022 | UC-017, UC-018, UC-020, UC-021 | typed borrowed receive iterator |
 | UC-023 | UC-017, UC-018, UC-020, UC-021 | one-result zero-copy send lifetime |
@@ -20,7 +21,7 @@ a second architecture manual.
 UC-012 is environment-blocked rather than implementation work: x86-64
 behavioral acceptance needs an FSGSBASE-capable machine or guest.
 
-The intended implementation order remains UC-011, UC-019, UC-020, UC-017,
+The intended implementation order is UC-024, UC-011, UC-019, UC-020, UC-017,
 UC-021, then UC-022 and UC-023. UC-019 is independent and may land before
 UC-011 if ring correctness is being worked on directly.
 

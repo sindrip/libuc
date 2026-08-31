@@ -37,13 +37,19 @@ coming, so it needs a separate count; otherwise the reactor waits for a CQE
 nobody will post. Nothing runnable, nothing in flight, and fibers still
 blocked is a join cycle — a program bug, and a trap.
 
-**What returning from root `main` means.** Startup today runs the loop until
-the whole scheduler drains (`src/start.c`), so a `main` that returns while
-children run waits for them. C11 says returning from `main` is `exit`, which
-does not wait for other threads. This ticket must pick one and record it:
-today's drain-everything, or `exit` semantics where the runtime stops when
-`main` returns and unjoined threads are abandoned. The choice decides what a
-resident PID 1 does with stragglers, so it interacts with invariant 6.
+**What returning from root `main` means — decided: C11 semantics.** Returning
+from `main` is `exit` with that value (C11 5.1.2.2.3): the reactor stops when
+the root fiber's entry returns, unjoined threads are abandoned, and
+`exit_group` reclaims every mapping and in-flight operation with no cancels
+and no teardown walk. `thrd_exit` from `main` ends only main's thread; the
+program then terminates as if by `exit(EXIT_SUCCESS)` once the last thread
+does (C11 7.26.5.6, the sentence DR 411 added), so today's drain loop
+survives as that path, not as the return contract. The mechanism is a
+process-exit request distinct from a thread's EXIT, raised by the root
+trampoline after `main` returns; a future public `exit` raises the same
+request from any fiber. Invariant 6 falls on the program: a resident PID 1
+keeps itself alive by construction, and its `main` returning stays the
+attempted-to-kill-init envelope.
 
 **Interaction with UC-017.** That ticket makes an *iterator owner* that exits
 without cleanup into a zombie: cancel its operations, drain their terminal
@@ -67,6 +73,10 @@ owns no live operations.
   joined before it exits blocks until it finishes; both yield its result.
 - A detached thread's mapping is released at exit with no join.
 - `thrd_exit` from nested calls ends the thread with that result.
+- A `main` that returns while other threads run ends the program with its
+  return value; the others never run again. A `main` that ends with
+  `thrd_exit` leaves them running, and the program exits `EXIT_SUCCESS` after
+  the last thread finishes.
 - Joining a thread that another fiber already joins traps.
 - A cycle of joins with nothing runnable and nothing in flight traps rather
   than hanging.

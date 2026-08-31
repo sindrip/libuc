@@ -84,21 +84,25 @@ iterator engine.
 
 The ticket index is `tickets/README.md`. The useful dependency order is:
 
-1. **UC-011 — scheduler-owned stack/block recycling.** It makes the scheduler
+1. **UC-024 — thread exit, join, and detach.** The thread half of fiber
+   lifetime, ahead of UC-017 because it needs no operation records. Returning
+   from `main` is `exit` (C11 5.1.2.2.3); `thrd_exit` from `main` drains the
+   scheduler, then `EXIT_SUCCESS` (7.26.5.6).
+2. **UC-011 — scheduler-owned stack/block recycling.** It makes the scheduler
    ownership seam explicit, then measures separate versus carved TLS storage.
-2. **UC-019 — completion-loss detection.** It maps and checks the kernel's
+3. **UC-019 — completion-loss detection.** It maps and checks the kernel's
    dropped-CQE evidence while preserving the current single-CQE admission proof.
-3. **UC-020 — pull iterators over operation records.** The completion key
+4. **UC-020 — pull iterators over operation records.** The completion key
    becomes generation + operation slot + tag. The private engine proves
    repeated delivery with multishot poll while fused `await` keeps its current
    performance.
-4. **UC-017 — automatic iterator teardown and zombies.** Fiber exit cancels
+5. **UC-017 — automatic iterator teardown and zombies.** Fiber exit cancels
    owned operations and delays all reclamation until their terminal events
    arrive.
-5. **UC-021 and UC-022 — typed socket iterators.** Accepted connections use
+6. **UC-021 and UC-022 — typed socket iterators.** Accepted connections use
    bounded single-shot rearming; receive chunks use provided-buffer credit.
    Neither API promises a particular io_uring opcode.
-6. **UC-023 — zero-copy send lifetime.** One send remains a one-result API;
+7. **UC-023 — zero-copy send lifetime.** One send remains a one-result API;
    its notification delays buffer reuse rather than becoming an iterator item.
 
 UC-012 is not implementation work; it restores behavioral acceptance when a
