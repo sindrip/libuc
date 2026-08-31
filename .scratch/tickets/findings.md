@@ -111,6 +111,33 @@ completion: UC-016's operation records must keep pointer-retained buffers
 live until the terminal CQE, while address snapshots impose nothing past
 submission.
 
+## Completion capacity, revised
+
+The reservation rule UC-013 shipped with — park at most `cq_entries`
+operations, because a full CQ silently drops wakes — was wrong, and
+UC-016 supersedes it.
+
+A full CQ is not lossy. The kernel allocates an overflow entry and
+queues it on `cq_overflow_list` (`out/src/io_uring/io_uring.c:635-658`),
+flushing it back into the CQ on a later enter (`io_uring.c:1217-1218`).
+Only when that allocation fails are completions dropped, and the kernel
+says so: the DROPPED bit makes the next enter return `-EBADR`
+(`io_uring.c:1223-1224`). So the rule bought nothing it claimed to buy,
+and multishot ends it regardless — one record can post arbitrarily many
+CQEs, so no per-operation reservation bounds completions.
+
+The standing contract: overflow is tolerated and lossless, `-EBADR` is
+the one fatal completion-loss signal, and no scheduler counter carries a
+capacity role. Bounding moves to the per-record delivery queue, where it
+must be prevented rather than handled — reap has to drain the CQ, since
+declining stalls every operation behind the head and can deadlock a
+fiber parked behind the stall, and there is no allocator to grow into.
+Multishot therefore splits by provenance of its bound: metered opcodes
+(recv, which the kernel requires to use provided buffers,
+`out/src/io_uring/net.c:845`) are bounded by credit under **pool size ≤
+queue capacity**; unmetered ones (poll, accept) carry a consumer
+contract to drain every scheduler pass, enforced by a trap.
+
 ## Visibility policy
 
 Static libuc does not yet need a hidden/default symbol policy. If a shared
