@@ -1,20 +1,12 @@
 #ifndef LIBUC_MEMCMP_ARCH_H
 #define LIBUC_MEMCMP_ARCH_H
 
-#include <stddef.h>
-
-typedef unsigned char memcmp_block [[gnu::vector_size(64)]];
-
-constexpr size_t memcmp_block_size = sizeof(memcmp_block);
+/* The fold NEON tests cheapest: max over byte lanes. */
+typedef unsigned _BitInt(8) memcmp_acc;
 
 [[gnu::always_inline]]
-static inline bool memcmp_block_equal(const unsigned char *l,
-                                      const unsigned char *r) {
-  memcmp_block a;
-  memcmp_block b;
-  __builtin_memcpy(&a, l, sizeof(a));
-  __builtin_memcpy(&b, r, sizeof(b));
-  return __builtin_reduce_max(a ^ b) == 0;
+static inline memcmp_acc memcmp_accumulate(memcmp_acc acc, memcmp_acc x) {
+  return x > acc ? x : acc;
 }
 
 #endif
