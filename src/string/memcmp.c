@@ -9,20 +9,23 @@ constexpr size_t scalar_size = sizeof(scalar);
 /* How far a scan runs past a difference before noticing. */
 constexpr size_t memcmp_block_size = 64;
 static_assert(memcmp_block_size % sizeof(memcmp_acc) == 0);
+constexpr size_t memcmp_lanes = memcmp_block_size / sizeof(memcmp_acc);
 
 /* A fixed-trip reduction with no early exit: the shape the loop
-   vectorizer lowers to full vector width. A mismatch test inside the
-   loop would devectorize it. */
+   vectorizer lowers to full vector width. The block is loaded whole
+   first so the loop body is pure arithmetic; a mismatch test or
+   instrumented pointer arithmetic inside it would devectorize it. */
 [[gnu::always_inline]]
 static inline bool memcmp_block_equal(const unsigned char *l,
                                       const unsigned char *r) {
+  memcmp_acc a[memcmp_lanes];
+  memcmp_acc b[memcmp_lanes];
+  __builtin_memcpy(a, l, sizeof(a));
+  __builtin_memcpy(b, r, sizeof(b));
+
   memcmp_acc acc = 0;
-  for (size_t i = 0; i < memcmp_block_size; i += sizeof(memcmp_acc)) {
-    memcmp_acc a;
-    memcmp_acc b;
-    __builtin_memcpy(&a, l + i, sizeof(a));
-    __builtin_memcpy(&b, r + i, sizeof(b));
-    acc = memcmp_accumulate(acc, (memcmp_acc)(a ^ b));
+  for (size_t i = 0; i < memcmp_lanes; i++) {
+    acc = memcmp_accumulate(acc, (memcmp_acc)(a[i] ^ b[i]));
   }
   return acc == 0;
 }
