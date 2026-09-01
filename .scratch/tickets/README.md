@@ -16,6 +16,11 @@ a second architecture manual.
 | UC-021 | UC-017, UC-018, UC-020 | typed accepted-connection iterator |
 | UC-022 | UC-017, UC-018, UC-020, UC-021 | typed borrowed receive iterator |
 | UC-023 | UC-017, UC-018, UC-020, UC-021 | one-result zero-copy send lifetime |
+| UC-025 | nothing | native scheduler spawn, identity, and registry |
+| UC-026 | nothing | scheduler-owned heap, local path only |
+| UC-027 | UC-025 | cross-scheduler wait over ring futex operations |
+| UC-028 | UC-025, UC-026 | remote free and heap orphaning |
+| UC-029 | UC-025, UC-026, UC-027, UC-028 | pthread_create spawns a scheduler |
 
 UC-012 is environment-blocked rather than implementation work: x86-64
 behavioral acceptance needs an FSGSBASE-capable machine or guest.
@@ -23,6 +28,11 @@ behavioral acceptance needs an FSGSBASE-capable machine or guest.
 The intended implementation order is UC-011, UC-019, UC-020, UC-017,
 UC-021, then UC-022 and UC-023. UC-019 is independent and may land before
 UC-011 if ring correctness is being worked on directly.
+
+UC-025 through UC-029 are the parallelism arc (`../pthreads.md`), recorded
+but not yet sequenced against the I/O arc: UC-026 and UC-028 carry revision
+flags (the preemption decision, sender-side batching) that must clear
+first, and landing preemption amends AGENTS invariant 7.
 
 ## Retained completed records
 

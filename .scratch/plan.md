@@ -159,7 +159,9 @@ enforceable.
 Additional schedulers require `clone`, placement, a registry or other explicit
 addressing, scheduler-local storage, and a cross-scheduler doorbell. They do not
 permit fiber migration. `transport.md` is a proposal for message delivery, not
-an active implementation spec.
+an active implementation spec; `pthreads.md` proposes `pthread_create` as the
+scheduler-creation surface, and UC-025 through UC-029 record that arc,
+gated on a revision pass for preemption and allocator batching.
 
 ### The rest of libc
 

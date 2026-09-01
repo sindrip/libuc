@@ -75,7 +75,7 @@ Public functions are real link-visible symbols, not macro aliases. Kernel UAPI
 types and constants come from the pinned installed headers; public libc headers
 must not expose private scheduler or ring structures.
 
-The private I/O names use `await` because they are not direct-syscall veneers.
+The private I/O names use `await` because they are not direct-syscall wrappers.
 They prepare an operation, suspend the current fiber, and resume it with a
 completion. Temporary SQ capacity and ring batching never appear in the public
 ABI.
